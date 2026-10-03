@@ -1,0 +1,73 @@
+{
+  "debugLog": false,
+  "permissionReviewLog": false,
+  "yoloMode": false,
+  "permission": {
+    "*": "allow",
+    "path": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow"
+    },
+    "bash": {
+      "*": "allow",
+      "git restore*": "ask",
+      "git rm*": "ask",
+      "git worktree remove*": "ask",
+      "git rebase*": "ask",
+      "git reset*": "ask",
+      "git merge*": "ask",
+      "git cherry-pick*": "ask",
+      "git checkout*": "ask",
+      "git switch*": "ask",
+      "git clean*": "ask",
+      "git revert*": "ask",
+      "git branch -d*": "ask",
+      "git branch -D*": "ask",
+      "git branch --delete*": "ask",
+      "git branch * --delete*": "ask",
+      "git stash drop*": "ask",
+      "git stash pop*": "ask",
+      "git stash clear*": "ask",
+      "git tag -d*": "ask",
+      "git tag --delete*": "ask",
+      "git tag * --delete*": "ask",
+      "git commit --amend*": "ask",
+      "git commit * --amend*": "ask",
+      "git push --force*": "ask",
+      "git push * --force*": "ask",
+      "git push -f*": "ask",
+      "git push * -f*": "ask",
+      "git push --delete*": "ask",
+      "git push * --delete*": "ask",
+      "git push * :*": "ask",
+      "git push -d*": "ask",
+      "git push * -d*": "ask",
+      "git push +*": "ask",
+      "git push * +*": "ask",
+      "git push --mirror*": "ask",
+      "git push * --mirror*": "ask",
+      "git push --prune*": "ask",
+      "git push * --prune*": "ask",
+      "rm -rf /*": "deny",
+      "rm -rf ~*": "deny",
+      "sed -i*": {
+        "action": "deny",
+        "reason": "Use the edit or write tool so file changes are reviewed and artifact hooks run"
+      },
+      "sed * -i*": {
+        "action": "deny",
+        "reason": "Use the edit or write tool so file changes are reviewed and artifact hooks run"
+      },
+      "sed --in-place*": {
+        "action": "deny",
+        "reason": "Use the edit or write tool so file changes are reviewed and artifact hooks run"
+      },
+      "sed * --in-place*": {
+        "action": "deny",
+        "reason": "Use the edit or write tool so file changes are reviewed and artifact hooks run"
+      }
+    }
+  }
+}

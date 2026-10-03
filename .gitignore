@@ -1,0 +1,27 @@
+# Allowlist: ignore everything at the top level, then re-include user-authored config.
+# Anything new Pi writes here (credentials, sessions, caches, managed packages) stays untracked.
+/*
+!/.gitignore
+!/AGENTS.md
+!/settings.json
+!/pi-cc-extensions.json
+!/pi-subagents.json
+!/tasks-config.json
+!/agents/
+!/prompts/
+!/skills/
+!/themes/
+!/extensions/
+!/local/
+!/tests/
+
+node_modules/
+__pycache__/
+.DS_Store
+*.log
+
+# Runtime logs written by extensions (e.g. permission review history)
+logs/
+
+auth.json
+.harness/
