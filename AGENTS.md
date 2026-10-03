@@ -50,7 +50,7 @@
 
 ### Git
 
-- **Terse commit messages** -- single `[TICKET] short imperative description` line. No multi-paragraph bodies, no `Co-Authored-By` trailers. The PR description carries the narrative.
+- **Terse commit messages** -- use a single imperative description line. Prefix it with `[TICKET]` only for a real ticket; never invent repository tags such as `[PI]`. No multi-paragraph bodies or `Co-Authored-By` trailers. The PR description carries the narrative.
 - **Benchmark branches** -- keep prompt/config benchmark candidates and experimental commits on a dedicated `benchmark/<run-id>` branch, never `main`. Promote only the approved final diff as a fresh clean commit; do not merge benchmark history.
 
 ### Communication & Collaboration
