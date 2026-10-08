@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "bun:test";
@@ -86,6 +86,12 @@ function editEvent(path: string, edits: readonly ExactEdit[]): EditToolCallEvent
 	return { type: "tool_call", toolCallId: "edit-1", toolName: "edit", input: { path, edits: [...edits] } };
 }
 
+type SymlinkCase = {
+	readonly event: WriteToolCallEvent | EditToolCallEvent;
+	readonly outsidePath: string;
+	readonly outsideContent?: string;
+};
+
 function blockedReason(result: { block: boolean; reason?: string } | void): string {
 	if (!result?.block || result.reason === undefined) throw new Error("expected a blocked result");
 	return result.reason;
@@ -169,6 +175,74 @@ test("non-exact plan edits are blocked with an exact unique oldText retry", () =
 		assert.equal(result?.block, true);
 		assert.match(result && "reason" in result ? result.reason : "", /exact, unique oldText/);
 	});
+});
+
+test.each([
+	["write through a symlinked plans parent", (cwd: string, outside: string): SymlinkCase => {
+		const relPath = ".harness/plans/2026-10-01-example.md";
+		const outsidePath = join(outside, "plans", "2026-10-01-example.md");
+		mkdirSync(dirname(outsidePath), { recursive: true });
+		mkdirSync(join(cwd, ".harness"));
+		symlinkSync(dirname(outsidePath), join(cwd, ".harness/plans"));
+		return { event: writeEvent(relPath, filledDocument("plan")), outsidePath };
+	}],
+	["edit through a symlinked plans parent", (cwd: string, outside: string): SymlinkCase => {
+		const relPath = ".harness/plans/2026-10-01-example.md";
+		const plan = filledDocument("plan");
+		const outsidePath = join(outside, "plans", "2026-10-01-example.md");
+		mkdirSync(dirname(outsidePath), { recursive: true });
+		writeFileSync(outsidePath, plan);
+		mkdirSync(join(cwd, ".harness"));
+		symlinkSync(dirname(outsidePath), join(cwd, ".harness/plans"));
+		return {
+			event: editEvent(relPath, [{ oldText: "## Goal and context\ncontent", newText: "## Goal and context\nchanged" }]),
+			outsidePath,
+			outsideContent: plan,
+		};
+	}],
+	["write through a symlinked final plan leaf", (cwd: string, outside: string): SymlinkCase => {
+		const relPath = ".harness/plans/2026-10-01-example.md";
+		const outsidePath = join(outside, "escaped-plan.md");
+		mkdirSync(join(cwd, ".harness/plans"), { recursive: true });
+		symlinkSync(outsidePath, join(cwd, relPath));
+		return { event: writeEvent(relPath, filledDocument("plan")), outsidePath };
+	}],
+	["edit through a symlinked final plan leaf", (cwd: string, outside: string): SymlinkCase => {
+		const relPath = ".harness/plans/2026-10-01-example.md";
+		const plan = filledDocument("plan");
+		const outsidePath = join(outside, "escaped-plan.md");
+		writeFileSync(outsidePath, plan);
+		mkdirSync(join(cwd, ".harness/plans"), { recursive: true });
+		symlinkSync(outsidePath, join(cwd, relPath));
+		return {
+			event: editEvent(relPath, [{ oldText: "## Goal and context\ncontent", newText: "## Goal and context\nchanged" }]),
+			outsidePath,
+			outsideContent: plan,
+		};
+	}],
+	["create through a symlinked handoff parent", (cwd: string, outside: string): SymlinkCase => {
+		const relPath = ".harness/handoffs/2026/10/01/01234567-89ab-cdef-0123-456789abcdef-example.md";
+		const outsidePath = join(outside, "handoffs", "2026/10/01/01234567-89ab-cdef-0123-456789abcdef-example.md");
+		mkdirSync(dirname(outsidePath), { recursive: true });
+		mkdirSync(join(cwd, ".harness"));
+		symlinkSync(join(outside, "handoffs"), join(cwd, ".harness/handoffs"));
+		return { event: writeEvent(relPath, filledDocument("handoff")), outsidePath };
+	}],
+] as const)("blocks %s without touching the outside target", (_name, setup) => {
+	const cwd = mkdtempSync(join(tmpdir(), "artifact-documents-"));
+	const outside = mkdtempSync(join(tmpdir(), "artifact-documents-outside-"));
+	try {
+		const attack = setup(cwd, outside);
+		assert.match(blockedReason(registeredHandler()(attack.event, context(cwd))), /symlink/);
+		if (attack.outsideContent === undefined) {
+			assert.equal(existsSync(attack.outsidePath), false);
+		} else {
+			assert.equal(readFileSync(attack.outsidePath, "utf8"), attack.outsideContent);
+		}
+	} finally {
+		rmSync(cwd, { force: true, recursive: true });
+		rmSync(outside, { force: true, recursive: true });
+	}
 });
 
 test("handoff documents are create-only and validate new writes", () => {

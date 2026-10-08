@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type {
 	EditToolCallEvent,
 	ExtensionAPI,
@@ -132,6 +132,34 @@ function resolvePath(cwd: string, requestedPath: string): ResolvedPath | undefin
 	return { absolutePath, relPath: relativePath.replaceAll("\\", "/") };
 }
 
+function rejectSymlinkComponents(absolutePath: string, cwd: string, relPath: string): string | undefined {
+	const boundary = resolve(cwd);
+	const relativePath = relative(boundary, absolutePath);
+	if (
+		relativePath.length === 0 ||
+		relativePath === ".." ||
+		relativePath.startsWith("../") ||
+		isAbsolute(relativePath)
+	) {
+		return `Cannot verify protected document path ${JSON.stringify(relPath)}: resolved path is outside trusted cwd ${JSON.stringify(boundary)}.`;
+	}
+
+	for (let current = absolutePath; ; current = dirname(current)) {
+		try {
+			if (lstatSync(current).isSymbolicLink()) {
+				return `Blocked protected document path ${JSON.stringify(relPath)}: symlink component ${JSON.stringify(current)} is not allowed.`;
+			}
+		} catch (error: unknown) {
+			const missing = typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+			if (!missing) {
+				const detail = error instanceof Error ? error.message : String(error);
+				return `Cannot inspect protected document path ${JSON.stringify(relPath)} at ${JSON.stringify(current)}: ${detail}`;
+			}
+		}
+		if (current === boundary) return undefined;
+	}
+}
+
 function readCurrentFile(absolutePath: string): CurrentFile {
 	if (!existsSync(absolutePath)) return { exists: false };
 	try {
@@ -176,6 +204,8 @@ function handleDocumentToolCall(event: ToolCallEvent, ctx: Pick<ExtensionContext
 	const classification = matchPath(resolved.relPath);
 	if (!classification) return undefined;
 	if (classification.kind === "protected") return { block: true, reason: classification.reason };
+	const symlinkReason = rejectSymlinkComponents(resolved.absolutePath, ctx.cwd, resolved.relPath);
+	if (symlinkReason !== undefined) return { block: true, reason: symlinkReason };
 	if (isEditEvent(event) && classification.createOnly) return { block: true, reason: createOnlyReason("edit") };
 
 	const currentFile = readCurrentFile(resolved.absolutePath);
