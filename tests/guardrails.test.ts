@@ -66,9 +66,18 @@ test("requires bounded existing light-review artifacts for single and child laun
 	const path = await artifact();
 	const handlers = createPi();
 	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { agent: "code-reviewer-light", task: `Patch artifact: ${path}\nReview paths: src/example.ts` } }, { cwd: "/tmp/project" });
+	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { children: [{ agent: "code-reviewer-light", task: `Patch artifact: ${path}\nReview paths: src/example.ts` }] } }, { cwd: "/tmp/project" });
+
+	const unbounded = () => handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer-light", task: "" } }, { cwd: "/tmp/project" });
+	for (const expected of [REVIEW_ARTIFACT_ROOT, "Patch artifact:", "Review paths:"]) {
+		await expect(unbounded()).rejects.toThrow(expected);
+	}
+
 	const missing = join(REVIEW_ARTIFACT_ROOT, "missing.patch");
 	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer-light", task: `Patch artifact: ${missing}\nReview paths: src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("does not exist");
 	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer-light", task: `Patch artifact: ${path}` } }, { cwd: "/tmp/project" })).rejects.toThrow("Review paths");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer-light", task: `Patch artifact: ${dirname(path)}\nReview paths: src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("regular file");
+
 	const outside = join(await mkdtemp(join(tmpdir(), "pi-review-outside-")), "review.patch");
 	await writeFile(outside, "diff\n");
 	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { children: [{ agent: "code-reviewer-light", task: `Patch artifact: ${outside}\nReview paths: src/example.ts` }] } }, { cwd: "/tmp/project" })).rejects.toThrow("lexically contained");

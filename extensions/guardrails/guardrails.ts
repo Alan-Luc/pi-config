@@ -4,7 +4,7 @@ import { dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
 
-// Pi's temporary review artifact location is /tmp/pi.
+// Keep review artifacts inside Pi's runtime-specific temporary directory.
 export const REVIEW_ARTIFACT_ROOT = resolve(tmpdir(), "pi");
 
 const TEST_COMMAND_RE = /\b(?:manage\.py\s+test|pytest|pytests?|npm\s+test|pnpm\s+test|yarn\s+test|bun\s+test|go\s+test|cargo\s+test|jest|vitest|mocha|rspec|phpunit|gradle\s+test|mvn\s+test)\b/i;
@@ -105,7 +105,7 @@ async function validateLightReview(input: unknown): Promise<void> {
 		const task = typeof launch.task === "string" ? launch.task : "";
 		const artifactMatch = task.match(/^Patch artifact:[ \t]*(.*)$/im);
 		if (!artifactMatch || !/^Review paths:[ \t]*\S+/im.test(task)) {
-			throw new Error("Blocked unbounded code-reviewer-light task; brief must include 'Patch artifact: <absolute path>' and 'Review paths: <exact paths>'");
+			throw new Error(`Blocked unbounded code-reviewer-light task; use the runtime review root:\nPatch artifact: ${resolve(REVIEW_ARTIFACT_ROOT, "<name>.patch")}\nReview paths: <exact paths>`);
 		}
 		await requireReviewArtifact(artifactMatch[1].trim());
 	}

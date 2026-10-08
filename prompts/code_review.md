@@ -4,9 +4,14 @@ argument-hint: "[slice map]"
 ---
 Act as the tech lead and review only a stable implementation/diff. Scope: `${@:-the current changes}`.
 
-When no slice map is supplied, build the smallest real ownership map. Keep production and test paths in the same disjoint slice; every test-only hunk belongs to one. For each slice, capture its exact current diff in an approved temporary `.pi` artifact and launch one `code-reviewer-light` subagent with:
-- `Patch artifact: <absolute path>`
+When no slice map is supplied, build the smallest real ownership map. Keep production and test paths in the same disjoint slice; every test-only hunk belongs to one. Derive the review root from `node:os.tmpdir()/pi` with `node -p "require('node:path').join(require('node:os').tmpdir(),'pi')"`, create it, and capture each slice's exact current diff beneath the printed absolute path. Launch one `code-reviewer-light` subagent per slice with:
+- `Patch artifact: <absolute path under the printed root>`
 - `Review paths: <exact absolute paths>`
+- a Context evidence packet containing:
+  - `Source of truth: <active plan and decision paths with relevant headings or None>`
+  - `Verified facts: <facts the parent directly confirmed; include evidence when useful>`
+  - `Read first: <smallest exact paths/ranges>`
+  - `Open questions: <only unanswered questions this worker owns>`
 - the canonical worktree root, direct callers/callees and test dependencies, objective, material risk, and stop condition
 
 Launch disjoint reviews in one `subagent` batch using `children`; exclude `.git`, parent or sibling worktree aliases, and unrelated inventories. Use a domain specialist instead of `code-reviewer-light` only when one dominant risk clearly warrants it. Add another specialist only for a separately named security, performance, UI, testing, or architecture objective the first reviewer cannot cover. Use `test-automation-engineer` only when execution evidence is missing or a regression needs proving; use `code-explorer` only when ownership or scope is unclear. Start a fresh `subagent` task for each review or remediation delta; never use `subagent_resume` for a new delta.

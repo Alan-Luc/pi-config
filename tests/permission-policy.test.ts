@@ -43,6 +43,8 @@ describe("global permission policy", () => {
     ["bash", "git diff", "allow"],
     ["bash", "git commit -m message", "allow"],
     ["bash", "git push origin main", "allow"],
+    ["bash", "git merge-base --is-ancestor main HEAD", "allow"],
+    ["bash", "git merge main", "ask"],
     ["bash", "git rebase main", "ask"],
     ["bash", "git reset --hard", "ask"],
     ["bash", "git push --force origin main", "ask"],

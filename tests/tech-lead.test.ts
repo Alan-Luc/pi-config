@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import registerTechLead from "../extensions/tech-lead/index.ts";
 
 const body = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
+const codeReviewPrompt = readFileSync(new URL("../prompts/code_review.md", import.meta.url), "utf8");
+const lightReviewer = readFileSync(new URL("../agents/code-reviewer-light.md", import.meta.url), "utf8");
 const durablePlan = readFileSync(new URL("../skills/durable-plan/SKILL.md", import.meta.url), "utf8");
 const handoffWriter = readFileSync(new URL("../agents/handoff-writer.md", import.meta.url), "utf8");
 const globalInstructions = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
@@ -49,6 +51,42 @@ test("normal Tech Lead mode defaults independent research to background explorer
 	assert.ok(body.includes("must not duplicate delegated investigation"));
 	assert.ok(body.includes("Trivial lookups and tightly coupled same-seam traces stay direct, as do governing-artifact and prerequisite reads required before delegation"));
 	assert.ok(body.includes("it owns scoping and synthesis"));
+});
+
+test("light-review producers match the guarded dispatch contract", () => {
+	for (const surface of [body, codeReviewPrompt, lightReviewer]) {
+		assert.ok(surface.includes("Patch artifact:"));
+		assert.ok(surface.includes("Review paths:"));
+	}
+	for (const producer of [body, codeReviewPrompt]) {
+		assert.ok(producer.includes("node:os.tmpdir()/pi"));
+		assert.ok(!producer.includes("under `/tmp/pi/`"));
+	}
+});
+
+test("post-reconnaissance briefs reuse a parent-owned evidence packet", () => {
+	for (const producer of [body, codeReviewPrompt]) {
+		for (const contract of [
+			"Source of truth: <active plan and decision paths with relevant headings or None>",
+			"Verified facts: <facts the parent directly confirmed; include evidence when useful>",
+			"Read first: <smallest exact paths/ranges>",
+			"Open questions: <only unanswered questions this worker owns>",
+		]) {
+			assert.ok(producer.includes(contract), contract);
+		}
+	}
+	assert.ok(body.includes("The parent owns and synthesizes this packet"));
+	assert.ok(body.includes("Siblings reuse `Source of truth` and `Verified facts`"));
+	assert.ok(body.includes("Initial discovery scouts may start with minimal `Verified facts`"));
+	assert.ok(body.includes("report contradictory evidence instead of silently repeating broad reconnaissance"));
+});
+
+test("focused checks and review precede final broad verification", () => {
+	const focused = body.indexOf("Run the narrowest changed-area checks");
+	const review = body.indexOf("dispatch the bounded independent review", focused);
+	const broad = body.indexOf("Run the required broad/full suite once", review);
+	assert.ok(focused >= 0 && focused < review && review < broad);
+	assert.ok(body.includes("state the reason before an earlier broad run"));
 });
 
 test("completion and decision records use the native append-only work log", () => {
