@@ -21,6 +21,9 @@
 ### Learn the Codebase
 
 - Follow existing patterns and test conventions
+- **Reuse reconnaissance** -- Establish one bounded, verified evidence packet per slice and pass it to implementers and reviewers. Reopen discovery only when inspected evidence conflicts.
+- **Batch review remediation** -- Resolve related material findings in one pass, run affected focused checks, then perform one fresh follow-up review after the seam is stable.
+- **Keep narrow fixes direct** -- Handle tightly scoped same-seam remediation directly unless independent ownership or specialist expertise materially helps.
 
 ### Tooling
 
@@ -32,6 +35,8 @@
 
 - Follow existing conventions in the project
 - Refer to linter configurations and .editorconfig, if present
+- **Purpose-first naming** -- Use action verbs for operations and precise nouns for files, types, and values. Avoid vague names such as `data`, `utils`, `manager`, `handler`, or `process` unless they are exact domain terms. Do not use comments to compensate for unclear names.
+- **Named business data** -- Use named fields or keys for heterogeneous business data; avoid magic indexes and parallel arrays. Keep indexes when order is meaningful or required by an external format, then convert once before applying business logic.
 - Text files should always end with an empty line
 
 ## Important Reminders
@@ -42,7 +47,8 @@
 - Make assumptions - verify with existing code
 
 **ALWAYS**:
-- When real write overlap or an actual implementation dependency makes sequencing necessary, use verified increments: complete one narrow slice, run focused checks, inspect it, then continue. Never commit/push unless explicitly requested. An explicit commit-and-push request authorizes both commands without another plan or confirmation.
+- When real write overlap or an actual implementation dependency makes sequencing necessary, use verified increments: complete one narrow slice, run focused checks, inspect it, then continue.
+- Never commit or push unless explicitly requested. One explicit task-level authorization to create local commits covers all coherent, passing slice commits for that task without repeated confirmation; it never authorizes a push. An explicit commit-and-push request authorizes both commands without another plan or confirmation.
 - Learn from existing implementations
 - Stop after 3 failed attempts and reassess
 
@@ -50,6 +56,7 @@
 
 ### Git
 
+- **Coherent slice commits** -- When local commits are authorized, commit at coherent, passing implementation boundaries. Each commit expresses one intent, includes its associated tests, and leaves the repository buildable. Separate mechanical changes from behavioral changes when that improves review. Do not split behavior from tests, commit half an atomic migration, or create arbitrary line-count/checkpoint commits that require adjacent commits to understand. Never split cohesive code merely to fit an inspection-tool limit; use an exact patch artifact and targeted reads instead. Keep full integration review across the complete commit set.
 - **Terse commit messages** -- use a single imperative description line. Prefix it with `[TICKET]` only for a real ticket; never invent repository tags such as `[PI]`. No multi-paragraph bodies or `Co-Authored-By` trailers. The PR description carries the narrative.
 - **Benchmark branches** -- keep prompt/config benchmark candidates and experimental commits on a dedicated `benchmark/<run-id>` branch, never `main`. Promote only the approved final diff as a fresh clean commit; do not merge benchmark history.
 
@@ -66,7 +73,7 @@
 
 ### Tests
 
-- **Run narrow before broad** -- During implementation, run the smallest relevant check; reserve full-suite and coverage runs for final integration unless the request or brief requires them sooner.
+- **Run narrow before broad** -- During implementation, run the smallest relevant check; reserve full-suite and coverage runs for final integration unless the request or brief requires them sooner. Do not rerun an unchanged broad suite solely because another procedural phase completed.
 - **Make test cases visibly explicit** -- prefer `it.each([...])` over nested loops. A reader should enumerate every scenario at a glance without mentally simulating control flow.
 - **Use "malicious" not "nasty"** in security/injection test names and variables for attacker-controlled inputs.
 

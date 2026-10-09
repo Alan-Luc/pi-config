@@ -12,7 +12,9 @@
     "npm:@ff-labs/pi-fff",
     "npm:@juicesharp/rpiv-ask-user-question",
     "git:github.com/Alan-Luc/pi-vim",
-    "git:github.com/alan-luc/pi-inspect-change@main"
+    "git:github.com/alan-luc/pi-inspect-change@main",
+    "git:github.com/Alan-Luc/pi-inspect-context@main",
+    "npm:@tryinget/pi-telemetry"
   ],
   "quietStartup": true,
   "steeringMode": "one-at-a-time",

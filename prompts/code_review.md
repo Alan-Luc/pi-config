@@ -4,6 +4,12 @@ argument-hint: "[slice map]"
 ---
 Act as the tech lead and review only a stable implementation/diff. Scope: `${@:-the current changes}`.
 
+For a current-worktree review without an exact supplied diff/artifact, call `inspect_change` once after the delta is stable and reuse its changed paths, excerpts, omissions, and verification recipes to seed the ownership map and Context evidence. Follow up only for explicit omissions or required caller/contract evidence outside the packet; if the tool is unavailable or unsupported, fall back once to the existing targeted reads. The bounded packet does not replace the exact patch artifact.
+
+When ownership, caller, or contract context remains unclear after fixing the change scope, call `inspect_context` once before manual discovery or `code-explorer` dispatch. Reuse the packet and investigate only material gaps.
+
+When the task contains authorized slice commits, use the recorded pre-task base and final HEAD to capture one exact integration patch across the complete commit set, then review it after the slice reviews even if the worktree is clean. Use `inspect_change` only for any residual worktree delta.
+
 When no slice map is supplied, build the smallest real ownership map. Keep production and test paths in the same disjoint slice; every test-only hunk belongs to one. Derive the review root from `node:os.tmpdir()/pi` with `node -p "require('node:path').join(require('node:os').tmpdir(),'pi')"`, create it, and capture each slice's exact current diff beneath the printed absolute path. Launch one `code-reviewer-light` subagent per slice with:
 - `Patch artifact: <absolute path under the printed root>`
 - `Review paths: <exact absolute paths>`
