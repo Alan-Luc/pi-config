@@ -184,11 +184,14 @@ test("write-capable workers produce evidence-backed verification claims", () => 
 	for (const agent of [backendEngineer, frontendEngineer, testAutomationEngineer]) {
 		assert.match(agent, /^tools: .*verification_evidence,bg_run,bg_status,bg_logs,bg_kill/m);
 		assert.ok(agent.includes("After each `bg_run`, use `TaskCreate`/`TaskUpdate` to track its ID and purpose in progress"));
-		assert.ok(agent.includes("do not finish until it is terminal and reconciled, killing it if obsolete"));
+		assert.ok(agent.includes("do not finish until every started job is terminal and reconciled"));
+		assert.ok(agent.includes("reporting their terminal state to the caller"));
 		assert.ok(agent.includes("Run every reportable"));
 		assert.ok(agent.includes("exact argv, cwd, and timeout"));
 		assert.ok(agent.includes("include its evidence ID in `Verified by`"));
 		assert.ok(agent.includes("raw Bash output is not verification evidence"));
+		assert.ok(agent.includes("`bg_*` tools manage operational work only"));
+		assert.ok(agent.includes("never `Verified by` evidence"));
 		assert.ok(agent.includes("`Not run: <reason>`"));
 	}
 });
@@ -196,7 +199,7 @@ test("write-capable workers produce evidence-backed verification claims", () => 
 test("the verification runner can execute evidence only", () => {
 	assert.match(verificationRunner, /^name: verification-runner$/m);
 	assert.match(verificationRunner, /^tools: read,bash,grep,find,verification_evidence,TaskCreate,TaskList,TaskGet,TaskUpdate$/m);
-	assert.doesNotMatch(verificationRunner, /^tools: .*\b(?:edit|write|subagent)\b/m);
+	assert.doesNotMatch(verificationRunner, /^tools: .*\b(?:edit|write|subagent|bg_run|bg_status|bg_logs|bg_kill)\b/m);
 	assert.ok(verificationRunner.includes("Bash is active only as a hidden nested dependency of `verification_evidence`; never call raw shell commands"));
 	assert.ok(verificationRunner.includes("Execute exactly the argv, repository-relative cwd, and timeout values in the brief"));
 	assert.ok(verificationRunner.includes("Never select, add, remove, combine, wrap, or retry commands"));
@@ -218,11 +221,18 @@ test("complete-delta review is required independent of commits without duplicati
 });
 
 test("stable final review and verification use one pure conditional batch", () => {
-	for (const producer of [body, codeReviewPrompt]) {
-		assert.ok(producer.includes("final candidate" ) || producer.includes("candidate identity"));
+	for (const [producer, finalCapture] of [
+		[body, "capture one final candidate"],
+		[codeReviewPrompt, "capture the candidate identity"],
+	] as const) {
+		const reconcileBackgroundJobs = producer.indexOf("task-owned background job");
+		const captureCandidate = producer.indexOf(finalCapture);
+		assert.ok(reconcileBackgroundJobs >= 0 && reconcileBackgroundJobs < captureCandidate);
 		assert.ok(producer.includes("`verification-runner`"));
 		assert.ok(producer.includes("one pure `subagent` `children` batch"));
 		assert.ok(producer.includes("Do not mix ordinary tools") || producer.includes("do not mix ordinary tools"));
+		assert.ok(producer.includes("terminal and reconciled"));
+		assert.ok(producer.includes("do not freeze or dispatch") && producer.includes("mutate the repository"));
 		assert.ok(producer.includes("`PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` unset"));
 		assert.ok(producer.includes("stop the parent turn after launch"));
 		assert.ok(producer.includes("exact argv/cwd/timeout commands"));
