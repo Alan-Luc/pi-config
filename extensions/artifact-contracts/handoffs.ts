@@ -2,7 +2,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
 import { AGENT_OUTPUT, DEFAULT_OUTPUT, SCHEMAS, type SchemaId } from "./schemas.ts";
 import { appendInstructions, renderTemplate } from "./render.ts";
-import { validate } from "./validate.ts";
+import { sectionBody, validate } from "./validate.ts";
+import { clearVerificationEvidence, invalidateVerificationEvidence, verificationClaimErrors } from "./verification-store.ts";
 
 const CORRECTION_TYPE = "artifact-contract-correction";
 
@@ -32,40 +33,13 @@ function replyText(message: AssistantLike): string | undefined {
 	return text.join("");
 }
 
-type BashRun = { command: string; exitCode: number | undefined };
-
-function bashRun(event: { input: Record<string, unknown>; isError: boolean; structuredContent?: unknown }): BashRun | undefined {
-	if (typeof event.input.command !== "string") return undefined;
-	const structured = isRecord(event.structuredContent) ? event.structuredContent : undefined;
-	if (typeof structured?.exit_code === "number") return { command: event.input.command, exitCode: structured.exit_code };
-	return { command: event.input.command, exitCode: event.isError ? undefined : 0 };
-}
-
-function pipeMasksExit(run: BashRun, command: string): boolean {
-	const end = run.command.indexOf(command) + command.length;
-	const pipe = run.command.slice(end).search(/(?<!\|)\|(?!\|)/);
-	if (pipe < 0) return false;
-	return !/\bset\s+-\w*o\s+pipefail\b/.test(run.command.slice(0, end + pipe));
-}
-
-export function verifiedByErrors(text: string, runs: readonly BashRun[]): string[] {
-	const body = text.match(/^## Verified by\n([\s\S]*?)(?=^## |(?![\s\S]))/m)?.[1] ?? "";
-	const errors: string[] = [];
-	for (const line of body.split("\n")) {
-		const item = line.match(/^- `([^`]+)` (?:→|->) exit (\d+)/);
-		if (!item) continue;
-		const command = item[1].trim();
-		const reported = Number(item[2]);
-		const included = runs.filter((run) => run.command.includes(command));
-		const matching = included.filter((run) => !pipeMasksExit(run, command));
-		if (included.length === 0) errors.push(`Verified by: "${command}" was not run in this session`);
-		else if (matching.length === 0) errors.push(`Verified by: "${command}" exit code is hidden by a pipe; rerun it without a pipe or with set -o pipefail`);
-		else if (!matching.some((run) => run.exitCode === reported)) {
-			const actual = matching[0].exitCode;
-			errors.push(`Verified by: "${command}" exited ${actual === undefined ? "with an unknown code" : actual}, not ${reported}`);
-		}
-	}
-	return errors;
+export function verifiedByErrors(text: string): string[] {
+	const body = sectionBody(text, "Verified by") ?? "";
+	return body.split("\n").flatMap((line) => {
+		const item = line.match(/^ {0,3}- `([^`]+)` (?:→|->) exit (\d+) \[evidence: (verify_[0-9a-f]{64})\]/);
+		if (!item) return [];
+		return verificationClaimErrors({ command: item[1], exitCode: Number(item[2]), evidenceId: item[3] });
+	});
 }
 
 export function replySchema(env: Environment): SchemaId | null {
@@ -119,7 +93,8 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 
 	let corrections = 0;
 	let pending: PendingReply | undefined;
-	let runs: BashRun[] = [];
+	const verificationCalls = new Set<string>();
+	const writeCapableCalls = new Map<string, string>();
 
 	pi.on("before_agent_start", (event) => {
 		appendInstructions(event.systemPromptOptions, replyInstructions(schemaId));
@@ -128,13 +103,31 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 	pi.on("agent_start", () => {
 		corrections = 0;
 		pending = undefined;
-		runs = [];
+		verificationCalls.clear();
+		writeCapableCalls.clear();
+		clearVerificationEvidence();
+	});
+
+	pi.on("tool_call", (event) => {
+		if (event.toolName === "verification_evidence") {
+			verificationCalls.add(event.toolCallId);
+			return;
+		}
+		const nestedVerificationBash = event.toolName === "bash"
+			&& event.parentToolCallId !== undefined
+			&& verificationCalls.has(event.parentToolCallId);
+		if (!nestedVerificationBash && (event.toolName === "bash" || event.toolName === "edit" || event.toolName === "write")) {
+			writeCapableCalls.set(event.toolCallId, event.toolName);
+			invalidateVerificationEvidence(`${event.toolName} tool activity occurred after verification`);
+		}
 	});
 
 	pi.on("tool_result", (event) => {
-		if (event.toolName !== "bash") return;
-		const run = bashRun(event);
-		if (run) runs.push(run);
+		if (event.toolName === "verification_evidence") verificationCalls.delete(event.toolCallId);
+		const toolName = writeCapableCalls.get(event.toolCallId);
+		if (!toolName) return;
+		writeCapableCalls.delete(event.toolCallId);
+		invalidateVerificationEvidence(`${toolName} tool activity completed after verification`);
 	});
 
 	pi.on("message_end", (event) => {
@@ -144,7 +137,7 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 		if (text === undefined) return;
 		let result = validate(schemaId, text);
 		if (result.ok && SCHEMAS[schemaId].sections.some((section) => section.heading === "Verified by")) {
-			const errors = verifiedByErrors(text, runs);
+			const errors = verifiedByErrors(text);
 			if (errors.length > 0) result = { ok: false, errors };
 		}
 		if (result.ok) {

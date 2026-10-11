@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import registerTechLead from "../extensions/tech-lead/index.ts";
 
 const body = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
 const codeReviewPrompt = readFileSync(new URL("../prompts/code_review.md", import.meta.url), "utf8");
 const lightReviewer = readFileSync(new URL("../agents/code-reviewer-light.md", import.meta.url), "utf8");
+const fullReviewer = readFileSync(new URL("../agents/code-reviewer.md", import.meta.url), "utf8");
+const backendEngineer = readFileSync(new URL("../agents/backend-engineer.md", import.meta.url), "utf8");
+const frontendEngineer = readFileSync(new URL("../agents/frontend-engineer.md", import.meta.url), "utf8");
+const testAutomationEngineer = readFileSync(new URL("../agents/test-automation-engineer.md", import.meta.url), "utf8");
+const verificationRunner = readFileSync(new URL("../agents/verification-runner.md", import.meta.url), "utf8");
 const durablePlan = readFileSync(new URL("../skills/durable-plan/SKILL.md", import.meta.url), "utf8");
-const handoffWriter = readFileSync(new URL("../agents/handoff-writer.md", import.meta.url), "utf8");
 const globalInstructions = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
 
 test("main sessions append tech-lead instructions without dropping prior prompts", () => {
@@ -176,6 +180,58 @@ test("focused checks and review precede final broad verification", () => {
 	assert.ok(body.includes("state the reason before an earlier broad run"));
 });
 
+test("write-capable workers produce evidence-backed verification claims", () => {
+	for (const agent of [backendEngineer, frontendEngineer, testAutomationEngineer]) {
+		assert.match(agent, /^tools: .*verification_evidence,bg_run,bg_status,bg_logs,bg_kill/m);
+		assert.ok(agent.includes("After each `bg_run`, use `TaskCreate`/`TaskUpdate` to track its ID and purpose in progress"));
+		assert.ok(agent.includes("do not finish until it is terminal and reconciled, killing it if obsolete"));
+		assert.ok(agent.includes("Run every reportable"));
+		assert.ok(agent.includes("exact argv, cwd, and timeout"));
+		assert.ok(agent.includes("include its evidence ID in `Verified by`"));
+		assert.ok(agent.includes("raw Bash output is not verification evidence"));
+		assert.ok(agent.includes("`Not run: <reason>`"));
+	}
+});
+
+test("the verification runner can execute evidence only", () => {
+	assert.match(verificationRunner, /^name: verification-runner$/m);
+	assert.match(verificationRunner, /^tools: read,bash,grep,find,verification_evidence,TaskCreate,TaskList,TaskGet,TaskUpdate$/m);
+	assert.doesNotMatch(verificationRunner, /^tools: .*\b(?:edit|write|subagent)\b/m);
+	assert.ok(verificationRunner.includes("Bash is active only as a hidden nested dependency of `verification_evidence`; never call raw shell commands"));
+	assert.ok(verificationRunner.includes("Execute exactly the argv, repository-relative cwd, and timeout values in the brief"));
+	assert.ok(verificationRunner.includes("Never select, add, remove, combine, wrap, or retry commands"));
+	assert.ok(verificationRunner.includes("candidate ID equals the expected stable candidate"));
+	assert.ok(verificationRunner.includes("Any nonzero exit, invalid evidence, candidate mismatch, or unavailable command makes the run failed"));
+});
+
+test("complete-delta review is required independent of commits without duplication", () => {
+	for (const producer of [body, codeReviewPrompt]) {
+		assert.ok(producer.includes("starting candidate"));
+		assert.ok(producer.includes("starting-tree-to-final-tree patch"));
+		assert.ok(producer.includes("including new files"));
+		assert.ok(producer.includes("regardless of commit strategy"));
+		assert.ok(producer.includes("ceremonial duplicate"));
+	}
+	assert.ok(body.includes("exact task-owned path set"));
+	assert.ok(body.includes("Multi-slice, partially reviewed, or subsequently remediated work gets one final integration review"));
+	assert.ok(body.includes("Authorized commit flows retain the separate pre-task-base-to-final-HEAD integration diff requirement"));
+});
+
+test("stable final review and verification use one pure conditional batch", () => {
+	for (const producer of [body, codeReviewPrompt]) {
+		assert.ok(producer.includes("final candidate" ) || producer.includes("candidate identity"));
+		assert.ok(producer.includes("`verification-runner`"));
+		assert.ok(producer.includes("one pure `subagent` `children` batch"));
+		assert.ok(producer.includes("Do not mix ordinary tools") || producer.includes("do not mix ordinary tools"));
+		assert.ok(producer.includes("`PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` unset"));
+		assert.ok(producer.includes("stop the parent turn after launch"));
+		assert.ok(producer.includes("exact argv/cwd/timeout commands"));
+		assert.ok(producer.includes("After both") && producer.includes("capture the candidate") && producer.includes("exact match"));
+		assert.ok(producer.includes("invalidate") && producer.includes("never reuse"));
+		assert.ok(producer.includes("sequential") && producer.includes("cheap"));
+	}
+});
+
 test("completion and decision records use the native append-only work log", () => {
 	assert.ok(body.includes("use the native `work_log` tool to append material"));
 	assert.ok(body.includes("use the native `work_log` tool to append the daily work log"));
@@ -183,28 +239,29 @@ test("completion and decision records use the native append-only work log", () =
 	assert.ok(!body.includes("retro-session"));
 });
 
-test("handoffs contain only human actions and references to completed work", () => {
-	const appendBarrier = body.indexOf("await its verified result before any dependent handoff or final response");
-	const handoffDispatch = body.indexOf("When an action remains, launch one fresh asynchronous `subagent`");
-	assert.ok(appendBarrier >= 0 && appendBarrier < handoffDispatch);
+test("the parent writes validated human-only handoffs directly", () => {
+	const appendBarrier = body.indexOf("wait for the daily work-log append to succeed");
+	const directWrite = body.indexOf("use the existing `write` tool to create the fully supplied handoff directly", appendBarrier);
+	const readback = body.indexOf("Read back and verify both exact output paths", directWrite);
+	assert.ok(appendBarrier >= 0 && appendBarrier < directWrite && directWrite < readback);
+	assert.ok(body.includes("Do / Why / Leads to / Done when"));
 	assert.ok(body.includes("Do not duplicate completed work or verification from the work log"));
-	assert.ok(body.includes("await it before the final response"));
-	for (const required of [
-		"- Verified outcome.",
-		"- One or more exact human-only actions",
-		"- Blockers to those actions",
-		"- Next state.",
-		"- Active plan path",
-		"- Exact repo-relative daily work-log path and exact repo-relative task-handoff path.",
-	]) {
-		assert.ok(handoffWriter.includes(required), required);
-	}
-	assert.ok(handoffWriter.includes("1. Alan's actions."));
-	assert.ok(handoffWriter.includes("2. Blockers."));
-	assert.ok(handoffWriter.includes("3. Resume references."));
-	assert.ok(handoffWriter.includes("daily work log as the source for completed work and checks"));
-	assert.ok(!handoffWriter.includes("1. Agent work."));
-	assert.ok(!handoffWriter.includes("3. Verification."));
+	assert.ok(body.includes("the document hook remains the create-only schema and path boundary"));
+	assert.ok(body.includes("only Alan's actions, blockers, and resume references"));
+	assert.ok(!body.includes("handoff-writer"));
+	assert.equal(existsSync(new URL("../agents/handoff-writer.md", import.meta.url)), false);
+});
+
+test("review escalation preserves cohesive patches and comment findings are material", () => {
+	assert.ok(lightReviewer.includes("Use at most 12 combined `read`, `grep`, and `find` calls"));
+	assert.ok(lightReviewer.includes("request one scoped `code-reviewer` pass over the same patch"));
+	assert.ok(lightReviewer.includes("do not invent an ownership split"));
+	assert.ok(body.includes("preserve its bounded evidence and launch one scoped `code-reviewer` over the same patch"));
+	assert.ok(fullReviewer.includes("comment bloat by default"));
+	assert.ok(fullReviewer.includes("Comment bloat is P1 only when it is misleading"));
+	assert.ok(fullReviewer.includes("materially obscures a concrete correctness or maintenance hazard"));
+	assert.ok(fullReviewer.includes("makes the scoped change unsafe to review"));
+	assert.ok(!fullReviewer.includes("pervasive comment bloat"));
 });
 
 test("subagent children register no prompt hook", () => {

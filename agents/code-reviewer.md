@@ -38,8 +38,8 @@ Before reviewing: load any relevant skills. Then check only what matters for the
 ## Severity calibration
 
 - **P0** (must fix before ship): security vulnerabilities, data loss risk, race conditions that will fire in production, broken correctness on the happy path.
-- **P1** (should fix before ship): missing critical tests, dependency vulns at moderate-or-higher severity, performance issues that will hit at expected scale, design problems that will compound, **pervasive comment bloat (multi-file, multi-instance from the pattern list above)** — code drowning in unnecessary comments is harder to read, harder to review long-term, and signals the writer didn't trust the code to speak.
-- **P2** (track for later): style nits, naming improvements, minor refactors, accumulating debt that's not urgent. **Isolated comment-bloat instances** count here.
+- **P1** (should fix before ship): missing critical tests, dependency vulns at moderate-or-higher severity, performance issues that will hit at expected scale, and design problems that will compound. Comment bloat is P1 only when it is misleading, materially obscures a concrete correctness or maintenance hazard, or makes the scoped change unsafe to review.
+- **P2** (track for later): style nits, naming improvements, minor refactors, accumulating debt that's not urgent, and comment bloat by default.
 
 Be honest about severity. If you find more P0s than a normal PR should have, the change is too large or too risky to review in one pass — say so.
 

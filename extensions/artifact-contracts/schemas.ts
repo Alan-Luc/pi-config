@@ -105,8 +105,11 @@ export const SCHEMAS = {
 			{ heading: "Key decisions", hint: "choices made and why, or None." },
 			{
 				heading: "Verified by",
-				hint: "each check with its exit code and an optional note, or Not run: <reason>",
-				item: { pattern: /^- (`[^`]+` (→|->) exit \d+(?: .+)?|Not run: \S.*)$/, example: "- `<command>` → exit 0" },
+				hint: "each check with its exit code, verification evidence ID, and optional note; or Not run: <reason>",
+				item: {
+					pattern: /^- (`[^`]+` (→|->) exit \d+ \[evidence: verify_[0-9a-f]{64}\](?: .+)?|Not run: \S.*)$/,
+					example: `- \`'<command>'\` → exit 0 [evidence: verify_${"0".repeat(64)}]`,
+				},
 			},
 			{ heading: "Next steps", hint: "what the parent should do next, or None." },
 			{ heading: "Do not", hint: "actions the parent or next agent must avoid, or None." },
@@ -187,6 +190,5 @@ export const AGENT_OUTPUT: Readonly<Record<string, SchemaId | null>> = {
 	"requirements-clarifier": "requirements",
 	"code-reviewer": "review",
 	"code-reviewer-light": "reviewLight",
-	"handoff-writer": null,
 };
 export const DEFAULT_OUTPUT: SchemaId = "worker";

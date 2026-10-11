@@ -40,6 +40,30 @@ test("rejects Git environment retargeting and ambiguous syntax", async () => {
 	await expect(call(createPi(), "git --bad foo worktree add .harness/worktrees/x")).rejects.toThrow("ambiguous direct Git mutation syntax");
 });
 
+test("permits only verification-owned temporary Git indexes", async () => {
+	const handlers = createPi();
+	const ctx = { cwd: "/tmp/project" };
+	const indexPath = join(tmpdir(), "pi-verification-index-abc123", "index");
+	const command = `cd '/tmp/project' && GIT_INDEX_FILE='${indexPath}' git add -A && GIT_INDEX_FILE='${indexPath}' git write-tree`;
+	await expect(call(handlers, command)).rejects.toThrow("retargeting");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "bash", toolCallId: "ordinary/1", parentToolCallId: "ordinary", input: { command } }, ctx)).rejects.toThrow("retargeting");
+
+	await handlers.tool_call({ type: "tool_call", toolName: "verification_evidence", toolCallId: "verify", input: { operation: "capture" } }, ctx);
+	await handlers.tool_call({ type: "tool_call", toolName: "bash", toolCallId: "verify/1", parentToolCallId: "verify", input: { command } }, ctx);
+	for (const maliciousCommand of [
+		"GIT_DIR=/tmp/other git status",
+		"GIT_INDEX_FILE+=/tmp/other git status",
+		"env GIT_INDEX_FILE=/tmp/other/index git add -A",
+		`${command} && GIT_INDEX_FILE=/tmp/other/index git add -A`,
+		"cd '/tmp/project' && GIT_INDEX_FILE='/tmp/other/index' git add -A && GIT_INDEX_FILE='/tmp/other/index' git write-tree",
+	]) {
+		await expect(handlers.tool_call({ type: "tool_call", toolName: "bash", toolCallId: "verify/malicious", parentToolCallId: "verify", input: { command: maliciousCommand } }, ctx)).rejects.toThrow("retargeting");
+	}
+
+	handlers.tool_result({ type: "tool_result", toolName: "verification_evidence", toolCallId: "verify", input: { operation: "capture" }, content: [], isError: false }, ctx);
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "bash", toolCallId: "verify/4", parentToolCallId: "verify", input: { command } }, ctx)).rejects.toThrow("retargeting");
+});
+
 test.each(["git -C /tmp/repository commit --no-verify -m message", "git commit -nq -m message"])("rejects no-verify: %s", async (command) => {
 	await expect(call(createPi(), command)).rejects.toThrow("no-verify");
 });

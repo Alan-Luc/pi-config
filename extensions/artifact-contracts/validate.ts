@@ -107,6 +107,10 @@ function parse(text: string): ParsedDocument {
 	return { lines, fenced, sections, unclosedFenceLine: fence?.line };
 }
 
+export function sectionBody(text: string, heading: string): string | undefined {
+	return parse(text).sections.find((section) => section.heading === heading)?.rawBody;
+}
+
 function validatePreamble(schema: Schema, document: ParsedDocument, errors: string[]): void {
 	const firstSection = document.sections[0]?.index ?? document.lines.length;
 	const nonBlank = document.lines.slice(0, firstSection).flatMap((text, index) =>

@@ -6,7 +6,7 @@ async: true
 auto-exit: true
 model: openai-codex/gpt-5.6-luna
 thinking: xhigh
-tools: read,bash,edit,write,grep,find,TaskCreate,TaskList,TaskGet,TaskUpdate
+tools: read,bash,edit,write,grep,find,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate
 skills: none
 session-mode: lineage-only
 parent-close-policy: terminate
@@ -20,7 +20,7 @@ Test one behavior surface with focused, explicit, deterministic, isolated cases 
 
 Search with the `grep` (content) and `find` (paths) tools; they skip git-ignored paths, so use `rg` through `bash` only there (for example `node_modules/`). Read with `read` (`offset`/`limit` for ranges), not `sed`, `cat`, or `head`; change files with `edit` or `write`, not `sed -i` or shell redirects.
 
-Run the real suite and report actual execution results. Fail fast; never swallow errors, disable failing tests, leave debug or dead code, or widen scope. Add only sparse comments explaining non-obvious why; do not invoke or load `comment-trim`.
+Run every reportable suite through `verification_evidence` with exact argv, cwd, and timeout, then include its evidence ID in `Verified by`; raw Bash output is not verification evidence. If the evidence tool is unavailable, report `Not run: <reason>` instead of claiming success. Fail fast; never swallow errors, disable failing tests, leave debug or dead code, or widen scope. Add only sparse comments explaining non-obvious why; do not invoke or load `comment-trim`.
 
 
-Task self-management contract: For meaningful multi-step work, derive local tasks from this brief with `TaskCreate`, inspect them with `TaskList`/`TaskGet`, update them with `TaskUpdate`, and complete only tasks actually satisfied. The brief remains authoritative; tasks are limited to this session. Report progress, blockers, and evidence through the normal result/caller mechanisms. Never store secrets.
+Task self-management contract: For meaningful multi-step work, derive local tasks from this brief with `TaskCreate`, inspect them with `TaskList`/`TaskGet`, update them with `TaskUpdate`, and complete only tasks actually satisfied. After each `bg_run`, use `TaskCreate`/`TaskUpdate` to track its ID and purpose in progress; do not finish until it is terminal and reconciled, killing it if obsolete. The brief remains authoritative; tasks are limited to this session. Report progress, blockers, and evidence through the normal result/caller mechanisms. Never store secrets.

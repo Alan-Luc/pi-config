@@ -186,8 +186,9 @@ test("up to three leading spaces still count as structure, as in rendered Markdo
 
 	const worker = filledDocument("worker");
 	assert.deepEqual(validate("worker", withSectionBody(worker, "Status", ["  done  "])), { ok: true, errors: [] });
-	assert.deepEqual(validate("worker", withSectionBody(worker, "Verified by", [" - `bun test` → exit 0", " - Not run: no browser"])), { ok: true, errors: [] });
-	assert.deepEqual(validate("worker", withSectionBody(worker, "Verified by", ["- `bun test` → exit 0", "  - nested detail"])), { ok: true, errors: [] });
+	const evidenceId = `verify_${"0".repeat(64)}`;
+	assert.deepEqual(validate("worker", withSectionBody(worker, "Verified by", [` - \`'bun' 'test'\` → exit 0 [evidence: ${evidenceId}]`, " - Not run: no browser"])), { ok: true, errors: [] });
+	assert.deepEqual(validate("worker", withSectionBody(worker, "Verified by", [`- \`'bun' 'test'\` → exit 0 [evidence: ${evidenceId}]`, "  - nested detail"])), { ok: true, errors: [] });
 });
 
 test("fill markers quoted in code do not count as unfilled", () => {
@@ -213,10 +214,16 @@ test("literal unicode escapes outside code are rejected", () => {
 	assert.deepEqual(validate("brief", withSectionBody(brief, "Objective", ["```", 'const dash = "\\u2014";', "```"])), { ok: true, errors: [] });
 });
 
-test("verified-by items may carry a note after the exit code", () => {
+test("verified-by command claims require evidence IDs and may carry notes", () => {
 	const worker = filledDocument("worker");
-	assert.deepEqual(validate("worker", withSectionBody(worker, "Verified by", ["- `bun test` → exit 1 (8 pass, 1 fail)"])), { ok: true, errors: [] });
-	assert.ok(validate("worker", withSectionBody(worker, "Verified by", ["- `bun test` → exit 1(8 pass)"])).errors.length > 0);
+	const evidenceId = `verify_${"a".repeat(64)}`;
+	assert.deepEqual(
+		validate("worker", withSectionBody(worker, "Verified by", [`- \`'bun' 'test'\` → exit 1 [evidence: ${evidenceId}] (8 pass, 1 fail)`])),
+		{ ok: true, errors: [] },
+	);
+	assert.ok(validate("worker", withSectionBody(worker, "Verified by", ["- `bun test` → exit 0"])).errors.length > 0);
+	assert.ok(validate("worker", withSectionBody(worker, "Verified by", [`- \`'bun' 'test'\` → exit 1 [evidence: ${evidenceId}](8 pass)`])).errors.length > 0);
+	assert.deepEqual(validate("worker", withSectionBody(worker, "Verified by", ["- Not run: no browser"])), { ok: true, errors: [] });
 });
 
 test("progress entries need dated subheadings", () => {

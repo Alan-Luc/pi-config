@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
-import { test } from "bun:test";
-import { correctionMessage, failureReport, registerHandoffHooks, replyInstructions, replySchema, verifiedByErrors } from "../extensions/artifact-contracts/handoffs.ts";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, test } from "bun:test";
+import { correctionMessage, failureReport, registerHandoffHooks, replyInstructions, replySchema } from "../extensions/artifact-contracts/handoffs.ts";
 import { renderTemplate } from "../extensions/artifact-contracts/render.ts";
+import {
+	createCandidateIdentity,
+	recordVerificationEvidence,
+} from "../extensions/artifact-contracts/verification-store.ts";
 
 const child = { PI_SUBAGENT_AGENT: "code-explorer" };
 const valid = "## Status\ndone\n\n## Answer\nFound it.\n\n## Relevant paths\n`src/a.ts:1`\n\n## Uncertainty\nNone.";
@@ -36,10 +44,9 @@ test("selects schemas and does nothing outside children or for null schemas", ()
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "requirements-clarifier" }), "requirements");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-reviewer" }), "review");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-reviewer-light" }), "reviewLight");
+	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "verification-runner" }), "worker");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "other" }), "worker");
-	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "handoff-writer" }), null);
 	assert.deepEqual(hooks({}), {});
-	assert.deepEqual(hooks({ PI_SUBAGENT_AGENT: "handoff-writer" }), {});
 });
 
 test("appends the template without dropping the prior prompt", () => {
@@ -100,34 +107,104 @@ test("pure report helpers include all errors", () => {
 const worker = { PI_SUBAGENT_AGENT: "other" };
 const workerReply = (item: string) =>
 	`## Status\ndone\n\n## Objective\nX\n\n## Current state\nY\n\n## Key decisions\nNone.\n\n## Verified by\n${item}\n\n## Next steps\nNone.\n\n## Do not\nNone.`;
-const ran = (registered: Record<string, Handler>, command: string, exit_code: number) =>
-	registered.tool_result({ toolName: "bash", input: { command }, isError: exit_code !== 0, structuredContent: { exit_code } } as never);
+const evidenceRoot = mkdtempSync(join(tmpdir(), "artifact-handoff-evidence-"));
+let evidenceSequence = 0;
+const candidate = createCandidateIdentity({ repositoryRoot: "/repo", head: "a".repeat(40), tree: "b".repeat(40), kind: "dirty" });
+function evidence(command: string, exitCode = 0) {
+	const output = `output ${evidenceSequence}`;
+	const logPath = join(evidenceRoot, `${evidenceSequence++}.log`);
+	writeFileSync(logPath, output, { mode: 0o600 });
+	chmodSync(logPath, 0o600);
+	return recordVerificationEvidence({
+		command,
+		argv: ["bun", "test"],
+		cwd: ".",
+		candidate,
+		exitCode,
+		logPath,
+		logSha256: createHash("sha256").update(output).digest("hex"),
+		valid: true,
+	});
+}
+afterAll(() => rmSync(evidenceRoot, { recursive: true, force: true }));
 
-test("Verified by must match bash commands actually run", () => {
+test("Verified by must match current evidence exactly", () => {
 	const registered = hooks(worker);
 	registered.agent_start({} as never);
-	ran(registered, "cd /x && bun test tests/ 2>&1", 0);
-	assert.equal(registered.message_end(event(workerReply("- `bun test tests/` → exit 0"))), undefined);
+	const run = evidence("'bun' 'test' 'tests/'");
+	assert.equal(registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`))), undefined);
 	assert.equal(registered.turn_end({} as never), undefined);
 	assert.equal(registered.message_end(event(workerReply("- Not run: no time"))), undefined);
 	assert.equal(registered.turn_end({} as never), undefined);
 
-	registered.message_end(event(workerReply("- `pnpm typecheck` → exit 0")));
+	registered.message_end(event(workerReply(`- \`'pnpm' 'typecheck'\` → exit 0 [evidence: ${run.id}]`)));
 	let correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
-	assert.match(correction.entries[0].content, /"pnpm typecheck" was not run in this session/);
+	assert.match(correction.entries[0].content, /command does not match evidence/);
 
-	registered.message_end(event(workerReply("- `bun test tests/` → exit 1")));
+	registered.message_end(event(workerReply(`- \`${run.command}\` → exit 1 [evidence: ${run.id}]`)));
 	correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
-	assert.match(correction.entries[0].content, /"bun test tests\/" exited 0, not 1/);
+	assert.match(correction.entries[0].content, /reported exit 1, evidence recorded 0/);
 });
 
-test("recorded bash runs reset at agent_start", () => {
+test("indented Verified by claims still require current evidence", () => {
 	const registered = hooks(worker);
 	registered.agent_start({} as never);
-	ran(registered, "bun test", 0);
+	const reply = workerReply(`   - \`'bun' 'test'\` → exit 0 [evidence: verify_${"f".repeat(64)}]`)
+		.replace("\n## Verified by\n", "\n   ## Verified by\n");
+	registered.message_end(event(reply));
+	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
+	assert.match(correction.entries[0].content, /evidence .* was not found/);
+});
+
+test("fenced Verified by headings cannot hide the real evidence section", () => {
+	const registered = hooks(worker);
 	registered.agent_start({} as never);
-	registered.message_end(event(workerReply("- `bun test` → exit 0")));
+	const reply = workerReply(`- \`'bun' 'test'\` → exit 0 [evidence: verify_${"f".repeat(64)}]`)
+		.replace("## Key decisions\nNone.", "## Key decisions\n```md\n## Verified by\n- Not run: example\n```");
+	registered.message_end(event(reply));
+	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
+	assert.match(correction.entries[0].content, /evidence .* was not found/);
+});
+
+test("CRLF Verified by claims still require current evidence", () => {
+	const registered = hooks(worker);
+	registered.agent_start({} as never);
+	const reply = workerReply(`- \`'bun' 'test'\` → exit 0 [evidence: verify_${"f".repeat(64)}]`).replaceAll("\n", "\r\n");
+	registered.message_end(event(reply));
+	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
+	assert.match(correction.entries[0].content, /evidence .* was not found/);
+});
+
+test("verification evidence resets at agent_start", () => {
+	const registered = hooks(worker);
+	registered.agent_start({} as never);
+	const run = evidence("'bun' 'test'");
+	registered.agent_start({} as never);
+	registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`)));
 	assert.notEqual(registered.turn_end({} as never), undefined);
+});
+
+test("write-capable tool activity after a check invalidates its evidence", () => {
+	for (const toolName of ["bash", "edit", "write"]) {
+		const registered = hooks(worker);
+		registered.agent_start({} as never);
+		const run = evidence(`'bun' 'test' '${toolName}'`);
+		registered.tool_call({ toolName, toolCallId: toolName, input: {} } as never);
+		registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`)));
+		const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
+		assert.match(correction.entries[0].content, new RegExp(`stale: ${toolName} tool activity`));
+	}
+});
+
+test("overlapping write-capable tools invalidate evidence when they finish", () => {
+	const registered = hooks(worker);
+	registered.agent_start({} as never);
+	registered.tool_call({ toolName: "bash", toolCallId: "overlap", input: {} } as never);
+	const run = evidence("'bun' 'test' 'overlap'");
+	registered.tool_result({ toolName: "bash", toolCallId: "overlap", input: {}, content: [], isError: false } as never);
+	registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`)));
+	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
+	assert.match(correction.entries[0].content, /stale: bash tool activity completed/);
 });
 
 test("non-worker schemas ignore Verified by", () => {
@@ -136,14 +213,12 @@ test("non-worker schemas ignore Verified by", () => {
 	assert.equal(registered.message_end(event(valid + "\n\n## Verified by\n- `nope` → exit 0")), undefined);
 });
 
-test("Verified by: pipes hide exit codes unless pipefail is set", () => {
-	const report = "## Verified by\n- `bun test tests/` → exit 0";
-	const run = (command: string) => verifiedByErrors(report, [{ command, exitCode: 0 }]);
-	assert.deepEqual(run("bun test tests/ 2>&1 | tail -5"), [
-		'Verified by: "bun test tests/" exit code is hidden by a pipe; rerun it without a pipe or with set -o pipefail',
-	]);
-	assert.deepEqual(run("set -o pipefail; bun test tests/ | tail -5"), []);
-	assert.deepEqual(run("set -euo pipefail; bun test tests/ | tail -5"), []);
-	assert.deepEqual(run("bun test tests/ || true"), []);
-	assert.deepEqual(run("echo hi | cat; bun test tests/"), []);
+test("raw or masked Bash claims are rejected without evidence", () => {
+	for (const item of ["- `bun test tests/` → exit 0", "- `bun test tests/ || true` → exit 0", "- `bun test tests/ | tail -5` → exit 0"]) {
+		const registered = hooks(worker);
+		registered.agent_start({} as never);
+		registered.message_end(event(workerReply(item)));
+		const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
+		assert.match(correction.entries[0].content, /expected item matching/);
+	}
 });

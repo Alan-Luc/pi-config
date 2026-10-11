@@ -14,7 +14,8 @@
     "git:github.com/Alan-Luc/pi-vim",
     "git:github.com/alan-luc/pi-inspect-change@main",
     "git:github.com/Alan-Luc/pi-inspect-context@main",
-    "npm:@tryinget/pi-telemetry"
+    "npm:@tryinget/pi-telemetry",
+    "git:github.com/Alan-Luc/pi-background-tasks@main"
   ],
   "quietStartup": true,
   "steeringMode": "one-at-a-time",

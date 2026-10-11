@@ -1,6 +1,6 @@
 import { lstat, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
 
@@ -140,10 +140,29 @@ function tokenizeShell(command: string): ShellCommand[] | undefined {
 function isAssignment(value: string | undefined): boolean { return Boolean(value && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(value)); }
 function isGit(value: string | undefined): boolean { return value === "git" || Boolean(value && /(?:^|\/)git$/.test(value)); }
 
-function directGit(command: ShellCommand): string[] | undefined {
+function isVerificationIndexCapture(command: string): boolean {
+	const commands = tokenizeShell(command);
+	if (!commands || commands.length !== 3) return false;
+	const [changeDirectory, add, writeTree] = commands;
+	if (changeDirectory.length !== 2 || changeDirectory[0] !== "cd" || !isAbsolute(changeDirectory[1])) return false;
+	if (add.length !== 4 || add[1] !== "git" || add[2] !== "add" || add[3] !== "-A") return false;
+	if (writeTree.length !== 3 || writeTree[1] !== "git" || writeTree[2] !== "write-tree") return false;
+	if (add[0] !== writeTree[0] || !add[0].startsWith("GIT_INDEX_FILE=")) return false;
+	const indexPath = add[0].slice("GIT_INDEX_FILE=".length);
+	const indexDirectory = dirname(indexPath);
+	return isAbsolute(indexPath)
+		&& basename(indexPath) === "index"
+		&& /^pi-verification-index-[^/]+$/.test(basename(indexDirectory))
+		&& dirname(indexDirectory) === resolve(tmpdir());
+}
+
+function directGit(command: ShellCommand, allowGitIndexFile: boolean): string[] | undefined {
 	let index = 0;
 	while (isAssignment(command[index])) {
-		if (/^GIT_[A-Z0-9_]*\+?=/.test(command[index])) throw new Error("Blocked direct Git invocation with GIT_* environment retargeting");
+		const retarget = command[index].match(/^(GIT_[A-Z0-9_]*)(\+?=)/);
+		if (retarget && (!allowGitIndexFile || retarget[1] !== "GIT_INDEX_FILE" || retarget[2] !== "=")) {
+			throw new Error("Blocked direct Git invocation with GIT_* environment retargeting");
+		}
 		index += 1;
 	}
 	return isGit(command[index]) ? command.slice(index) : undefined;
@@ -245,15 +264,18 @@ async function validateWorktree(args: string[], projectRoot: string, workdir: st
 
 const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which commits only when Alan asks.";
 
-async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean): Promise<void> {
-	if (/\b(?:export\s+)?GIT_[A-Z0-9_]*\+?=/.test(command) && /\bgit\b/.test(command)) throw new Error("Blocked direct Git invocation with GIT_* environment retargeting");
+async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean, allowGitIndexFile = false): Promise<void> {
+	const retargets = [...command.matchAll(/\b(?:export\s+)?(GIT_[A-Z0-9_]*)(\+?=)/g)];
+	if (retargets.some((match) => !allowGitIndexFile || match[1] !== "GIT_INDEX_FILE" || match[2] !== "=") && /\bgit\b/.test(command)) {
+		throw new Error("Blocked direct Git invocation with GIT_* environment retargeting");
+	}
 	const commands = tokenizeShell(command);
 	if (!commands) { if (/\bgit\b/.test(command)) throw new Error("Blocked ambiguous direct Git invocation; shell syntax cannot be validated"); return; }
 	let changedDirectory = false;
 	for (const shellCommand of commands) {
 		let index = 0; while (isAssignment(shellCommand[index])) index += 1;
 		if (shellCommand[index] === "cd") { changedDirectory = true; continue; }
-		const tokens = directGit(shellCommand); if (!tokens) continue;
+		const tokens = directGit(shellCommand, allowGitIndexFile); if (!tokens) continue;
 		if (tokens.includes("--no-verify")) throw new Error("Blocked direct Git invocation containing --no-verify");
 		const invocation = parseGit(tokens, workdir);
 		if (!invocation) { if (isChild) throw new Error(SUBAGENT_GIT_BLOCK); continue; }
@@ -273,19 +295,31 @@ function resultText(event: ToolResultEvent): string { return event.content.filte
 export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string, string | undefined>> = process.env): void {
 	const isChild = isSubagentChildEnvironment(env);
 	const infrastructureFailures = new Map<string, string>();
+	const verificationCalls = new Set<string>();
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
+		if (event.toolName === "verification_evidence") {
+			verificationCalls.add(event.toolCallId);
+			return;
+		}
 		if (event.toolName === "subagent") {
 			await validateLightReview(event.input);
 			return;
 		}
 		if (event.toolName !== "bash" || !isRecord(event.input) || typeof event.input.command !== "string") return;
 		const command = event.input.command;
-		await validateGit(command, ctx.cwd, ctx.cwd, isChild);
+		const allowGitIndexFile = event.parentToolCallId !== undefined
+			&& verificationCalls.has(event.parentToolCallId)
+			&& isVerificationIndexCapture(command);
+		await validateGit(command, ctx.cwd, ctx.cwd, isChild, allowGitIndexFile);
 		const normalized = normalize(command);
 		const blocker = infrastructureFailures.get(normalized);
 		if (blocker && !ALLOW_INFRA_RETRY_RE.test(command)) throw new Error(`Blocked repeat bash command after an unchanged DB/infrastructure failure in this session: ${normalized}\nPrevious blocker: ${blocker}\nIf the dependency state changed and you need one explicit retry, prefix the command with PI_ALLOW_INFRA_RETRY=1.`);
 	});
 	pi.on("tool_result", (event: ToolResultEvent) => {
+		if (event.toolName === "verification_evidence") {
+			verificationCalls.delete(event.toolCallId);
+			return;
+		}
 		if (event.toolName !== "bash" || !isRecord(event.input) || typeof event.input.command !== "string" || !TEST_COMMAND_RE.test(event.input.command)) return;
 		const normalized = normalize(event.input.command);
 		const text = resultText(event);
