@@ -139,7 +139,7 @@ test("oneOf, item, none, labels, and subheading rules are enforced", () => {
 	const item = withSectionBody(filledDocument("worker"), "Verified by", ["not an item"]);
 	assert.ok(validate("worker", item).errors.some((error) => error.includes("top-level item")));
 
-	assert.equal(validate("reviewLight", withSectionBody(filledDocument("reviewLight"), "Findings", ["None."])).ok, true);
+	assert.equal(validate("review", withSectionBody(filledDocument("review"), "Critical (P0)", ["None."])).ok, true);
 	assert.ok(validate("worker", withSectionBody(filledDocument("worker"), "Verified by", ["None."])).errors.length > 0);
 
 	const missingLabel = withSectionBody(filledDocument("handoff"), "Alan's actions", ["1. **Do:** action", "   **Why:** reason"]);

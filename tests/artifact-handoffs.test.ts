@@ -41,9 +41,8 @@ function event(text: string, stopReason = "stop", toolCall = false): never {
 test("selects schemas and does nothing outside children or for null schemas", () => {
 	assert.equal(replySchema({}), null);
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-explorer" }), "explorer");
-	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "requirements-clarifier" }), "requirements");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-reviewer" }), "review");
-	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-reviewer-light" }), "reviewLight");
+	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "implementation-engineer" }), "worker");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "verification-runner" }), "worker");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "other" }), "worker");
 	assert.deepEqual(hooks({}), {});

@@ -92,7 +92,7 @@ async function requireReviewArtifact(value: string): Promise<void> {
 	await requireNoSymlinkTraversal(dirname(candidate), REVIEW_ARTIFACT_ROOT, "Patch artifact");
 }
 
-async function validateLightReview(input: unknown): Promise<void> {
+async function validateBoundedReview(input: unknown): Promise<void> {
 	const launches: RecordValue[] = [];
 	if (!isRecord(input)) return;
 	if (Array.isArray(input.children) && input.children.length > 0) {
@@ -101,11 +101,11 @@ async function validateLightReview(input: unknown): Promise<void> {
 		launches.push(input);
 	}
 	for (const launch of launches) {
-		if (launch.agent !== "code-reviewer-light") continue;
+		if (launch.agent !== "code-reviewer") continue;
 		const task = typeof launch.task === "string" ? launch.task : "";
 		const artifactMatch = task.match(/^Patch artifact:[ \t]*(.*)$/im);
 		if (!artifactMatch || !/^Review paths:[ \t]*\S+/im.test(task)) {
-			throw new Error(`Blocked unbounded code-reviewer-light task; use the runtime review root:\nPatch artifact: ${resolve(REVIEW_ARTIFACT_ROOT, "<name>.patch")}\nReview paths: <exact paths>`);
+			throw new Error(`Blocked unbounded code-reviewer task; use the runtime review root:\nPatch artifact: ${resolve(REVIEW_ARTIFACT_ROOT, "<name>.patch")}\nReview paths: <exact paths>`);
 		}
 		await requireReviewArtifact(artifactMatch[1].trim());
 	}
@@ -140,15 +140,15 @@ function tokenizeShell(command: string): ShellCommand[] | undefined {
 function isAssignment(value: string | undefined): boolean { return Boolean(value && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(value)); }
 function isGit(value: string | undefined): boolean { return value === "git" || Boolean(value && /(?:^|\/)git$/.test(value)); }
 
-function isVerificationIndexCapture(command: string): boolean {
+function isVerificationIndexCommand(command: string): boolean {
 	const commands = tokenizeShell(command);
-	if (!commands || commands.length !== 3) return false;
-	const [changeDirectory, add, writeTree] = commands;
+	if (!commands || commands.length !== 2) return false;
+	const [changeDirectory, gitCommand] = commands;
 	if (changeDirectory.length !== 2 || changeDirectory[0] !== "cd" || !isAbsolute(changeDirectory[1])) return false;
-	if (add.length !== 4 || add[1] !== "git" || add[2] !== "add" || add[3] !== "-A") return false;
-	if (writeTree.length !== 3 || writeTree[1] !== "git" || writeTree[2] !== "write-tree") return false;
-	if (add[0] !== writeTree[0] || !add[0].startsWith("GIT_INDEX_FILE=")) return false;
-	const indexPath = add[0].slice("GIT_INDEX_FILE=".length);
+	const isAdd = gitCommand.length === 4 && gitCommand[1] === "git" && gitCommand[2] === "add" && gitCommand[3] === "-A";
+	const isWriteTree = gitCommand.length === 3 && gitCommand[1] === "git" && gitCommand[2] === "write-tree";
+	if ((!isAdd && !isWriteTree) || !gitCommand[0].startsWith("GIT_INDEX_FILE=")) return false;
+	const indexPath = gitCommand[0].slice("GIT_INDEX_FILE=".length);
 	const indexDirectory = dirname(indexPath);
 	return isAbsolute(indexPath)
 		&& basename(indexPath) === "index"
@@ -302,14 +302,14 @@ export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string
 			return;
 		}
 		if (event.toolName === "subagent") {
-			await validateLightReview(event.input);
+			await validateBoundedReview(event.input);
 			return;
 		}
 		if (event.toolName !== "bash" || !isRecord(event.input) || typeof event.input.command !== "string") return;
 		const command = event.input.command;
 		const allowGitIndexFile = event.parentToolCallId !== undefined
 			&& verificationCalls.has(event.parentToolCallId)
-			&& isVerificationIndexCapture(command);
+			&& isVerificationIndexCommand(command);
 		await validateGit(command, ctx.cwd, ctx.cwd, isChild, allowGitIndexFile);
 		const normalized = normalize(command);
 		const blocker = infrastructureFailures.get(normalized);

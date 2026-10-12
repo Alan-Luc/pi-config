@@ -124,18 +124,6 @@ export const SCHEMAS = {
 			{ heading: "Uncertainty", hint: "real uncertainty or blockers, or None." },
 		],
 	},
-	requirements: {
-		preamble: [],
-		sections: [
-			status,
-			{ heading: "Summary", hint: "one paragraph: in scope and out of scope" },
-			{ heading: "User stories", hint: "prioritized P0/P1/P2, or None." },
-			{ heading: "Acceptance criteria", hint: "testable happy and failure behavior" },
-			{ heading: "Edge cases and constraints", hint: "concerns that actually apply, or None." },
-			{ heading: "Open questions", hint: "only answers that change scope or behavior, or None." },
-			{ heading: "Phases", hint: "MVP and dependencies for non-trivial requests, or None." },
-		],
-	},
 	review: {
 		preamble: [],
 		sections: [
@@ -147,18 +135,6 @@ export const SCHEMAS = {
 			findings("Nice-to-have (P2)"),
 			{ heading: "Positive practices", hint: "one to three concrete decisions done well, or None." },
 			{ heading: "Out of scope", hint: "follow-ups outside the requested review, or None." },
-		],
-	},
-	reviewLight: {
-		preamble: [],
-		sections: [
-			status,
-			{
-				heading: "Findings",
-				hint: "one item per finding: P0|P1|P2 `path:line` — issue",
-				item: { pattern: /^- (P0|P1|P2) `[^`]+` (—|-) \S/, example: "- P1 `src/file.ts:42` — <issue>" },
-				none: true,
-			},
 		],
 	},
 } as const satisfies Record<string, Schema>;
@@ -187,8 +163,6 @@ export const PROTECTED: readonly { readonly path: RegExp; readonly reason: strin
 /** Final-message schema per subagent; unlisted agents use DEFAULT_OUTPUT; null means no message schema. */
 export const AGENT_OUTPUT: Readonly<Record<string, SchemaId | null>> = {
 	"code-explorer": "explorer",
-	"requirements-clarifier": "requirements",
 	"code-reviewer": "review",
-	"code-reviewer-light": "reviewLight",
 };
 export const DEFAULT_OUTPUT: SchemaId = "worker";

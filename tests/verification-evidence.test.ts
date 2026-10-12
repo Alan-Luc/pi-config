@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "bun:test";
@@ -31,7 +31,14 @@ const candidate = createCandidateIdentity({
 	kind: "dirty",
 });
 
-function record(command = "'bun' 'test'", exitCode = 0, valid = true, cwd = ".") {
+function record(
+	command = "'bun' 'test'",
+	exitCode = 0,
+	valid = true,
+	cwd = ".",
+	candidateIdentity = candidate,
+	attempt?: ReturnType<typeof beginVerificationAttempt>,
+) {
 	const output = `full output ${sequence}`;
 	const logPath = join(root, `${sequence++}.log`);
 	writeFileSync(logPath, output, { mode: 0o600 });
@@ -40,13 +47,13 @@ function record(command = "'bun' 'test'", exitCode = 0, valid = true, cwd = ".")
 		command,
 		argv: ["bun", "test"],
 		cwd,
-		candidate,
+		candidate: candidateIdentity,
 		exitCode,
 		logPath,
 		logSha256: createHash("sha256").update(output).digest("hex"),
 		valid,
 		invalidReason: valid ? undefined : "candidate changed during verification",
-	});
+	}, attempt);
 }
 
 afterEach(() => clearVerificationEvidence());
@@ -71,19 +78,39 @@ test("claims require exact command and exit matches", () => {
 	assert.match(verificationClaimErrors({ evidenceId: `verify_${"f".repeat(64)}`, command: evidence.command, exitCode: 0 })[0], /not found/);
 });
 
-test("only the latest record for one command and cwd is reportable", () => {
+test("only the latest record for one repository, command, and cwd is reportable", () => {
 	const older = record();
 	const latest = record();
 	assert.match(verificationClaimErrors({ evidenceId: older.id, command: older.command, exitCode: 0 })[0], /obsolete/);
 	assert.deepEqual(verificationClaimErrors({ evidenceId: latest.id, command: latest.command, exitCode: 0 }), []);
-	beginVerificationAttempt(latest.command, latest.cwd);
+	beginVerificationAttempt(candidate.repositoryRoot, latest.command, latest.cwd);
 	assert.match(verificationClaimErrors({ evidenceId: latest.id, command: latest.command, exitCode: 0 })[0], /obsolete/);
+});
+
+test("identical checks in linked worktrees remain independently reportable", () => {
+	const command = "'bun' 'test'";
+	const primary = record(command);
+	const linkedCandidate = createCandidateIdentity({
+		repositoryRoot: "/repo-linked",
+		head: candidate.head,
+		tree: candidate.tree,
+		kind: candidate.kind,
+	});
+	const linkedAttempt = beginVerificationAttempt(linkedCandidate.repositoryRoot, command, ".");
+	assert.deepEqual(verificationClaimErrors({ evidenceId: primary.id, command, exitCode: 0 }), []);
+	const linked = record(command, 0, true, ".", linkedCandidate, linkedAttempt);
+	assert.deepEqual(verificationClaimErrors({ evidenceId: primary.id, command, exitCode: 0 }), []);
+	assert.deepEqual(verificationClaimErrors({ evidenceId: linked.id, command, exitCode: 0 }), []);
+
+	beginVerificationAttempt(candidate.repositoryRoot, command, ".");
+	assert.match(verificationClaimErrors({ evidenceId: primary.id, command, exitCode: 0 })[0], /obsolete/);
+	assert.deepEqual(verificationClaimErrors({ evidenceId: linked.id, command, exitCode: 0 }), []);
 });
 
 test("failed attempts remain scoped to the exact command and cwd", () => {
 	const command = "'bun' 'test'";
 	const firstCwd = record(command, 0, true, "packages/a");
-	beginVerificationAttempt(command, firstCwd.cwd);
+	beginVerificationAttempt(candidate.repositoryRoot, command, firstCwd.cwd);
 	const secondCwd = record(command, 0, true, "packages/b");
 	assert.match(verificationClaimErrors({ evidenceId: firstCwd.id, command, exitCode: 0 })[0], /obsolete/);
 	assert.deepEqual(verificationClaimErrors({ evidenceId: secondCwd.id, command, exitCode: 0 }), []);
@@ -91,7 +118,7 @@ test("failed attempts remain scoped to the exact command and cwd", () => {
 
 test("tool completion before recording invalidates an overlapping verification attempt", () => {
 	const command = "'bun' 'test' 'overlap'";
-	const attempt = beginVerificationAttempt(command, ".");
+	const attempt = beginVerificationAttempt(candidate.repositoryRoot, command, ".");
 	invalidateVerificationEvidence("bash tool activity completed after verification");
 	const output = `full output ${sequence}`;
 	const logPath = join(root, `${sequence++}.log`);
@@ -130,7 +157,10 @@ test("invalid, missing, and tampered evidence fails closed", () => {
 });
 
 type ProcessResult = { exitCode: number; output: string };
-type FakeBashOptions = { omitExitFor?: (command: string) => boolean };
+type FakeBashOptions = {
+	omitExitFor?: (command: string) => boolean;
+	resultFor?: (command: string) => ProcessResult | undefined;
+};
 
 async function runProcess(argv: readonly string[], cwd: string): Promise<ProcessResult> {
 	const process = Bun.spawn([...argv], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -168,7 +198,7 @@ function makeContext(directory: string, options: FakeBashOptions = {}): Verifica
 			if (typeof args !== "object" || args === null || Array.isArray(args)) throw new Error("invalid fake bash input");
 			const input = args as { command?: unknown; timeout?: unknown };
 			if (typeof input.command !== "string" || typeof input.timeout !== "number") throw new Error("invalid fake bash input");
-			const result = await runProcess(["bash", "-c", input.command], directory);
+			const result = options.resultFor?.(input.command) ?? await runProcess(["bash", "-c", input.command], directory);
 			const structuredContent: Record<string, string | number | boolean> = {
 				output: result.output,
 				truncated: false,
@@ -253,6 +283,87 @@ test("candidate capture preserves HEAD, branch, real index, status, stash, and f
 	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
 	assert.deepEqual(await repositorySnapshot(directory), before);
 	assert.equal(readFileSync(join(directory, "tracked.txt"), "utf8"), "base\n");
+});
+
+test("candidate capture tolerates embedded repository warnings", async () => {
+	const directory = await newRepository();
+	const embedded = join(directory, "embedded");
+	mkdirSync(embedded);
+	await git(embedded, "init", "--quiet");
+	await git(embedded, "config", "user.email", "verification@example.test");
+	await git(embedded, "config", "user.name", "Verification Test");
+	writeFileSync(join(embedded, "tracked.txt"), "embedded\n");
+	await git(embedded, "add", "tracked.txt");
+	await git(embedded, "commit", "--quiet", "-m", "embedded");
+
+	const candidate = await captureCandidate(makeContext(directory));
+	assert.equal(candidate.kind, "dirty");
+});
+
+test("candidate capture reports staging and malformed tree diagnostics", async () => {
+	const directory = await newRepository();
+	const failedAdd = makeContext(directory, {
+		resultFor: (command) => command.includes("git add -A")
+			? { exitCode: 1, output: "embedded staging failed" }
+			: undefined,
+	});
+	await assert.rejects(captureCandidate(failedAdd), /temporary Git index staging failed with exit 1: embedded staging failed/);
+
+	const malformedTree = makeContext(directory, {
+		resultFor: (command) => command.includes("git write-tree")
+			? { exitCode: 0, output: `${"x".repeat(MAX_EXPOSED_OUTPUT_BYTES + 100)}tree diagnostic` }
+			: undefined,
+	});
+	await assert.rejects(
+		captureCandidate(malformedTree),
+		(error: Error) => error.message.includes("invalid Git tree output")
+			&& error.message.includes("tree diagnostic")
+			&& error.message.length < MAX_EXPOSED_OUTPUT_BYTES + 200,
+	);
+});
+
+test("capture and run target linked sibling worktrees only", { timeout: 30_000 }, async () => {
+	const directory = await newRepository();
+	const worktreeContainer = mkdtempSync(join(tmpdir(), "verification-linked-worktree-"));
+	runtimeRepositories.push(worktreeContainer);
+	const worktree = join(worktreeContainer, "candidate");
+	await git(directory, "worktree", "add", "--quiet", "-b", "isolated-candidate", worktree);
+	writeFileSync(join(worktree, "candidate.txt"), "isolated\n");
+	const context = makeContext(directory);
+
+	const captured = await executeVerificationEvidence(
+		"linked-capture",
+		{ operation: "capture", repositoryRoot: worktree },
+		undefined,
+		context,
+	);
+	assert.equal(captured.details.operation, "capture");
+	if (captured.details.operation !== "capture") throw new Error("expected capture result");
+	assert.equal(captured.details.candidate.repositoryRoot, await git(worktree, "rev-parse", "--show-toplevel"));
+	assert.equal(captured.details.candidate.kind, "dirty");
+
+	const run = await executeVerification(
+		"linked-run",
+		{ operation: "run", repositoryRoot: worktree, argv: ["git", "rev-parse", "--show-toplevel"], cwd: ".", timeout: 10 },
+		context,
+	);
+	assert.equal(run.output.trim(), captured.details.candidate.repositoryRoot);
+	assert.equal(run.evidence.candidate.repositoryRoot, captured.details.candidate.repositoryRoot);
+
+	await assert.rejects(
+		executeVerification("relative-root", { operation: "run", repositoryRoot: "../candidate", argv: ["true"], cwd: ".", timeout: 10 }, context),
+		/repositoryRoot must be absolute/,
+	);
+	mkdirSync(join(worktree, "subdirectory"));
+	await assert.rejects(
+		executeVerification("subdirectory-root", { operation: "run", repositoryRoot: join(worktree, "subdirectory"), argv: ["true"], cwd: ".", timeout: 10 }, context),
+		/repositoryRoot must be the worktree top level/,
+	);
+	const unrelated = await newRepository();
+	await assert.rejects(
+		executeVerification("unrelated-root", { operation: "run", repositoryRoot: unrelated, argv: ["true"], cwd: ".", timeout: 10 }, context),
+		/linked worktree of the session repository/,
+	);
 });
 
 test("non-Git and unborn repositories fail descriptively", async () => {
@@ -406,7 +517,7 @@ test("verification runners keep Bash callable but hide it from the model", () =>
 	let implementationTool: { prepareLoadout?: unknown } | undefined;
 	registerVerificationEvidence(
 		{ registerTool: (tool: never) => { implementationTool = tool; } } as never,
-		{ PI_SUBAGENT_AGENT: "backend-engineer" },
+		{ PI_SUBAGENT_AGENT: "implementation-engineer" },
 	);
 	assert.equal(implementationTool?.prepareLoadout, undefined);
 });

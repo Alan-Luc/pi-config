@@ -37,7 +37,10 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 	oneOf: [
 		{
 			type: "object",
-			properties: { operation: { const: "capture" } },
+			properties: {
+				operation: { const: "capture" },
+				repositoryRoot: { type: "string", minLength: 1 },
+			},
 			required: ["operation"],
 			additionalProperties: false,
 		},
@@ -45,6 +48,7 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 			type: "object",
 			properties: {
 				operation: { const: "run" },
+				repositoryRoot: { type: "string", minLength: 1 },
 				argv: { type: "array", items: { type: "string" }, minItems: 1 },
 				cwd: { type: "string", minLength: 1 },
 				timeout: { type: "number", exclusiveMinimum: 0, maximum: MAX_TIMEOUT_SECONDS },
@@ -55,8 +59,8 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 	],
 } as const;
 export type VerificationEvidenceInput =
-	| { operation: "capture" }
-	| { operation: "run"; argv: string[]; cwd: string; timeout: number };
+	| { operation: "capture"; repositoryRoot?: string }
+	| { operation: "run"; repositoryRoot?: string; argv: string[]; cwd: string; timeout: number };
 
 const candidateOutputSchema = {
 	type: "object",
@@ -123,6 +127,7 @@ type BashOutcome = Awaited<ReturnType<ExtensionToolContext["executeTool"]>>;
 type Repository = Readonly<{
 	root: string;
 	indexPath: string;
+	commonDirectory: string;
 }>;
 type BashResult = Readonly<{ exitCode: number; output: string }>;
 
@@ -282,8 +287,13 @@ async function executeGit(
 	return result;
 }
 
-async function discoverRepository(ctx: VerificationToolContext, signal: AbortSignal | undefined): Promise<Repository> {
-	const rootResult = await executeBash(ctx, "git rev-parse --show-toplevel", CANDIDATE_TIMEOUT_SECONDS, signal);
+async function discoverRepositoryAt(
+	ctx: VerificationToolContext,
+	directory: string | undefined,
+	signal: AbortSignal | undefined,
+): Promise<Repository> {
+	const prefix = directory === undefined ? "" : `cd ${shellQuote(directory)} && `;
+	const rootResult = await executeBash(ctx, `${prefix}git rev-parse --show-toplevel`, CANDIDATE_TIMEOUT_SECONDS, signal);
 	if (rootResult.exitCode !== 0) {
 		throw new Error("verification_evidence requires a Git working tree; repository discovery failed");
 	}
@@ -296,8 +306,47 @@ async function discoverRepository(ctx: VerificationToolContext, signal: AbortSig
 	const workTree = singleLineOutput((await executeGit(ctx, root, ["rev-parse", "--is-inside-work-tree"], signal)).output, "Git work-tree status");
 	if (workTree !== "true") throw new Error("verification_evidence requires a Git working tree");
 	const indexPathValue = singleLineOutput((await executeGit(ctx, root, ["rev-parse", "--git-path", "index"], signal)).output, "the Git index path");
-	const indexPath = resolve(root, indexPathValue);
-	return { root, indexPath };
+	const commonDirectoryValue = singleLineOutput((await executeGit(ctx, root, ["rev-parse", "--git-common-dir"], signal)).output, "the Git common directory");
+	let commonDirectory: string;
+	try {
+		commonDirectory = realpathSync(resolve(root, commonDirectoryValue));
+	} catch (error) {
+		throw new Error(`verification_evidence could not resolve the Git common directory: ${String(error)}`);
+	}
+	return { root, indexPath: resolve(root, indexPathValue), commonDirectory };
+}
+
+function canonicalRepositoryRoot(value: string): string {
+	if (value.includes("\0")) throw new Error("verification_evidence rejects NUL bytes in repositoryRoot");
+	if (!isAbsolute(value)) throw new Error("verification_evidence repositoryRoot must be absolute");
+	let root: string;
+	try {
+		root = realpathSync(value);
+		if (!statSync(root).isDirectory()) throw new Error("not a directory");
+	} catch (error) {
+		throw new Error(`verification_evidence repositoryRoot is not a directory: ${value} (${String(error)})`);
+	}
+	return root;
+}
+
+async function discoverRepository(
+	ctx: VerificationToolContext,
+	signal: AbortSignal | undefined,
+	repositoryRoot?: string,
+): Promise<Repository> {
+	const sessionRepository = await discoverRepositoryAt(ctx, undefined, signal);
+	if (repositoryRoot === undefined) return sessionRepository;
+	const requestedRoot = canonicalRepositoryRoot(repositoryRoot);
+	const requestedRepository = requestedRoot === sessionRepository.root
+		? sessionRepository
+		: await discoverRepositoryAt(ctx, requestedRoot, signal);
+	if (requestedRepository.root !== requestedRoot) {
+		throw new Error("verification_evidence repositoryRoot must be the worktree top level");
+	}
+	if (requestedRepository.commonDirectory !== sessionRepository.commonDirectory) {
+		throw new Error("verification_evidence repositoryRoot must be a linked worktree of the session repository");
+	}
+	return requestedRepository;
 }
 
 function repositoryCwd(root: string, cwd: string): { absolute: string; relative: string } {
@@ -341,18 +390,31 @@ async function snapshotCandidate(
 	const temporaryIndex = join(temporaryDirectory, "index");
 	try {
 		if (existsSync(repository.indexPath)) copyFileSync(repository.indexPath, temporaryIndex);
+		const addResult = await executeBash(
+			ctx,
+			`cd ${shellQuote(repository.root)} && GIT_INDEX_FILE=${shellQuote(temporaryIndex)} git add -A`,
+			CANDIDATE_TIMEOUT_SECONDS,
+			signal,
+		);
+		if (addResult.exitCode !== 0) {
+			const output = boundedOutput(addResult.output).trim();
+			throw new Error(`temporary Git index staging failed with exit ${addResult.exitCode}${output ? `: ${output}` : ""}`);
+		}
 		const treeResult = await executeBash(
 			ctx,
-			`cd ${shellQuote(repository.root)} && GIT_INDEX_FILE=${shellQuote(temporaryIndex)} git add -A && GIT_INDEX_FILE=${shellQuote(temporaryIndex)} git write-tree`,
+			`cd ${shellQuote(repository.root)} && GIT_INDEX_FILE=${shellQuote(temporaryIndex)} git write-tree`,
 			CANDIDATE_TIMEOUT_SECONDS,
 			signal,
 		);
 		if (treeResult.exitCode !== 0) {
-			const output = treeResult.output.trim();
-			throw new Error(`temporary Git index capture failed with exit ${treeResult.exitCode}${output ? `: ${output}` : ""}`);
+			const output = boundedOutput(treeResult.output).trim();
+			throw new Error(`temporary Git tree serialization failed with exit ${treeResult.exitCode}${output ? `: ${output}` : ""}`);
 		}
-		const tree = singleLineOutput(treeResult.output, "the temporary-index tree");
-		if (!/^[0-9a-f]{40,64}$/.test(tree)) throw new Error("verification_evidence received an invalid Git tree id");
+		const tree = treeResult.output.trim();
+		if (!/^[0-9a-f]{40,64}$/.test(tree)) {
+			const output = boundedOutput(treeResult.output).trim();
+			throw new Error(`verification_evidence received invalid Git tree output${output ? `: ${output}` : ""}`);
+		}
 		return createCandidateIdentity({
 			repositoryRoot: repository.root,
 		head,
@@ -383,8 +445,9 @@ function writeVerificationLog(toolCallId: string, output: string): { path: strin
 export async function captureCandidate(
 	ctx: VerificationToolContext,
 	signal?: AbortSignal,
+	repositoryRoot?: string,
 ): Promise<CandidateIdentity> {
-	const repository = await discoverRepository(ctx, signal);
+	const repository = await discoverRepository(ctx, signal, repositoryRoot);
 	return snapshotCandidate(ctx, repository, signal);
 }
 
@@ -398,9 +461,9 @@ export async function executeVerification(
 	const command = canonicalCommand(params.argv);
 	validateTimeout(params.timeout);
 	const cwd = canonicalCwd(params.cwd);
-	const attempt = beginVerificationAttempt(command, cwd);
-	const repository = await discoverRepository(ctx, signal);
+	const repository = await discoverRepository(ctx, signal, params.repositoryRoot);
 	const workingDirectory = repositoryCwd(repository.root, cwd);
+	const attempt = beginVerificationAttempt(repository.root, command, workingDirectory.relative);
 	const before = await snapshotCandidate(ctx, repository, signal);
 	const commandResult = await executeBash(
 		ctx,
@@ -437,7 +500,7 @@ export async function executeVerificationEvidence(
 	ctx: VerificationToolContext,
 ): Promise<AgentToolResult<VerificationEvidenceResult>> {
 	if (params.operation === "capture") {
-		const result: CandidateCaptureResult = { operation: "capture", candidate: await captureCandidate(ctx, signal) };
+		const result: CandidateCaptureResult = { operation: "capture", candidate: await captureCandidate(ctx, signal, params.repositoryRoot) };
 		return { content: [{ type: "text", text: contentFor(result) }], details: result, structuredContent: result };
 	}
 	const result = await executeVerification(toolCallId, params, ctx, signal);
@@ -457,10 +520,10 @@ export function registerVerificationEvidence(
 	pi.registerTool({
 		name: "verification_evidence",
 		label: "Verification evidence",
-		description: "Capture the current Git candidate or run one exact argv check against an immutable candidate identity.",
+		description: "Capture a Git candidate or run one exact argv check against an immutable candidate identity, optionally in a linked worktree.",
 		promptSnippet: "Capture or run bounded verification evidence",
 		promptGuidelines: [
-			"Use capture before coordinating checks and run only one exact argument vector with a repository-relative cwd.",
+			"Use capture before coordinating checks and run only one exact argument vector with a repository-relative cwd; repositoryRoot may select an absolute linked-worktree root.",
 			"A failed command or changed candidate is evidence of failure; do not mask either result.",
 		],
 		parameters: VERIFICATION_EVIDENCE_PARAMETERS,

@@ -38,8 +38,8 @@ function hash(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
-function commandKey(command: string, cwd: string): string {
-	return JSON.stringify([command, cwd]);
+function commandKey(repositoryRoot: string, command: string, cwd: string): string {
+	return JSON.stringify([repositoryRoot, command, cwd]);
 }
 
 export function createCandidateIdentity(input: CandidateInput): CandidateIdentity {
@@ -49,8 +49,8 @@ export function createCandidateIdentity(input: CandidateInput): CandidateIdentit
 	});
 }
 
-export function beginVerificationAttempt(command: string, cwd: string): VerificationAttempt {
-	const key = commandKey(command, cwd);
+export function beginVerificationAttempt(repositoryRoot: string, command: string, cwd: string): VerificationAttempt {
+	const key = commandKey(repositoryRoot, command, cwd);
 	const attempt = Object.freeze({ token: Symbol(key), generation: currentGeneration });
 	latestAttemptByCommand.set(key, attempt);
 	return attempt;
@@ -72,7 +72,7 @@ export function recordVerificationEvidence(input: EvidenceInput, attempt?: Verif
 	});
 	evidenceById.set(id, evidence);
 	evidenceGenerationById.set(id, generation);
-	const key = commandKey(input.command, input.cwd);
+	const key = commandKey(input.candidate.repositoryRoot, input.command, input.cwd);
 	if (attempt === undefined) {
 		latestByCommand.set(key, id);
 	} else if (latestAttemptByCommand.get(key) === attempt) {
@@ -91,11 +91,11 @@ export function verificationClaimErrors(claim: VerificationClaim): string[] {
 	if (claim.exitCode !== evidence.exitCode) {
 		errors.push(`Verified by: reported exit ${claim.exitCode}, evidence recorded ${evidence.exitCode}`);
 	}
-	const key = commandKey(evidence.command, evidence.cwd);
+	const key = commandKey(evidence.candidate.repositoryRoot, evidence.command, evidence.cwd);
 	if (latestAttemptByCommand.has(key)) {
-		errors.push(`Verified by: evidence ${claim.evidenceId} is obsolete; a newer attempt for the command and cwd did not complete`);
+		errors.push(`Verified by: evidence ${claim.evidenceId} is obsolete; a newer attempt for the repository, command, and cwd did not complete`);
 	} else if (latestByCommand.get(key) !== evidence.id) {
-		errors.push(`Verified by: evidence ${claim.evidenceId} is obsolete; only the latest result for the command and cwd is reportable`);
+		errors.push(`Verified by: evidence ${claim.evidenceId} is obsolete; only the latest result for the repository, command, and cwd is reportable`);
 	}
 	if (evidenceGenerationById.get(evidence.id) !== currentGeneration) {
 		errors.push(`Verified by: evidence ${claim.evidenceId} is stale: ${latestInvalidationReason}`);
