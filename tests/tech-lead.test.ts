@@ -173,12 +173,17 @@ test("main sessions append the router while children do not", () => {
 
 function harness(tools: string[]) {
 	let active = tools;
+	let sessionStart: () => void = () => undefined;
 	let start: (event: { systemPromptOptions: { appendSystemPrompt?: string } }) => void = () => undefined;
 	let solo: (args: string, ctx: unknown) => Promise<void> = async () => undefined;
 	const notes: string[] = [];
 	registerTechLead(
 		{
-			on: (_: string, handler: never) => ((start = handler), () => undefined),
+			on: (event: string, handler: never) => {
+				if (event === "session_start") sessionStart = handler;
+				if (event === "before_agent_start") start = handler;
+				return () => undefined;
+			},
 			registerCommand: (name: string, options: { handler: never }) => name === "solo" && (solo = options.handler),
 			getActiveTools: () => active,
 			setActiveTools: (next: string[]) => (active = next),
@@ -191,21 +196,31 @@ function harness(tools: string[]) {
 		start({ systemPromptOptions: options });
 		return options.appendSystemPrompt ?? "";
 	};
-	return { toggle: () => solo("", context), tools: () => active, prompt, notes };
+	return { initialize: () => sessionStart(), toggle: () => solo("", context), tools: () => active, prompt, notes };
 }
 
+test("root startup excludes only unused task execution tools", () => {
+	const retained = ["read", "TaskCreate", "TaskList", "TaskGet", "TaskUpdate", "subagent", "bg_run", "bg_kill"];
+	const session = harness([...retained, "TaskOutput", "TaskStop", "TaskExecute"]);
+	session.initialize();
+	assert.deepEqual(session.tools(), retained);
+	session.initialize();
+	assert.deepEqual(session.tools(), retained);
+});
+
 test("solo mode removes delegation tools, swaps its section, and restores state", async () => {
-	const all = ["read", "subagent", "bash", "subagent_resume", "subagent_kill"];
-	const session = harness(all);
+	const retained = ["read", "subagent", "bash", "subagent_resume", "subagent_kill", "TaskCreate", "TaskList", "TaskGet", "TaskUpdate"];
+	const session = harness([...retained, "TaskOutput", "TaskStop", "TaskExecute"]);
+	session.initialize();
 	assert.equal(session.prompt(), techLead);
 	await session.toggle();
-	assert.deepEqual(session.tools(), ["read", "bash"]);
+	assert.deepEqual(session.tools(), ["read", "bash", "TaskCreate", "TaskList", "TaskGet", "TaskUpdate"]);
 	assert.ok(session.prompt().includes("Solo mode: work directly; do not delegate to subagents."));
 	assert.ok(session.prompt().includes("load `delivery-workflow`"));
 	assert.ok(session.prompt().includes("live task list for meaningful multi-step work"));
 	assert.ok(!session.prompt().includes("The five work-seam agents are:"));
 	await session.toggle();
-	assert.deepEqual(session.tools(), all);
+	assert.deepEqual(session.tools(), retained);
 	assert.equal(session.prompt(), techLead);
 	assert.equal(session.notes.length, 2);
 });
