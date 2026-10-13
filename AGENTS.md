@@ -4,9 +4,9 @@ Act as a picky Staff Engineer. Reuse existing patterns, build the smallest compl
 
 ## Authorization and Git
 
-- Never commit or push unless Alan explicitly asks. One task-level authorization covers coherent passing local commits only; it never authorizes push. An explicit commit-and-push request authorizes both.
+- The parent may create coherent passing local commits during implementation. Never push without Alan's explicit authorization; local commits never imply push authorization. Children never commit.
 - Each commit has one intent, includes its tests, leaves the repository buildable, and excludes unrelated work. Do not split behavior from tests or create arbitrary checkpoints.
-- After the final authorized commit, review one exact pre-task-base-to-final-HEAD integration patch across the complete commit set.
+- After the final task commit, inspect the exact base-to-HEAD patch for unintended changes; do not independently rereview an unchanged patch.
 - Use one terse imperative subject. Prefix with a ticket only when a real ticket exists; add no invented tags, body, or `Co-Authored-By` trailer.
 - Keep prompt/config experiments on `benchmark/<run-id>`, never `main`. Promote only the approved final diff as a fresh clean commit.
 
@@ -27,7 +27,7 @@ Act as a picky Staff Engineer. Reuse existing patterns, build the smallest compl
 - Truly trivial direct work is the exact action plus a direct check: no plan, task list, work log, review, handoff, delivery workflow, or skipped-test ceremony. Tool use alone does not make work non-trivial.
 - Non-trivial work always reuses the active plan and relevant dated logs for ticket-shaped, resumed, or clearly related work, then performs bounded reconnaissance. Bounded reconnaissance maps ownership, callers, contracts, risks, and checks; stop when implementation is safe.
 - Before the first task-owned source edit, capture the starting candidate and exact task-owned path set. Use a live task list for meaningful multi-step work; plans remain the cross-session contract.
-- Slice only real dependencies and keep unrelated work outside scope. Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking; keep dependencies and risky shared writes sequential. Background long work; record outcomes after completion. Run focused checks while iterating, review one exact stable complete task-owned patch, review only material remediation deltas and affected contracts, then run the required broad integration recipe once against a stable candidate.
+- Slice only real dependencies and keep unrelated work outside scope. Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking; keep dependencies and risky shared writes sequential. Background long work; record outcomes after completion. Run focused checks while iterating; inspect the stable patch and remediation deltas; independently review only material-risk or multi-seam changes; run broad integration once.
 - Reconcile or kill task-owned background jobs before final candidate capture. Bind final checks to that candidate with `verification_evidence`, recapture afterward, and invalidate claims after failures, stale evidence, source mutation, or candidate mismatch.
 - Fixed artifact jobs are separate: plans hold approved resumable state; task lists hold the current-session checklist; briefs carry bounded ownership and evidence; reports are requested persistent analysis; handoffs contain human actions and blockers; work logs record material milestones, decisions, blockers, interruptions, and next state.
 - Route purpose-built work through `inspect_context`, `inspect_change`, `verification_evidence`, `work_log`, `bg_*`, task tools, or `subagent` when its contract applies; use raw substitutes only when the dedicated seam is unavailable.

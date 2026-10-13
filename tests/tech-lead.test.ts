@@ -74,12 +74,12 @@ const deliveryOwners = [
 	{
 		invariantName: "authorization",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Never commit or push unless Alan explicitly asks",
+		requiredMarker: "Never push without Alan's explicit authorization",
 	},
 	{
 		invariantName: "post-commit integration patch",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "After the final authorized commit, review one exact pre-task-base-to-final-HEAD integration patch",
+		requiredMarker: "After the final task commit, inspect the exact base-to-HEAD patch for unintended changes",
 	},
 	{
 		invariantName: "finish records",
@@ -112,8 +112,9 @@ test("the router preserves direct, planning, approval, and authorization control
 		"`take over`",
 		"load `durable-plan`",
 		"Use a large approval gate",
-		"A plan never authorizes commit, push",
-		"Commit or push only with Alan's explicit authorization",
+		"A plan never authorizes push",
+		"The parent may create coherent passing local commits",
+		"push only with Alan's explicit authorization",
 		"Apply Ponytail",
 	]);
 	assert.ok(durablePlan.includes("## Ticket context preflight"));
@@ -170,6 +171,7 @@ test("implementation and review roles preserve material behavior", () => {
 	includesAll(agents["code-reviewer"], ["Patch artifact:", "Review paths:", "Use at most 12 combined", "wider risk", "P0", "P1", "P2", "Never edit"]);
 	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-5\.6-luna$/m);
 	assert.ok(reviewPrompt.includes("one remediation review covering only the remediation delta and affected contracts"));
+	assert.ok(reviewPrompt.includes("do not independently rereview an unchanged patch"));
 });
 
 test("verification runner remains execution-only with linked-worktree support", () => {
@@ -181,13 +183,16 @@ test("verification runner remains execution-only with linked-worktree support", 
 
 test("global instructions retain Alan-specific conventions", () => {
 	includesAll(globalInstructions, [
-		"Never commit or push unless Alan explicitly asks",
+		"The parent may create coherent passing local commits during implementation",
+		"Never push without Alan's explicit authorization",
 		"`benchmark/<run-id>`",
 		"Use BLUF",
 		"Before non-trivial tools or delegation",
 		"Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking",
 		"keep dependencies and risky shared writes sequential",
 		"record outcomes after completion",
+		"independently review only material-risk or multi-seam changes",
+		"do not independently rereview an unchanged patch",
 		"Label artifact links",
 		"Quiz Alan only when explicitly asked",
 		"For a requested walkthrough, explain each change",

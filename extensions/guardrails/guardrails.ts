@@ -262,7 +262,7 @@ async function validateWorktree(args: string[], projectRoot: string, workdir: st
 	await requireNoSymlinkTraversal(candidate, worktreeRoot, "Git worktree destination");
 }
 
-const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which commits only when Alan asks.";
+const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which owns local commits and may push only with Alan's explicit authorization.";
 
 async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean, allowGitIndexFile = false): Promise<void> {
 	const retargets = [...command.matchAll(/\b(?:export\s+)?(GIT_[A-Z0-9_]*)(\+?=)/g)];
