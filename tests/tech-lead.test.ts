@@ -154,6 +154,11 @@ test("the roster contains exactly five agents with deliberate tool scopes", () =
 	for (const name of ["code-explorer", "code-reviewer", "verification-runner"]) {
 		assert.doesNotMatch(agents[name], /^tools: .*\bTask(?:Create|List|Get|Update)\b/m);
 	}
+	for (const name of ["code-explorer", "code-reviewer", "implementation-engineer", "test-automation-engineer"]) {
+		assert.match(agents[name], /^tools: .*inspect_context,inspect_change/m);
+		assert.match(agents[name], /`inspect_context`[^.\n]*\bwhen\b/);
+		assert.match(agents[name], /`inspect_change`[^.\n]*\bwhen\b/);
+	}
 	for (const removed of ["backend-engineer", "frontend-engineer", "code-reviewer-light", "requirements-clarifier"]) {
 		assert.equal(existsSync(new URL(`../agents/${removed}.md`, import.meta.url)), false);
 		assert.ok(!reviewPrompt.includes(removed));
@@ -170,7 +175,7 @@ test("implementation and review roles preserve material behavior", () => {
 test("verification runner remains execution-only with linked-worktree support", () => {
 	const runner = agents["verification-runner"];
 	assert.match(runner, /^tools: read,bash,grep,find,verification_evidence$/m);
-	assert.doesNotMatch(runner, /^tools: .*\b(?:edit|write|subagent|bg_run)\b/m);
+	assert.doesNotMatch(runner, /^tools: .*\b(?:edit|write|subagent|bg_run|inspect_context|inspect_change)\b/m);
 	includesAll(runner, ["repositoryRoot when present", "Never select, add, remove, combine, wrap, or retry commands", "hidden nested dependency", "candidate ID equals the expected stable candidate"]);
 });
 
@@ -180,6 +185,9 @@ test("global instructions retain Alan-specific conventions", () => {
 		"`benchmark/<run-id>`",
 		"Use BLUF",
 		"Before non-trivial tools or delegation",
+		"Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking",
+		"keep dependencies and risky shared writes sequential",
+		"record outcomes after completion",
 		"Label artifact links",
 		"Quiz Alan only when explicitly asked",
 		"For a requested walkthrough, explain each change",
