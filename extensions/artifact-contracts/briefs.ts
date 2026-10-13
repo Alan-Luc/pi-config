@@ -33,7 +33,9 @@ export function briefInstructions(): string {
 export function registerBriefHook(pi: ExtensionAPI, env: Readonly<Record<string, string | undefined>> = process.env): void {
 	// Children rarely launch subagents; they still get the template in any rejection.
 	if (!isSubagentChildEnvironment(env)) {
-		pi.on("before_agent_start", (event) => appendInstructions(event.systemPromptOptions, briefInstructions()));
+		pi.on("before_agent_start", (event) => {
+			if (pi.getActiveTools().includes("subagent")) appendInstructions(event.systemPromptOptions, briefInstructions());
+		});
 	}
 	pi.on("tool_call", (event) => {
 		if (event.toolName !== "subagent") return;

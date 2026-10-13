@@ -18,6 +18,8 @@ export type Section = {
 	readonly hint: string;
 	/** Body must be exactly one line equal to one of these values. */
 	readonly oneOf?: readonly string[];
+	/** Body must be exactly one line per pattern, in order. */
+	readonly lines?: readonly LinePattern[];
 	/** Body must be a list; every top-level item matches `pattern` and contains `labels` in order. */
 	readonly item?: LinePattern & { readonly labels?: readonly string[] };
 	/** With `item`: a body of exactly `None.` is also valid. */
@@ -31,8 +33,27 @@ export type Section = {
 export type Schema = { readonly preamble: readonly LinePattern[]; readonly sections: readonly Section[] };
 
 const DATE = String.raw`\d{4}-\d{2}-\d{2}`;
+const DATED_DIRECTORY = String.raw`\d{4}/\d{2}/\d{2}`;
 const SLUG = String.raw`[a-z0-9]+(?:-[a-z0-9]+)*`;
 const SESSION_ID = String.raw`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`;
+
+const PLAN_PATH = new RegExp(`^\\.harness/plans/${DATE}-${SLUG}\\.md$`);
+const DAILY_LOG_PATH = new RegExp(`^\\.harness/${DATED_DIRECTORY}\\.md$`);
+const HANDOFF_PATH = new RegExp(`^\\.harness/handoffs/${DATED_DIRECTORY}/${SESSION_ID}-${SLUG}\\.md$`);
+const REPORT_PATH = new RegExp(`^\\.harness/reports/${DATED_DIRECTORY}/${SESSION_ID}-${SLUG}\\.md$`);
+
+export const ARTIFACT_CAPABILITY_VERSION = 1;
+export type ArtifactOperation = "read" | "write" | "edit";
+
+const CAPABILITY_PATHS: Readonly<Record<ArtifactOperation, readonly RegExp[]>> = {
+	read: [PLAN_PATH, DAILY_LOG_PATH, HANDOFF_PATH, REPORT_PATH],
+	write: [PLAN_PATH, HANDOFF_PATH, REPORT_PATH],
+	edit: [PLAN_PATH, REPORT_PATH],
+};
+
+export function isArtifactCapabilityPath(operation: ArtifactOperation, path: string): boolean {
+	return CAPABILITY_PATHS[operation].some((pattern) => pattern.test(path));
+}
 
 const status: Section = { heading: "Status", hint: "done | blocked | failed", oneOf: ["done", "blocked", "failed"] };
 const findings = (heading: string): Section => ({
@@ -90,7 +111,16 @@ export const SCHEMAS = {
 		preamble: [],
 		sections: [
 			{ heading: "Objective", hint: "the one outcome this agent must deliver" },
-			{ heading: "Context", hint: "user goal, files to read first, patterns to mirror" },
+			{
+				heading: "Context",
+				hint: "exactly four ordered, non-empty evidence lines",
+				lines: [
+					{ pattern: /^- Source of truth: \S.*$/, example: "- Source of truth: <!-- fill: active plan and decision headings, or None -->" },
+					{ pattern: /^- Verified facts: \S.*$/, example: "- Verified facts: <!-- fill: directly confirmed facts and useful evidence -->" },
+					{ pattern: /^- Read first: \S.*$/, example: "- Read first: <!-- fill: smallest exact paths/ranges -->" },
+					{ pattern: /^- Open questions: \S.*$/, example: "- Open questions: <!-- fill: only questions owned by this worker -->" },
+				],
+			},
 			{ heading: "Scope", hint: "owned paths and explicit non-scope" },
 			{ heading: "Constraints", hint: "rules, limits, forbidden actions" },
 			{ heading: "Done when", hint: "deliverable, success criteria, checks to run" },
@@ -143,18 +173,17 @@ export type SchemaId = keyof typeof SCHEMAS;
 
 /** Documents validated on every agent write or edit (repo-relative POSIX paths). */
 export const DOCUMENTS: readonly { readonly schema: SchemaId; readonly path: RegExp; readonly createOnly: boolean }[] = [
-	{ schema: "plan", path: new RegExp(`^\\.harness/plans/${DATE}-${SLUG}\\.md$`), createOnly: false },
-	{
-		schema: "handoff",
-		path: new RegExp(`^\\.harness/handoffs/\\d{4}/\\d{2}/\\d{2}/${SESSION_ID}-${SLUG}\\.md$`),
-		createOnly: true,
-	},
+	{ schema: "plan", path: PLAN_PATH, createOnly: false },
+	{ schema: "handoff", path: HANDOFF_PATH, createOnly: true },
 ];
+
+/** Freeform artifacts that still require canonical path and symlink protection. */
+export const FREEFORM: readonly RegExp[] = [REPORT_PATH];
 
 /** Paths agents may never write or edit directly. */
 export const PROTECTED: readonly { readonly path: RegExp; readonly reason: string }[] = [
 	{
-		path: /^\.harness\/\d{4}\/\d{2}\/\d{2}\.md$/,
+		path: DAILY_LOG_PATH,
 		reason: "Daily work logs are append-only: use the native work_log tool.",
 	},
 	{ path: /^\.opencode\//, reason: "Legacy .opencode records are read-only." },

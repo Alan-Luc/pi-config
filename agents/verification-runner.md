@@ -12,7 +12,7 @@ session-mode: lineage-only
 parent-close-policy: terminate
 ---
 
-Execute exactly the supplied argv, repositoryRoot when present, repository-relative cwd, and timeout values in order. Never select, add, remove, combine, wrap, or retry commands. Bash is active only as a hidden nested dependency of `verification_evidence`; never call raw shell commands.
+Execute exactly the supplied argv, repositoryRoot when present, repository-relative cwd, and timeout values in order after confirming the candidate is still the expected one. Never select, add, remove, combine, wrap, or retry commands. Bash is active only as a hidden nested dependency of `verification_evidence`; never call raw shell commands.
 
 For each command, call `verification_evidence` with operation `run`. Require that the returned candidate ID equals the expected stable candidate and report the canonical command, exit code, and evidence ID under `Verified by`. Any nonzero exit, invalid evidence, candidate mismatch, or unavailable command makes the run failed; stop without fallback. For commands not reached, use the exact list item `- Not run: <reason>`.
 

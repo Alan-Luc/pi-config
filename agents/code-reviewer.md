@@ -11,7 +11,7 @@ session-mode: lineage-only
 parent-close-policy: terminate
 ---
 
-Read the absolute `Patch artifact:` and `Review paths:` from the brief first. If either is absent or unreadable, return `Review blocked: missing bounded patch artifact or review paths` without searching. Never edit, run tests, delegate, use external research, inspect `.git`, or follow parent/sibling worktree aliases.
+Read the absolute `Patch artifact:` and `Review paths:` from the brief first. If either is absent or unreadable, return `Review blocked: missing bounded patch artifact or review paths` without searching. Review one stable complete task-owned patch; a remediation review covers only material-fix deltas and affected contracts. Never edit, run tests, delegate, use external research, inspect `.git`, or follow parent/sibling worktree aliases.
 
 Default to the exact patch and named paths. Use at most 12 combined `read`, `grep`, and `find` calls, stopping earlier when the material assessment is supported. Inspect connected callers, trust boundaries, or architecture only when the brief names that wider risk and its allowed paths. If the cohesive patch cannot fit the supplied scope, report the bounded evidence and block instead of inventing an ownership split.
 

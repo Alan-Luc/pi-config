@@ -1,30 +1,107 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { test } from "bun:test";
+import { it, test } from "bun:test";
 import registerTechLead from "../extensions/tech-lead/index.ts";
+import { briefInstructions } from "../extensions/artifact-contracts/briefs.ts";
 
 const techLead = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
-const delivery = readFileSync(new URL("../skills/delivery-workflow/SKILL.md", import.meta.url), "utf8");
 const durablePlan = readFileSync(new URL("../skills/durable-plan/SKILL.md", import.meta.url), "utf8");
 const globalInstructions = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
 const reviewPrompt = readFileSync(new URL("../prompts/code_review.md", import.meta.url), "utf8");
+const takeOverPrompt = readFileSync(new URL("../prompts/take-over.md", import.meta.url), "utf8");
 const agents = Object.fromEntries(
 	readdirSync(new URL("../agents/", import.meta.url))
 		.filter((path) => path.endsWith(".md"))
 		.map((path) => [path.replace(/\.md$/, ""), readFileSync(new URL(`../agents/${path}`, import.meta.url), "utf8")]),
 );
 const words = (text: string) => text.trim().split(/\s+/).length;
+const deliveryOwners = [
+	{
+		invariantName: "prerequisites",
+		canonicalOwnerPath: "AGENTS.md",
+		requiredMarker: "Preflight the required runtime, command or script, and relevant network, authentication, database, or external-service identity before long work.",
+	},
+	{
+		invariantName: "candidate capture and task-owned paths",
+		canonicalOwnerPath: "AGENTS.md",
+		requiredMarker: "Before the first task-owned source edit, capture the starting candidate and exact task-owned path set.",
+	},
+	{
+		invariantName: "ownership, callers, and contracts",
+		canonicalOwnerPath: "AGENTS.md",
+		requiredMarker: "Bounded reconnaissance maps ownership, callers, contracts, risks, and checks; stop when implementation is safe.",
+	},
+	{
+		invariantName: "evidence packet",
+		canonicalOwnerPath: "extensions/artifact-contracts/briefs.ts",
+		requiredMarker: "Every `subagent` task (and each `children[].task`) must fill exactly this template",
+	},
+	{
+		invariantName: "dependency slicing",
+		canonicalOwnerPath: "AGENTS.md",
+		requiredMarker: "Slice only real dependencies and keep unrelated work outside scope.",
+	},
+	{
+		invariantName: "worker boundaries",
+		canonicalOwnerPath: "agents/implementation-engineer.md",
+		requiredMarker: "Own exactly the briefed objective and paths.",
+	},
+	{
+		invariantName: "focused checks",
+		canonicalOwnerPath: "AGENTS.md",
+		requiredMarker: "Run focused checks while iterating",
+	},
+	{
+		invariantName: "exact review artifact and hash",
+		canonicalOwnerPath: "prompts/code_review.md",
+		requiredMarker: "Hash that patch and give the reviewer the candidate and hash",
+	},
+	{
+		invariantName: "material remediation",
+		canonicalOwnerPath: "prompts/code_review.md",
+		requiredMarker: "If material fixes occur, rerun affected focused checks and start one remediation review",
+	},
+	{
+		invariantName: "broad integration and candidate recapture",
+		canonicalOwnerPath: "prompts/code_review.md",
+		requiredMarker: "Run the required broad integration recipe once against the accepted candidate, then recapture the candidate.",
+	},
+	{
+		invariantName: "background jobs",
+		canonicalOwnerPath: "prompts/code_review.md",
+		requiredMarker: "Before freezing the candidate, reconcile or kill every task-owned background job.",
+	},
+	{
+		invariantName: "authorization",
+		canonicalOwnerPath: "AGENTS.md",
+		requiredMarker: "Never commit or push unless Alan explicitly asks",
+	},
+	{
+		invariantName: "post-commit integration patch",
+		canonicalOwnerPath: "AGENTS.md",
+		requiredMarker: "After the final authorized commit, review one exact pre-task-base-to-final-HEAD integration patch",
+	},
+	{
+		invariantName: "finish records",
+		canonicalOwnerPath: "extensions/tech-lead/tech-lead.md",
+		requiredMarker: "Record each completed non-trivial implementation, review, or configuration slice in one append-only daily work-log entry.",
+	},
+	{
+		invariantName: "pre-dispatch ready set",
+		canonicalOwnerPath: "git/github.com/Alan-Luc/pi-subagents/src/tools/subagent-tools.ts",
+		requiredMarker: "Before a pure async launch, derive the full ready set from approved dependencies and exact path ownership; launch every ready disjoint helper slice in one children batch.",
+	},
+] as const;
 
 function includesAll(text: string, values: readonly string[]) {
 	for (const value of values) assert.ok(text.includes(value), value);
 }
 
-test("startup instructions stay within component budgets", () => {
-	assert.ok(words(techLead) <= 900, `tech-lead.md has ${words(techLead)} words`);
-	assert.ok(words(globalInstructions) <= 700, `AGENTS.md has ${words(globalInstructions)} words`);
-	assert.ok(techLead.includes("load `delivery-workflow`") && techLead.includes("Before the first non-trivial source edit"));
+test("startup policy has one bounded aggregate budget", () => {
+	const startup = [globalInstructions, techLead, briefInstructions()].join("\n");
+	assert.ok(words(startup) <= 1_300, `startup instructions have ${words(startup)} words`);
+	assert.doesNotMatch(techLead, /load `delivery-workflow`|The five work-seam agents are:|^Template:/m);
 	assert.ok(!techLead.includes("node:os.tmpdir()/pi"));
-	assert.ok(delivery.includes("require('node:os').tmpdir()"));
 });
 
 test("the router preserves direct, planning, approval, and authorization controls", () => {
@@ -33,8 +110,8 @@ test("the router preserves direct, planning, approval, and authorization control
 		"`plan with me`",
 		"`brief plan`",
 		"`take over`",
-		"large approval gate",
 		"load `durable-plan`",
+		"Use a large approval gate",
 		"A plan never authorizes commit, push",
 		"Commit or push only with Alan's explicit authorization",
 		"Apply Ponytail",
@@ -42,62 +119,24 @@ test("the router preserves direct, planning, approval, and authorization control
 	assert.ok(durablePlan.includes("## Ticket context preflight"));
 });
 
-test("the router preserves tasks, five work seams, review order, and completion records", () => {
+test("the router preserves lifecycle ownership without leaking delegation manuals", () => {
 	includesAll(techLead, [
-		"live task list for meaningful multi-step work",
-		"`code-explorer`",
-		"`implementation-engineer`",
-		"`code-reviewer`",
-		"`test-automation-engineer`",
-		"`verification-runner`",
-		"run focused changed-area checks",
-		"review the exact complete task-owned patch once",
-		"run the required broad integration recipe once",
-		"one append-only daily work-log entry",
-		"Create no handoff when no human-only action remains",
+		"Delegate only across a real ownership or expertise seam",
+		"use its tool-owned delegation guidance and validated brief contract",
+		"Truly trivial direct work",
+		"non-trivial",
 	]);
+	assert.doesNotMatch(techLead, /Template:|The five work-seam agents are:|PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN|ready set|worker result/);
+	assert.doesNotMatch(takeOverPrompt, /roster|Template:|PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN/);
+	for (const promptPath of ["brief-plan.md", "plan-with-me.md"]) {
+		const prompt = readFileSync(new URL(`../prompts/${promptPath}`, import.meta.url), "utf8");
+		assert.doesNotMatch(prompt, /does not need a plan/, promptPath);
+	}
 });
 
-test("delivery reconnaissance is outcome-based and reusable", () => {
-	includesAll(delivery, [
-		"There is no mandatory first tool, tool order, batching shape, or call count",
-		"Reuse prior bounded packets",
-		"omissions as inconclusive",
-		"Stop when governing artifacts",
-		"Never delegate and duplicate the same investigation",
-		"Source of truth:",
-		"Verified facts:",
-		"Read first:",
-		"Open questions:",
-	]);
-});
-
-test("delivery preserves candidate, review, remediation, and verifier trust boundaries", () => {
-	includesAll(delivery, [
-		"capture the starting candidate",
-		"exact task-owned path set",
-		"Patch artifact:",
-		"Review paths:",
-		"one independent bounded `code-reviewer`",
-		"Remediate material findings in one pass",
-		"one pure `subagent` `children` batch",
-		"Do not mix ordinary tools",
-		"`PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` unset",
-		"parent captures the candidate again",
-		"invalidates the whole batch",
-	]);
-	assert.ok(delivery.indexOf("task-owned job must be terminal") < delivery.indexOf("capture the final candidate"));
-});
-
-test("delivery preflights long commands and supports honest bounded evidence", () => {
-	includesAll(delivery, [
-		"repository-required runtime",
-		"command/script existence",
-		"network, authentication, database, or external-service identity",
-		"authoritative focused or sharded recipes",
-		"`- Not run: <reason>`",
-		"Raw Bash and background-task output are not evidence",
-	]);
+it.each(deliveryOwners)("delivery invariant: $invariantName", ({ canonicalOwnerPath, requiredMarker }) => {
+	const owner = readFileSync(new URL(`../${canonicalOwnerPath}`, import.meta.url), "utf8");
+	assert.ok(owner.includes(requiredMarker), `${canonicalOwnerPath} is missing ${requiredMarker}`);
 });
 
 test("the roster contains exactly five agents with deliberate tool scopes", () => {
@@ -125,7 +164,7 @@ test("implementation and review roles preserve material behavior", () => {
 	includesAll(agents["implementation-engineer"], ["trust boundaries", "semantic HTML", "accessibility", "strict types", "focused happy and meaningful failure-path tests", "verification_evidence"]);
 	includesAll(agents["code-reviewer"], ["Patch artifact:", "Review paths:", "Use at most 12 combined", "wider risk", "P0", "P1", "P2", "Never edit"]);
 	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-5\.6-luna$/m);
-	assert.ok(reviewPrompt.includes("explicit stronger-model override only for a large high-risk review"));
+	assert.ok(reviewPrompt.includes("one remediation review covering only the remediation delta and affected contracts"));
 });
 
 test("verification runner remains execution-only with linked-worktree support", () => {
@@ -216,8 +255,8 @@ test("solo mode removes delegation tools, swaps its section, and restores state"
 	await session.toggle();
 	assert.deepEqual(session.tools(), ["read", "bash", "TaskCreate", "TaskList", "TaskGet", "TaskUpdate"]);
 	assert.ok(session.prompt().includes("Solo mode: work directly; do not delegate to subagents."));
-	assert.ok(session.prompt().includes("load `delivery-workflow`"));
-	assert.ok(session.prompt().includes("live task list for meaningful multi-step work"));
+	assert.ok(!session.prompt().includes("delivery-workflow"));
+	assert.ok(!session.prompt().includes("Template:"));
 	assert.ok(!session.prompt().includes("The five work-seam agents are:"));
 	await session.toggle();
 	assert.deepEqual(session.tools(), retained);

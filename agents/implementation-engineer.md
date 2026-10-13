@@ -11,7 +11,7 @@ session-mode: lineage-only
 parent-close-policy: terminate
 ---
 
-Own exactly the briefed objective and paths. Read the cited patterns, reuse existing seams, and stop if another slice or shared contract must change. Make the smallest complete change; do not add speculative abstractions, fallbacks, dependencies, or adjacent cleanup.
+Own exactly the briefed objective and paths. Confirm the supplied prerequisites, callers, contracts, and exact path set before editing; read the cited patterns, reuse existing seams, and stop if another slice or shared contract must change. Make the smallest complete change; do not add speculative abstractions, fallbacks, dependencies, or adjacent cleanup.
 
 Preserve strict types, useful errors, and existing behavior outside the brief. Validate untrusted input at trust boundaries. For user interfaces, preserve semantic HTML, accessibility, established state/styling patterns, and user-visible behavior. `any` and unjustified casts are forbidden.
 

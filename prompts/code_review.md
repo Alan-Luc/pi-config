@@ -2,28 +2,23 @@
 description: Review current changes for material issues
 argument-hint: "[slice map]"
 ---
-Act as the tech lead and review only a stable implementation/diff. Scope: `${@:-the current changes}`.
+Act as the tech lead and review only the stable complete task-owned change: `${@:-the current changes}`. A clean review is valid; do not dispatch speculative follow-ups.
 
-For a current-worktree review without an exact supplied diff/artifact, call `inspect_change` once after the delta is stable and reuse its changed paths, excerpts, omissions, and verification recipes to seed the ownership map and Context evidence. Follow up only for explicit omissions or required caller/contract evidence outside the packet; if the tool is unavailable or unsupported, fall back once to the existing targeted reads. The bounded packet does not replace the exact patch artifact.
+For task execution, retain the starting candidate and exact task-owned path set captured before the first source edit. After the delta is stable, capture the final candidate and create one exact patch artifact for those paths, including new files. Hash that patch and give the reviewer the candidate and hash; the complete change receives one review, not ceremonial duplicates. Use `inspect_change` once when the current-worktree delta is the input, and `inspect_context` once only when ownership, callers, or contracts remain unclear.
 
-For task execution, capture a starting candidate with `verification_evidence` before the first task-owned source edit and retain the exact task-owned path set. Before closeout, capture the final candidate and create one exact starting-tree-to-final-tree patch for those paths, including new files. The complete task-owned delta must be reviewed once regardless of commit strategy; reuse an unchanged review of that exact patch instead of dispatching a ceremonial duplicate.
+Derive the review root with:
 
-When ownership, caller, or contract context remains unclear after fixing the change scope, call `inspect_context` once before manual discovery or `code-explorer` dispatch. Reuse the packet and investigate only material gaps.
+```sh
+node -p "require('node:path').join(require('node:os').tmpdir(),'pi')"
+```
 
-When the task contains authorized slice commits, use the recorded pre-task base and final HEAD to capture one exact integration patch across the complete commit set, then review it after the slice reviews even if the worktree is clean. Use `inspect_change` only for any residual worktree delta.
+The bounded reviewer brief must contain literal lines:
 
-When no slice map is supplied, build the smallest real ownership map. Keep production and test paths in the same disjoint slice; every test-only hunk belongs to one. Derive the review root from `node:os.tmpdir()/pi` with `node -p "require('node:path').join(require('node:os').tmpdir(),'pi')"`, create it, and capture each slice's exact current diff beneath the printed absolute path. Launch one bounded `code-reviewer` subagent per slice with:
-- `Patch artifact: <absolute path under the printed root>`
+- `Patch artifact: <absolute path under the review root>`
 - `Review paths: <exact absolute paths>`
-- a Context evidence packet containing:
-  - `Source of truth: <active plan and decision paths with relevant headings or None>`
-  - `Verified facts: <facts the parent directly confirmed; include evidence when useful>`
-  - `Read first: <smallest exact paths/ranges>`
-  - `Open questions: <only unanswered questions this worker owns>`
-- the canonical worktree root, direct callers/callees and test dependencies, objective, material risk, and stop condition
 
-Launch disjoint reviews in one `subagent` batch using `children`; exclude `.git`, parent or sibling worktree aliases, and unrelated inventories. Expand `code-reviewer` beyond the patch only when one named connected-code, security, performance, UI, testing, or architecture risk warrants it; use an explicit stronger-model override only for a large high-risk review. Add another specialist only for a separately named security, performance, UI, testing, or architecture objective the first reviewer cannot cover. Use `test-automation-engineer` only when execution evidence is missing or a regression needs proving; use `code-explorer` only when ownership or scope is unclear. Start a fresh `subagent` task for each review or remediation delta; never use `subagent_resume` for a new delta.
+Also provide the active plan/decision evidence packet, candidate identity, patch SHA-256, callers/callees, test dependencies, objective, material risks, and stop condition. Expand beyond the patch only for one named connected-code, security, performance, UI, testing, or architecture risk. Use a fresh `code-reviewer` task for each new review; never resume one for a new delta.
 
-At a final task gate, first require every task-owned background job to be terminal and reconciled or explicitly killed and reported; do not freeze or dispatch while any background job can still mutate the repository. After remediation is stable, capture the candidate identity and SHA-256 of the exact complete-task patch. When supplied broad checks are material enough to overlap, launch the final integration reviewer and `verification-runner` together in one pure `subagent` `children` batch. Do not mix ordinary tools into that launch message; keep `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` unset and stop the parent turn after launch. Give the reviewer the exact patch, review paths, acceptance contract, prior material findings, hash, and candidate. Give the verifier only the expected candidate and exact argv/cwd/timeout commands. After both children return and before consolidation, capture the candidate again in the parent and require an exact match with the dispatched candidate. If either child fails, evidence is invalid, the post-batch capture fails, or the candidate changes, invalidate the batch and never reuse its evidence. Keep the stage sequential when checks are cheap, inputs remain volatile, or capacity makes overlap slower.
+If material fixes occur, rerun affected focused checks and start one remediation review covering only the remediation delta and affected contracts. Do not rereview unchanged clean regions. Before freezing the candidate, reconcile or kill every task-owned background job. Run the required broad integration recipe once against the accepted candidate, then recapture the candidate. Any failed check, stale evidence, candidate mismatch, source mutation, or failed recapture invalidates the review/verification claim.
 
-Synthesize once, deduplicate, verify cross-slice contracts, and return compact status, reviewers/slices, evidenced P0/P1/P2 findings with `file:line`, and real blockers or open questions. A clean review is valid. Do not dispatch remediation, re-review, implementation, or speculative follow-ups.
+For final verification, give `verification-runner` only the expected candidate and exact argv, repository root, repository-relative cwd, and timeout. It executes only those commands through `verification_evidence`; it never selects tests. Keep review and verification sequential when checks are cheap or the candidate is volatile. After authorized commits, review the exact pre-task-base-to-final-HEAD integration patch even with a clean worktree. Report evidence-backed P0/P1/P2 findings with `file:line`, or a clean verdict.

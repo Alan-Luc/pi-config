@@ -96,7 +96,7 @@ function createOnlyReason(operation: "write" | "edit"): string {
 
 export function checkDocumentWrite({ relPath, exists, current, proposed }: DocumentWriteInput): DocumentWriteResult {
 	const match = matchPath(relPath);
-	if (!match) return { block: false };
+	if (!match || match.kind === "freeform") return { block: false };
 	if (match.kind === "protected") return { block: true, reason: match.reason };
 	if (match.createOnly && exists) return { block: true, reason: createOnlyReason("write") };
 	if (exists && current === undefined) {
@@ -204,8 +204,15 @@ function handleDocumentToolCall(event: ToolCallEvent, ctx: Pick<ExtensionContext
 	const classification = matchPath(resolved.relPath);
 	if (!classification) return undefined;
 	if (classification.kind === "protected") return { block: true, reason: classification.reason };
+	if (classification.kind === "freeform" && event.input.path !== resolved.relPath) {
+		return {
+			block: true,
+			reason: `Report paths must use the canonical repository-relative POSIX form ${JSON.stringify(resolved.relPath)}.`,
+		};
+	}
 	const symlinkReason = rejectSymlinkComponents(resolved.absolutePath, ctx.cwd, resolved.relPath);
 	if (symlinkReason !== undefined) return { block: true, reason: symlinkReason };
+	if (classification.kind === "freeform") return undefined;
 	if (isEditEvent(event) && classification.createOnly) return { block: true, reason: createOnlyReason("edit") };
 
 	const currentFile = readCurrentFile(resolved.absolutePath);
