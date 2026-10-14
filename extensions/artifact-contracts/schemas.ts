@@ -163,7 +163,6 @@ export const SCHEMAS = {
 			findings("Critical (P0)"),
 			findings("Important (P1)"),
 			findings("Nice-to-have (P2)"),
-			{ heading: "Positive practices", hint: "one to three concrete decisions done well, or None." },
 			{ heading: "Out of scope", hint: "follow-ups outside the requested review, or None." },
 		],
 	},

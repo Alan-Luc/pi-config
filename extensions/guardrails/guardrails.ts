@@ -1,4 +1,5 @@
-import { lstat, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
@@ -74,7 +75,7 @@ async function resolvePhysicalCandidate(base: string, value: string): Promise<st
 	return current;
 }
 
-async function requireReviewArtifact(value: string): Promise<void> {
+async function requireReviewArtifact(value: string): Promise<Buffer> {
 	if (hasParentTraversal(value)) throw new Error(`Patch artifact cannot contain parent traversal: ${value}`);
 	const candidate = resolve(value);
 	if (!isAbsolute(value) || !isContained(REVIEW_ARTIFACT_ROOT, candidate)) {
@@ -90,6 +91,11 @@ async function requireReviewArtifact(value: string): Promise<void> {
 	if (stat.isSymbolicLink()) throw new Error(`Patch artifact cannot be a symbolic link: ${candidate}`);
 	if (!stat.isFile()) throw new Error(`Patch artifact must be a regular file: ${candidate}`);
 	await requireNoSymlinkTraversal(dirname(candidate), REVIEW_ARTIFACT_ROOT, "Patch artifact");
+	try {
+		return await readFile(candidate);
+	} catch (error) {
+		throw new Error(`Could not read Patch artifact ${candidate}: ${errorMessage(error)}`);
+	}
 }
 
 async function validateBoundedReview(input: unknown): Promise<void> {
@@ -104,10 +110,35 @@ async function validateBoundedReview(input: unknown): Promise<void> {
 		if (launch.agent !== "code-reviewer") continue;
 		const task = typeof launch.task === "string" ? launch.task : "";
 		const artifactMatch = task.match(/^Patch artifact:[ \t]*(.*)$/im);
-		if (!artifactMatch || !/^Review paths:[ \t]*\S+/im.test(task)) {
-			throw new Error(`Blocked unbounded code-reviewer task; use the runtime review root:\nPatch artifact: ${resolve(REVIEW_ARTIFACT_ROOT, "<name>.patch")}\nReview paths: <exact paths>`);
+		const reviewPathsMatch = task.match(/^Review paths:[ \t]*(.*)$/im);
+		const candidateMatch = task.match(/^Candidate:[ \t]*(candidate_[0-9a-f]{64})$/im);
+		const patchHashMatch = task.match(/^Patch SHA-256:[ \t]*([0-9a-f]{64})$/im);
+		const reviewPathsText = reviewPathsMatch?.[1].trim() ?? "";
+		let reviewPaths: string[] = [];
+		if (reviewPathsText.startsWith("[")) {
+			try {
+				const parsed: unknown = JSON.parse(reviewPathsText);
+				if (Array.isArray(parsed) && parsed.every((path): path is string => typeof path === "string")) reviewPaths = parsed;
+			} catch {
+				reviewPaths = [];
+			}
+		} else {
+			reviewPaths = reviewPathsText.split(/[ \t]+/).filter(Boolean);
 		}
-		await requireReviewArtifact(artifactMatch[1].trim());
+		if (
+			!artifactMatch
+			|| reviewPaths.length === 0
+			|| reviewPaths.some((path) => !isAbsolute(path))
+			|| !candidateMatch
+			|| !patchHashMatch
+		) {
+			throw new Error(`Blocked unbounded code-reviewer task; use generated review metadata:\nCandidate: candidate_<id>\nPatch SHA-256: <sha256>\nPatch artifact: ${resolve(REVIEW_ARTIFACT_ROOT, "<name>.patch")}\nReview paths: <exact absolute paths>`);
+		}
+		const artifactBytes = await requireReviewArtifact(artifactMatch[1].trim());
+		const actualPatchSha256 = createHash("sha256").update(artifactBytes).digest("hex");
+		if (actualPatchSha256 !== patchHashMatch[1]) {
+			throw new Error(`Patch artifact SHA-256 does not match generated Patch SHA-256: expected ${patchHashMatch[1]}, got ${actualPatchSha256}`);
+		}
 	}
 }
 

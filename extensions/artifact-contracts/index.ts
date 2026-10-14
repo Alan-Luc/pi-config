@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerBriefHook } from "./briefs.ts";
 import { registerDocumentHooks } from "./documents.ts";
+import { registerReviewPreparation } from "./review-preparation.ts";
 import { registerHandoffHooks } from "./handoffs.ts";
 import { registerVerificationEvidence } from "./verification.ts";
 import { ARTIFACT_CAPABILITY_VERSION } from "./schemas.ts";
@@ -19,6 +20,7 @@ export function registerArtifactCapability(pi: Pick<ExtensionAPI, "events">): vo
 export default function artifactContracts(pi: ExtensionAPI): void {
 	registerArtifactCapability(pi);
 	registerDocumentHooks(pi);
+	registerReviewPreparation(pi);
 	registerBriefHook(pi);
 	registerHandoffHooks(pi);
 	registerVerificationEvidence(pi);

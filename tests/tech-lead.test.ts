@@ -9,6 +9,9 @@ const durablePlan = readFileSync(new URL("../skills/durable-plan/SKILL.md", impo
 const globalInstructions = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
 const reviewPrompt = readFileSync(new URL("../prompts/code_review.md", import.meta.url), "utf8");
 const takeOverPrompt = readFileSync(new URL("../prompts/take-over.md", import.meta.url), "utf8");
+const settings = JSON.parse(readFileSync(new URL("../settings.json", import.meta.url), "utf8")) as {
+	modelThinkingLevels?: Record<string, string>;
+};
 const agents = Object.fromEntries(
 	readdirSync(new URL("../agents/", import.meta.url))
 		.filter((path) => path.endsWith(".md"))
@@ -23,8 +26,8 @@ const deliveryOwners = [
 	},
 	{
 		invariantName: "candidate capture and task-owned paths",
-		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Before the first task-owned source edit, capture the starting candidate and exact task-owned path set.",
+		canonicalOwnerPath: "extensions/artifact-contracts/review-preparation.ts",
+		requiredMarker: "registerReviewPreparation",
 	},
 	{
 		invariantName: "ownership, callers, and contracts",
@@ -53,8 +56,8 @@ const deliveryOwners = [
 	},
 	{
 		invariantName: "exact review artifact and hash",
-		canonicalOwnerPath: "prompts/code_review.md",
-		requiredMarker: "Hash that patch and give the reviewer the candidate and hash",
+		canonicalOwnerPath: "extensions/artifact-contracts/review-preparation.ts",
+		requiredMarker: "patchSha256",
 	},
 	{
 		invariantName: "material remediation",
@@ -83,7 +86,7 @@ const deliveryOwners = [
 	},
 	{
 		invariantName: "finish records",
-		canonicalOwnerPath: "extensions/tech-lead/tech-lead.md",
+		canonicalOwnerPath: "AGENTS.md",
 		requiredMarker: "Record each completed non-trivial implementation, review, or configuration slice in one append-only daily work-log entry.",
 	},
 	{
@@ -104,7 +107,7 @@ test("startup policy has one bounded aggregate budget", () => {
 	assert.ok(!techLead.includes("node:os.tmpdir()/pi"));
 });
 
-test("the router preserves direct, planning, approval, and authorization controls", () => {
+test("the router preserves direct, planning, and approval controls", () => {
 	includesAll(techLead, [
 		"Direct is default",
 		"`plan with me`",
@@ -112,10 +115,11 @@ test("the router preserves direct, planning, approval, and authorization control
 		"`take over`",
 		"load `durable-plan`",
 		"Use a large approval gate",
-		"A plan never authorizes push",
+	]);
+	includesAll(globalInstructions, [
 		"The parent may create coherent passing local commits",
-		"push only with Alan's explicit authorization",
-		"Apply Ponytail",
+		"Never push without Alan's explicit authorization",
+		"Children never commit",
 	]);
 	assert.ok(durablePlan.includes("## Ticket context preflight"));
 });
@@ -124,9 +128,9 @@ test("the router preserves lifecycle ownership without leaking delegation manual
 	includesAll(techLead, [
 		"Delegate only across a real ownership or expertise seam",
 		"use its tool-owned delegation guidance and validated brief contract",
-		"Truly trivial direct work",
-		"non-trivial",
 	]);
+	includesAll(globalInstructions, ["Truly trivial direct work", "non-trivial"]);
+	assert.doesNotMatch(techLead, /Apply Ponytail|Truly trivial direct work|A plan never authorizes push|The parent may create coherent passing local commits/);
 	assert.doesNotMatch(techLead, /Template:|The five work-seam agents are:|PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN|ready set|worker result/);
 	assert.doesNotMatch(takeOverPrompt, /roster|Template:|PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN/);
 	for (const promptPath of ["brief-plan.md", "plan-with-me.md"]) {
@@ -140,19 +144,25 @@ it.each(deliveryOwners)("delivery invariant: $invariantName", ({ canonicalOwnerP
 	assert.ok(owner.includes(requiredMarker), `${canonicalOwnerPath} is missing ${requiredMarker}`);
 });
 
-test("the roster contains exactly five agents with deliberate tool scopes", () => {
+test("the roster contains exactly four agents with deliberate tool scopes", () => {
 	assert.deepEqual(Object.keys(agents).sort(), [
 		"code-explorer",
 		"code-reviewer",
 		"implementation-engineer",
 		"test-automation-engineer",
-		"verification-runner",
 	]);
 	for (const name of ["implementation-engineer", "test-automation-engineer"]) {
 		assert.match(agents[name], /^tools: .*TaskCreate,TaskList,TaskGet,TaskUpdate$/m);
-		assert.ok(agents[name].includes("`- Not run: <reason>`"));
 	}
-	for (const name of ["code-explorer", "code-reviewer", "verification-runner"]) {
+	assert.ok(globalInstructions.includes("Not run: <reason>"));
+	for (const name of ["code-explorer", "code-reviewer", "implementation-engineer", "test-automation-engineer"]) {
+		assert.match(agents[name], /^thinking: high$/m);
+	}
+	assert.deepEqual(settings.modelThinkingLevels, {
+		"openai-codex/gpt-5.6-sol": "high",
+		"openai-codex/gpt-5.6-luna": "high",
+	});
+	for (const name of ["code-explorer", "code-reviewer"]) {
 		assert.doesNotMatch(agents[name], /^tools: .*\bTask(?:Create|List|Get|Update)\b/m);
 	}
 	for (const name of ["code-explorer", "code-reviewer", "implementation-engineer", "test-automation-engineer"]) {
@@ -167,19 +177,14 @@ test("the roster contains exactly five agents with deliberate tool scopes", () =
 });
 
 test("implementation and review roles preserve material behavior", () => {
-	includesAll(agents["implementation-engineer"], ["trust boundaries", "semantic HTML", "accessibility", "strict types", "focused happy and meaningful failure-path tests", "verification_evidence"]);
+	includesAll(globalInstructions, ["trust-boundary validation", "accessibility", "strict types"]);
+	includesAll(agents["implementation-engineer"], ["focused happy and meaningful failure-path tests", "verification_evidence"]);
 	includesAll(agents["code-reviewer"], ["Patch artifact:", "Review paths:", "Use at most 12 combined", "wider risk", "P0", "P1", "P2", "Never edit"]);
 	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-5\.6-luna$/m);
 	assert.ok(reviewPrompt.includes("one remediation review covering only the remediation delta and affected contracts"));
 	assert.ok(reviewPrompt.includes("do not independently rereview an unchanged patch"));
 });
 
-test("verification runner remains execution-only with linked-worktree support", () => {
-	const runner = agents["verification-runner"];
-	assert.match(runner, /^tools: read,bash,grep,find,verification_evidence$/m);
-	assert.doesNotMatch(runner, /^tools: .*\b(?:edit|write|subagent|bg_run|inspect_context|inspect_change)\b/m);
-	includesAll(runner, ["repositoryRoot when present", "Never select, add, remove, combine, wrap, or retry commands", "hidden nested dependency", "candidate ID equals the expected stable candidate"]);
-});
 
 test("global instructions retain Alan-specific conventions", () => {
 	includesAll(globalInstructions, [

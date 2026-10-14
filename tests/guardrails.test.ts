@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { test, expect } from "bun:test";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -93,9 +94,11 @@ test("rejects worktree symlink escapes and cd-based ambiguity", async () => {
 
 test("requires bounded existing review artifacts for single and child launches", async () => {
 	const path = await artifact();
+	const metadata = `Candidate: candidate_${"a".repeat(64)}\nPatch SHA-256: ${createHash("sha256").update("diff\n").digest("hex")}`;
+	const task = `${metadata}\nPatch artifact: ${path}\nReview paths: ${JSON.stringify(["/tmp/project/src/example.ts"])}`;
 	const handlers = createPi();
-	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { agent: "code-reviewer", task: `Patch artifact: ${path}\nReview paths: src/example.ts` } }, { cwd: "/tmp/project" });
-	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { children: [{ agent: "code-reviewer", task: `Patch artifact: ${path}\nReview paths: src/example.ts` }] } }, { cwd: "/tmp/project" });
+	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { agent: "code-reviewer", task } }, { cwd: "/tmp/project" });
+	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { children: [{ agent: "code-reviewer", task }] } }, { cwd: "/tmp/project" });
 
 	const unbounded = () => handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: "" } }, { cwd: "/tmp/project" });
 	for (const expected of [REVIEW_ARTIFACT_ROOT, "Patch artifact:", "Review paths:"]) {
@@ -103,22 +106,30 @@ test("requires bounded existing review artifacts for single and child launches",
 	}
 
 	const missing = join(REVIEW_ARTIFACT_ROOT, "missing.patch");
-	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `Patch artifact: ${missing}\nReview paths: src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("does not exist");
-	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `Patch artifact: ${path}` } }, { cwd: "/tmp/project" })).rejects.toThrow("Review paths");
-	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `Patch artifact: ${dirname(path)}\nReview paths: src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("regular file");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `${metadata}\nPatch artifact: ${missing}\nReview paths: /tmp/project/src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("does not exist");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `${metadata}\nPatch artifact: ${path}` } }, { cwd: "/tmp/project" })).rejects.toThrow("Review paths");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `${metadata}\nPatch artifact: ${dirname(path)}\nReview paths: /tmp/project/src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("regular file");
 
 	const outside = join(await mkdtemp(join(tmpdir(), "pi-review-outside-")), "review.patch");
 	await writeFile(outside, "diff\n");
-	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { children: [{ agent: "code-reviewer", task: `Patch artifact: ${outside}\nReview paths: src/example.ts` }] } }, { cwd: "/tmp/project" })).rejects.toThrow("lexically contained");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { children: [{ agent: "code-reviewer", task: `${metadata}\nPatch artifact: ${outside}\nReview paths: /tmp/project/src/example.ts` }] } }, { cwd: "/tmp/project" })).rejects.toThrow("lexically contained");
+});
+
+test("rejects a generated hash that does not match the exact patch bytes", async () => {
+	const path = await artifact();
+	const task = `Candidate: candidate_${"a".repeat(64)}\nPatch SHA-256: ${"b".repeat(64)}\nPatch artifact: ${path}\nReview paths: ${JSON.stringify(["/tmp/project/src/example.ts"])}`;
+	const handlers = createPi();
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task } }, { cwd: "/tmp/project" })).rejects.toThrow("does not match generated");
 });
 
 test("rejects symlink and traversal review artifacts", async () => {
 	const path = await artifact();
+	const metadata = `Candidate: candidate_${"a".repeat(64)}\nPatch SHA-256: ${"b".repeat(64)}`;
 	const alias = join(dirname(path), "alias.patch");
 	await symlink(path, alias);
 	const handlers = createPi();
-	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `Patch artifact: ${alias}\nReview paths: src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("symbolic link");
-	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `Patch artifact: ${dirname(path)}/alias/../review.patch\nReview paths: src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("parent traversal");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `${metadata}\nPatch artifact: ${alias}\nReview paths: /tmp/project/src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("symbolic link");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent: "code-reviewer", task: `${metadata}\nPatch artifact: ${dirname(path)}/alias/../review.patch\nReview paths: /tmp/project/src/example.ts` } }, { cwd: "/tmp/project" })).rejects.toThrow("parent traversal");
 });
 
 test("suppresses unchanged infrastructure retries with an explicit Pi override", async () => {

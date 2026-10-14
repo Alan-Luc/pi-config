@@ -1,5 +1,6 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { EventBus, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
+import { requestBackgroundTask, type BackgroundTaskSnapshot } from "./background-tasks.ts";
 import { AGENT_OUTPUT, DEFAULT_OUTPUT, SCHEMAS, type SchemaId } from "./schemas.ts";
 import { appendInstructions, renderTemplate } from "./render.ts";
 import { sectionBody, validate } from "./validate.ts";
@@ -87,6 +88,30 @@ export function failureReport(errors: readonly string[], originalText: string): 
 	].join("\n");
 }
 
+const MAX_RUNNING_TASKS_IN_ERROR = 5;
+const MAX_TASK_LABEL_LENGTH = 80;
+
+function taskLabel(task: BackgroundTaskSnapshot): string {
+	const label = task.name === undefined ? task.id : `${task.id} (${task.name})`;
+	return label.length <= MAX_TASK_LABEL_LENGTH ? label : `${label.slice(0, MAX_TASK_LABEL_LENGTH - 1)}…`;
+}
+
+async function backgroundTaskErrors(events: EventBus): Promise<string[]> {
+	try {
+		const { tasks } = await requestBackgroundTask(events, "status", {});
+		const running = tasks
+			.filter((task) => task.status === "running")
+			.toSorted((left, right) => left.id.localeCompare(right.id) || (left.name ?? "").localeCompare(right.name ?? ""));
+		if (running.length === 0) return [];
+		const shown = running.slice(0, MAX_RUNNING_TASKS_IN_ERROR).map(taskLabel);
+		const remaining = running.length - shown.length;
+		return [`background tasks still running: ${shown.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}`];
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		return [`background task status check failed: ${detail}`];
+	}
+}
+
 export function registerHandoffHooks(pi: ExtensionAPI): void {
 	const schemaId = replySchema(process.env);
 	if (schemaId === null) return;
@@ -130,7 +155,7 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 		invalidateVerificationEvidence(`${toolName} tool activity completed after verification`);
 	});
 
-	pi.on("message_end", (event) => {
+	pi.on("message_end", async (event) => {
 		const message = assistantMessage(event.message);
 		if (!message || message.stopReason === "aborted" || message.stopReason === "error") return;
 		const text = replyText(message);
@@ -139,6 +164,10 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 		if (result.ok && SCHEMAS[schemaId].sections.some((section) => section.heading === "Verified by")) {
 			const errors = verifiedByErrors(text);
 			if (errors.length > 0) result = { ok: false, errors };
+		}
+		if (result.ok) {
+			const errors = await backgroundTaskErrors(pi.events);
+			result = errors.length === 0 ? { ok: true, errors: [] } : { ok: false, errors };
 		}
 		if (result.ok) {
 			pending = undefined;

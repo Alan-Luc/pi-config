@@ -86,10 +86,27 @@ test("every rendered template fails only on fill markers and preamble placeholde
 		const placeholders = schema.preamble.filter((line) => !line.pattern.test(line.example)).length;
 		const result = validate(schemaId, renderTemplate(schemaId));
 		assert.equal(result.ok, false, schemaId);
-		const fillMarkers = schema.sections.reduce((count, section) => count + (section.lines?.length ?? 1), 0);
+		const fillMarkers = schema.sections.reduce(
+			(count, section) => count + (section.lines?.length ?? (section.none || section.hint.endsWith("or None.") ? 0 : 1)),
+			0,
+		);
 		assert.equal(result.errors.length, fillMarkers + placeholders, schemaId);
 		assert.ok(result.errors.every((error) => error.includes("fill marker") || error.includes("placeholder")), schemaId);
 	}
+});
+
+test("renders None only for optional sections", () => {
+	const review = renderTemplate("review");
+	for (const heading of ["Critical (P0)", "Important (P1)", "Nice-to-have (P2)", "Out of scope"]) {
+		assert.ok(review.includes(`## ${heading}\nNone.\n`), heading);
+	}
+	assert.ok(renderTemplate("worker").includes("## Key decisions\nNone.\n"));
+	assert.ok(renderTemplate("handoff").includes("## Blockers\nNone.\n"));
+	assert.ok(renderTemplate("explorer").includes("## Uncertainty\nNone.\n"));
+	assert.ok(renderTemplate("worker").includes("## Verified by\n<!-- fill:"));
+	assert.ok(renderTemplate("brief").includes("## Objective\n<!-- fill:"));
+	assert.ok(renderTemplate("handoff").includes("## Alan's actions\n<!-- fill:"));
+	assert.ok(renderTemplate("plan").includes("## Goal and context\n<!-- fill:"));
 });
 
 test("a correctly filled document passes for every schema", () => {
