@@ -24,7 +24,8 @@ import { validate } from "./validate.ts";
 const CANDIDATE_TIMEOUT_SECONDS = 30;
 const REVIEW_DIRECTORY = join(REVIEW_ARTIFACT_ROOT, "review-preparation");
 const ROOT_MUTATION_TOOLS = new Set(["bash", "edit", "write"]);
-const GENERATED_METADATA_PREFIXES = ["Candidate:", "Patch SHA-256:", "Patch artifact:", "Review paths:"] as const;
+const DELEGATED_MUTATION_AGENTS = new Set(["implementation-engineer", "test-automation-engineer"]);
+const GENERATED_METADATA_PREFIXES = ["Candidate:", "Patch SHA-256:", "Patch artifact:", "Review paths:", "Excluded pre-dirty paths:"] as const;
 
 export type DiffRecord = Readonly<{
 	status: string;
@@ -48,6 +49,7 @@ export type ReviewPreparationResult = Readonly<{
 	patchArtifact: string;
 	patchSha256: string;
 	reviewPaths: readonly string[];
+	excludedPreDirtyPaths: readonly string[];
 }>;
 
 function isWithin(root: string, candidate: string): boolean {
@@ -117,13 +119,16 @@ function literalPathspec(path: string): string {
 	return `:(literal)${path}`;
 }
 
-function absoluteReviewPaths(root: string, records: readonly DiffRecord[]): string[] {
-	const paths = [...new Set(records.flatMap(recordPaths))].sort();
-	return paths.map((path) => {
+function absolutePaths(root: string, paths: readonly string[]): string[] {
+	return [...new Set(paths)].sort().map((path) => {
 		const absolute = resolve(root, path);
 		if (!isWithin(root, absolute)) throw new Error(`review preparation Git path escapes the repository: ${path}`);
 		return absolute;
 	});
+}
+
+function absoluteReviewPaths(root: string, records: readonly DiffRecord[]): string[] {
+	return absolutePaths(root, records.flatMap(recordPaths));
 }
 
 function directoryDescriptor(directory: string, label: string): number {
@@ -226,14 +231,12 @@ function replaceScopeMetadata(text: string, metadata: readonly string[]): string
 	return next.join("\n");
 }
 
-function reviewerLaunches(input: unknown): Array<Record<string, unknown>> {
+function subagentLaunches(input: unknown): Array<Record<string, unknown>> {
 	if (!isRecord(input)) return [];
 	if (Array.isArray(input.children) && input.children.length > 0) {
-		return input.children.filter((child): child is Record<string, unknown> =>
-			isRecord(child) && child.agent === "code-reviewer",
-		);
+		return input.children.filter((child): child is Record<string, unknown> => isRecord(child));
 	}
-	return input.agent === "code-reviewer" ? [input] : [];
+	return [input];
 }
 
 function generatedMetadata(result: ReviewPreparationResult): string[] {
@@ -242,6 +245,7 @@ function generatedMetadata(result: ReviewPreparationResult): string[] {
 		`Patch SHA-256: ${result.patchSha256}`,
 		`Patch artifact: ${result.patchArtifact}`,
 		`Review paths: ${JSON.stringify(result.reviewPaths)}`,
+		`Excluded pre-dirty paths: ${JSON.stringify(result.excludedPreDirtyPaths)}`,
 	];
 }
 
@@ -262,6 +266,10 @@ export async function prepareReview(
 	const records = taskRecords(changedRecords, boundary.baselinePaths);
 	if (records.length === 0) throw new Error("review preparation found no task-owned diff to review");
 	const paths = absoluteReviewPaths(current.repositoryRoot, records);
+	const excludedPreDirtyPaths = absolutePaths(
+		current.repositoryRoot,
+		changedRecords.flatMap(recordPaths).filter((path) => boundary.baselinePaths.has(path)),
+	);
 	const patch = await executeGit(
 		exec,
 		current.repositoryRoot,
@@ -284,7 +292,7 @@ export async function prepareReview(
 	ensureReviewDirectories();
 	const patchArtifact = join(REVIEW_DIRECTORY, `${current.id}-${patchSha256}.patch`);
 	writePatch(patchArtifact, patchBytes);
-	return { candidate: current, patchArtifact, patchSha256, reviewPaths: paths };
+	return { candidate: current, patchArtifact, patchSha256, reviewPaths: paths, excludedPreDirtyPaths };
 }
 
 export function addReviewMetadata(task: string, result: ReviewPreparationResult): string {
@@ -343,13 +351,17 @@ export function registerReviewPreparation(pi: ExtensionAPI): void {
 	};
 
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
-		if (event.parentToolCallId === undefined && ROOT_MUTATION_TOOLS.has(event.toolName)) {
+		const launches = event.toolName === "subagent" ? subagentLaunches(event.input) : [];
+		if (event.parentToolCallId === undefined && (
+			ROOT_MUTATION_TOOLS.has(event.toolName)
+			|| launches.some((launch) => typeof launch.agent === "string" && DELEGATED_MUTATION_AGENTS.has(launch.agent))
+		)) {
 			await ensureBoundary(ctx);
 		}
-		const launches = reviewerLaunches(event.toolName === "subagent" ? event.input : undefined);
-		if (launches.length === 0) return;
+		const reviewerLaunches = launches.filter((launch) => launch.agent === "code-reviewer");
+		if (reviewerLaunches.length === 0) return;
 		const result = await prepare(ctx);
-		for (const launch of launches) {
+		for (const launch of reviewerLaunches) {
 			if (typeof launch.task !== "string") continue;
 			const nextTask = addReviewMetadata(launch.task, result);
 			const validation = validate("brief", nextTask);

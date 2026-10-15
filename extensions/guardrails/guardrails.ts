@@ -111,6 +111,7 @@ async function validateBoundedReview(input: unknown): Promise<void> {
 		const task = typeof launch.task === "string" ? launch.task : "";
 		const artifactMatch = task.match(/^Patch artifact:[ \t]*(.*)$/im);
 		const reviewPathsMatch = task.match(/^Review paths:[ \t]*(.*)$/im);
+		const excludedPreDirtyPathsMatch = task.match(/^Excluded pre-dirty paths:[ \t]*(.*)$/im);
 		const candidateMatch = task.match(/^Candidate:[ \t]*(candidate_[0-9a-f]{64})$/im);
 		const patchHashMatch = task.match(/^Patch SHA-256:[ \t]*([0-9a-f]{64})$/im);
 		const reviewPathsText = reviewPathsMatch?.[1].trim() ?? "";
@@ -125,14 +126,23 @@ async function validateBoundedReview(input: unknown): Promise<void> {
 		} else {
 			reviewPaths = reviewPathsText.split(/[ \t]+/).filter(Boolean);
 		}
+		let excludedPreDirtyPaths: string[] | undefined;
+		try {
+			const parsed: unknown = JSON.parse(excludedPreDirtyPathsMatch?.[1].trim() ?? "");
+			if (Array.isArray(parsed) && parsed.every((path): path is string => typeof path === "string")) excludedPreDirtyPaths = parsed;
+		} catch {
+			excludedPreDirtyPaths = undefined;
+		}
 		if (
 			!artifactMatch
 			|| reviewPaths.length === 0
 			|| reviewPaths.some((path) => !isAbsolute(path))
+			|| excludedPreDirtyPaths === undefined
+			|| excludedPreDirtyPaths.some((path) => !isAbsolute(path))
 			|| !candidateMatch
 			|| !patchHashMatch
 		) {
-			throw new Error(`Blocked unbounded code-reviewer task; use generated review metadata:\nCandidate: candidate_<id>\nPatch SHA-256: <sha256>\nPatch artifact: ${resolve(REVIEW_ARTIFACT_ROOT, "<name>.patch")}\nReview paths: <exact absolute paths>`);
+			throw new Error(`Blocked unbounded code-reviewer task; use generated review metadata:\nCandidate: candidate_<id>\nPatch SHA-256: <sha256>\nPatch artifact: ${resolve(REVIEW_ARTIFACT_ROOT, "<name>.patch")}\nReview paths: <exact absolute paths>\nExcluded pre-dirty paths: <exact absolute paths excluded from the patch>`);
 		}
 		const artifactBytes = await requireReviewArtifact(artifactMatch[1].trim());
 		const actualPatchSha256 = createHash("sha256").update(artifactBytes).digest("hex");

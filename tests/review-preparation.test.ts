@@ -144,6 +144,7 @@ function preparationMetadata(): ReviewPreparationResult {
 		patchArtifact: "/tmp/pi/review-preparation/example.patch",
 		patchSha256: createHash("sha256").update("patch").digest("hex"),
 		reviewPaths: ["/tmp/project/task.txt"],
+		excludedPreDirtyPaths: ["/tmp/project/baseline.txt"],
 	};
 }
 
@@ -174,6 +175,8 @@ test("captures baseline records, later baseline edits, Bash-created changes, bin
 	assert.equal(paths.some((path) => path.endsWith("/binary-new.bin")), true);
 	assert.equal(paths.some((path) => path.endsWith("/--literal path")), true);
 	assert.equal(paths.some((path) => path.endsWith("/baseline.txt")), false);
+	const excludedPreDirtyPaths = JSON.parse(task.match(/^Excluded pre-dirty paths: (.*)$/m)?.[1] ?? "[]") as string[];
+	assert.equal(excludedPreDirtyPaths.some((path) => path.endsWith("/baseline.txt")), true);
 
 	const artifact = task.match(/^Patch artifact: (.*)$/m)?.[1];
 	if (!artifact) throw new Error("missing patch artifact");
@@ -194,6 +197,18 @@ test("ignores nested mutation calls and captures only root mutations", async () 
 	const input = { agent: "code-reviewer", task: brief() };
 	await harness.call(launch(input));
 	assert.match(String(input.task), /^Patch artifact:/m);
+});
+
+test.each(["implementation-engineer", "test-automation-engineer"])("captures the boundary before %s child edits when the lead never mutates", async (agent) => {
+	const root = await repository();
+	const harness = toolCallHandler(root);
+	await harness.call(launch({ agent, task: brief() }));
+	writeFileSync(join(root, "child-task.txt"), "changed by child\n");
+
+	const reviewer = { agent: "code-reviewer", task: brief() };
+	await harness.call(launch(reviewer));
+	const paths = JSON.parse(reviewer.task.match(/^Review paths: (.*)$/m)?.[1] ?? "[]") as string[];
+	assert.equal(paths.some((path) => path.endsWith("/child-task.txt")), true);
 });
 
 test("serializes concurrent first captures and preparations, repeats deterministically, and never infers acceptance", async () => {
@@ -245,7 +260,7 @@ test("rejects failed capture and no-diff review without mutating non-reviewer br
 	assert.equal(child.task, brief("child unchanged"));
 });
 
-test("resets only after HEAD changes or exact explicit acceptance", async () => {
+test("resets after HEAD changes", async () => {
 	const root = await repository();
 	const harness = toolCallHandler(root);
 	await harness.call(mutation());
@@ -260,21 +275,23 @@ test("resets only after HEAD changes or exact explicit acceptance", async () => 
 	const canonicalRoot = realpathSync(root);
 	assert.equal(afterHeadPaths.includes(join(canonicalRoot, "task.txt")), false);
 	assert.equal(afterHeadPaths.includes(join(canonicalRoot, "second-task.txt")), true);
+});
 
-	const acceptedRoot = await repository();
-	const accepted = toolCallHandler(acceptedRoot);
-	await accepted.call(mutation());
-	const current = await captureCandidateWithExec(accepted.exec, acceptedRoot);
-	await assert.rejects(accepted.accept("candidate_" + "0".repeat(64)), /does not match/);
-	await accepted.accept(current.id);
-	await accepted.call(mutation("second-task.txt"));
-	writeFileSync(join(acceptedRoot, "second-task.txt"), "after acceptance\n");
+test("resets after exact explicit acceptance", async () => {
+	const root = await repository();
+	const harness = toolCallHandler(root);
+	await harness.call(mutation());
+	const current = await captureCandidateWithExec(harness.exec, root);
+	await assert.rejects(harness.accept("candidate_" + "0".repeat(64)), /does not match/);
+	await harness.accept(current.id);
+	await harness.call(mutation("second-task.txt"));
+	writeFileSync(join(root, "second-task.txt"), "after acceptance\n");
 	const afterAccept = { agent: "code-reviewer", task: brief() };
-	await accepted.call(launch(afterAccept));
+	await harness.call(launch(afterAccept));
 	const afterAcceptPaths = JSON.parse(afterAccept.task.match(/^Review paths: (.*)$/m)?.[1] ?? "[]") as string[];
-	const canonicalAcceptedRoot = realpathSync(acceptedRoot);
-	assert.equal(afterAcceptPaths.includes(join(canonicalAcceptedRoot, "task.txt")), false);
-	assert.equal(afterAcceptPaths.includes(join(canonicalAcceptedRoot, "second-task.txt")), true);
+	const canonicalRoot = realpathSync(root);
+	assert.equal(afterAcceptPaths.includes(join(canonicalRoot, "task.txt")), false);
+	assert.equal(afterAcceptPaths.includes(join(canonicalRoot, "second-task.txt")), true);
 });
 
 test("rejects a symlinked review root before creating outside descendants", async () => {
@@ -301,7 +318,7 @@ test("rejects a symlinked review root before creating outside descendants", asyn
 			prepareReview(harness.exec, { candidate: boundaryCandidate, baselinePaths: new Set() }, root),
 			/symbolic link/,
 		);
-		assert.deepEqual(readdirSync(outside), []);
+		assert.equal(readdirSync(outside).includes("review-preparation"), false);
 	} finally {
 		unlinkSync(REVIEW_ARTIFACT_ROOT);
 		if (hadRoot) renameSync(backup, REVIEW_ARTIFACT_ROOT);
@@ -329,17 +346,18 @@ test("reuses candidate identity and rejects a pre-existing patch symlink", async
 
 test("removes shadow metadata across the brief before inserting one Scope block", () => {
 	const result = preparationMetadata();
-	const shadowed = brief("existing scope")
+	const shadowed = brief("existing scope\nExcluded pre-dirty paths: [\"/tmp/stale\"]")
 		.replace("## Objective\n", "## Objective\n   Patch artifact: stale.patch\n")
 		.replace("## Context\n", "## Context\n  Patch SHA-256: stale\n")
 		.replace("## Constraints\n", "## Constraints\n Candidate: candidate_stale\n")
 		.replace("## Done when\n", "## Done when\n Review paths: [\"/tmp/stale\"]\n");
 	const generated = addReviewMetadata(shadowed, result);
 	assert.equal(validate("brief", generated).ok, true);
-	for (const prefix of ["Candidate:", "Patch SHA-256:", "Patch artifact:", "Review paths:"]) {
+	for (const prefix of ["Candidate:", "Patch SHA-256:", "Patch artifact:", "Review paths:", "Excluded pre-dirty paths:"]) {
 		assert.equal(generated.split("\n").filter((line) => line.replace(/^ {0,3}/, "").startsWith(prefix)).length, 1, prefix);
 	}
 	assert.match(generated, /^Patch artifact: \/tmp\/pi\/review-preparation\/example\.patch$/m);
+	assert.match(generated, /^Excluded pre-dirty paths: \["\/tmp\/project\/baseline\.txt"\]$/m);
 });
 
 test("composes review-preparation mutation before guardrails validation for single and child launches", async () => {
