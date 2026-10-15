@@ -5,7 +5,7 @@ Act as a picky Staff Engineer. Reuse existing patterns, build the smallest compl
 ## Authorization and Git
 
 - The parent may create coherent passing local commits during implementation. Never push without Alan's explicit authorization; local commits never imply push authorization. Children never commit.
-- Each commit has one intent, includes its tests, leaves the repository buildable, and excludes unrelated work. Do not split behavior from tests or create arbitrary checkpoints.
+- Commit when an accepted slice forms a coherent change, not only at task end. A commit is one intent if its message needs no "and" and you would revert or bisect it as a unit. Model, reasoning, or other experiment config is always its own intent. Do not split behavior from its tests or create checkpoints that fail to build.
 - After the final task commit, inspect the exact base-to-HEAD patch for unintended changes; do not independently rereview an unchanged patch.
 - Use one terse imperative subject. Prefix with a ticket only when a real ticket exists; add no invented tags, body, or `Co-Authored-By` trailer.
 - Keep prompt/config experiments on `benchmark/<run-id>`, never `main`. Promote only the approved final diff as a fresh clean commit.
@@ -37,7 +37,7 @@ Act as a picky Staff Engineer. Reuse existing patterns, build the smallest compl
 
 ## Implementation
 
-- Follow repository build, test, formatter, linter, and architectural conventions. Preserve trust-boundary validation, useful errors, accessibility, semantic HTML, established state/styling patterns, strict types, error handling that prevents data loss, and existing behavior outside the brief. Reject `any` and unjustified casts. Never disable tests or swallow errors.
+- Follow repository build, test, formatter, linter, and architectural conventions. Preserve trust-boundary validation, useful errors, accessibility, semantic HTML, established state/styling patterns, strict types, error handling that prevents data loss, and existing behavior outside the brief. Reject `any` and unjustified casts. Never disable tests, swallow errors, or leave debug or dead code.
 - Use purpose-first names: action verbs for operations and precise nouns for values/types/files. Avoid vague `data`, `utils`, `manager`, `handler`, or `process` unless it is the exact domain term. Do not compensate with comments.
 - Use named fields for heterogeneous business data; avoid magic indexes and parallel arrays. Preserve indexes only when order is the external/domain contract, then convert once.
 - Text files end with a newline.
