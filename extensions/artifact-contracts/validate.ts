@@ -1,9 +1,10 @@
-import { DOCUMENTS, PROTECTED, SCHEMAS, type Schema, type SchemaId, type Section } from "./schemas.ts";
+import { DOCUMENTS, FREEFORM, PROTECTED, SCHEMAS, type Schema, type SchemaId, type Section } from "./schemas.ts";
 
 export type ValidationResult = { ok: boolean; errors: string[] };
 
 export type PathMatch =
 	| { kind: "document"; schema: SchemaId; createOnly: boolean }
+	| { kind: "freeform" }
 	| { kind: "protected"; reason: string }
 	| null;
 
@@ -194,6 +195,19 @@ function validateOneOf(section: Section, body: BodyLine[], errors: string[], hea
 	}
 }
 
+function validateLines(section: Section, body: BodyLine[], errors: string[], headingLine: number): void {
+	if (!section.lines) return;
+	if (body.length !== section.lines.length) {
+		errors.push(`line ${headingLine}: expected exactly ${section.lines.length} non-blank lines, found ${body.length}`);
+	}
+	for (const [index, line] of body.entries()) {
+		const expected = section.lines[index];
+		if (expected && !matches(expected, structural(line.text))) {
+			errors.push(`line ${line.line}: expected line matching ${quote(expected.example)}, found ${quote(line.text)}`);
+		}
+	}
+}
+
 function validateSubheadings(
 	section: Section,
 	document: ParsedDocument,
@@ -226,6 +240,7 @@ function validateBody(
 	if (body.some((line) => hasFillMarker(document, line.index))) return;
 
 	validateOneOf(section, body, errors, occurrence.line);
+	validateLines(section, body, errors, occurrence.line);
 	validateItems(section, body, errors);
 	validateSubheadings(section, document, occurrence, errors);
 }
@@ -372,6 +387,9 @@ export function matchPath(relPath: string): PathMatch {
 		if (matches({ pattern: document.path, example: "" }, relPath)) {
 			return { kind: "document", schema: document.schema, createOnly: document.createOnly };
 		}
+	}
+	for (const path of FREEFORM) {
+		if (matches({ pattern: path, example: "" }, relPath)) return { kind: "freeform" };
 	}
 	return null;
 }

@@ -2,7 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 import { renderTemplate } from "../extensions/artifact-contracts/render.ts";
 import { matchPath, validate } from "../extensions/artifact-contracts/validate.ts";
-import { SCHEMAS, type SchemaId } from "../extensions/artifact-contracts/schemas.ts";
+import {
+	ARTIFACT_CAPABILITY_VERSION,
+	isArtifactCapabilityPath,
+	SCHEMAS,
+	type ArtifactOperation,
+	type SchemaId,
+} from "../extensions/artifact-contracts/schemas.ts";
+import {
+	ARTIFACT_CAPABILITY_CHANNEL,
+	ARTIFACT_CAPABILITY_REQUEST_CHANNEL,
+	registerArtifactCapability,
+} from "../extensions/artifact-contracts/index.ts";
 
 const schemaIds = Object.keys(SCHEMAS) as SchemaId[];
 
@@ -25,13 +36,14 @@ function filledDocument(schemaId: SchemaId): string {
 		...preamble,
 		...(preamble.length ? [""] : []),
 		...schema.sections.flatMap((section) => {
-			const body = section.oneOf
-				? [section.oneOf[0]]
-				: section.item
-					? [section.item.example, ...(section.item.labels ?? []).map((label) => `   ${label} example`)]
-					: section.subheading
-						? ["### 2026-10-01 — decision", "record"]
-						: ["content"];
+			const body = section.lines?.map((line) => line.example.replace(/<!-- fill: .* -->/, "example"))
+				?? (section.oneOf
+					? [section.oneOf[0]]
+					: section.item
+						? [section.item.example, ...(section.item.labels ?? []).map((label) => `   ${label} example`)]
+						: section.subheading
+							? ["### 2026-10-01 — decision", "record"]
+							: ["content"]);
 			return [`## ${section.heading}`, ...body, ""];
 		}),
 	].join("\n");
@@ -74,9 +86,27 @@ test("every rendered template fails only on fill markers and preamble placeholde
 		const placeholders = schema.preamble.filter((line) => !line.pattern.test(line.example)).length;
 		const result = validate(schemaId, renderTemplate(schemaId));
 		assert.equal(result.ok, false, schemaId);
-		assert.equal(result.errors.length, schema.sections.length + placeholders, schemaId);
+		const fillMarkers = schema.sections.reduce(
+			(count, section) => count + (section.lines?.length ?? (section.none || section.hint.endsWith("or None.") ? 0 : 1)),
+			0,
+		);
+		assert.equal(result.errors.length, fillMarkers + placeholders, schemaId);
 		assert.ok(result.errors.every((error) => error.includes("fill marker") || error.includes("placeholder")), schemaId);
 	}
+});
+
+test("renders None only for optional sections", () => {
+	const review = renderTemplate("review");
+	for (const heading of ["Critical (P0)", "Important (P1)", "Nice-to-have (P2)", "Out of scope"]) {
+		assert.ok(review.includes(`## ${heading}\nNone.\n`), heading);
+	}
+	assert.ok(renderTemplate("worker").includes("## Key decisions\nNone.\n"));
+	assert.ok(renderTemplate("handoff").includes("## Blockers\nNone.\n"));
+	assert.ok(renderTemplate("explorer").includes("## Uncertainty\nNone.\n"));
+	assert.ok(renderTemplate("worker").includes("## Verified by\n<!-- fill:"));
+	assert.ok(renderTemplate("brief").includes("## Objective\n<!-- fill:"));
+	assert.ok(renderTemplate("handoff").includes("## Alan's actions\n<!-- fill:"));
+	assert.ok(renderTemplate("plan").includes("## Goal and context\n<!-- fill:"));
 });
 
 test("a correctly filled document passes for every schema", () => {
@@ -139,7 +169,7 @@ test("oneOf, item, none, labels, and subheading rules are enforced", () => {
 	const item = withSectionBody(filledDocument("worker"), "Verified by", ["not an item"]);
 	assert.ok(validate("worker", item).errors.some((error) => error.includes("top-level item")));
 
-	assert.equal(validate("reviewLight", withSectionBody(filledDocument("reviewLight"), "Findings", ["None."])).ok, true);
+	assert.equal(validate("review", withSectionBody(filledDocument("review"), "Critical (P0)", ["None."])).ok, true);
 	assert.ok(validate("worker", withSectionBody(filledDocument("worker"), "Verified by", ["None."])).errors.length > 0);
 
 	const missingLabel = withSectionBody(filledDocument("handoff"), "Alan's actions", ["1. **Do:** action", "   **Why:** reason"]);
@@ -160,7 +190,7 @@ test("append-only sections reject edits and accept pure appends", () => {
 	assert.ok(result.errors.some((error) => error.includes("append-only section")));
 });
 
-test("matchPath classifies writable, protected, and unrelated paths", () => {
+test("matchPath classifies writable, freeform, protected, and unrelated paths", () => {
 	assert.deepEqual(matchPath(".harness/plans/2026-10-01-example-plan.md"), {
 		kind: "document",
 		schema: "plan",
@@ -171,10 +201,90 @@ test("matchPath classifies writable, protected, and unrelated paths", () => {
 		schema: "handoff",
 		createOnly: true,
 	});
+	assert.deepEqual(matchPath(".harness/reports/2026/10/01/01234567-89ab-cdef-0123-456789abcdef-audit.md"), {
+		kind: "freeform",
+	});
 	const daily = matchPath(".harness/2026/10/01.md");
 	assert.equal(daily?.kind, "protected");
 	assert.equal(matchPath(".opencode/legacy.md")?.kind, "protected");
 	assert.equal(matchPath("src/unrelated.md"), null);
+});
+
+const CAPABILITY_PATHS = {
+	plan: ".harness/plans/2026-10-12-lean-instruction-architecture.md",
+	daily: ".harness/2026/10/12.md",
+	handoff: ".harness/handoffs/2026/10/12/01234567-89ab-cdef-0123-456789abcdef-task.md",
+	report: ".harness/reports/2026/10/12/01234567-89ab-cdef-0123-456789abcdef-audit.md",
+} as const;
+
+const CAPABILITY_MATRIX: Readonly<Record<ArtifactOperation, readonly string[]>> = {
+	read: Object.values(CAPABILITY_PATHS),
+	write: [CAPABILITY_PATHS.plan, CAPABILITY_PATHS.handoff, CAPABILITY_PATHS.report],
+	edit: [CAPABILITY_PATHS.plan, CAPABILITY_PATHS.report],
+};
+
+const REJECTED_CAPABILITY_PATHS = [
+	".harness/plans/2026-10-12-Lean-instruction-architecture.md",
+	".harness/plans/2026-10-12-lean_instruction_architecture.md",
+	".harness/handoffs/2026/10/12/01234567-89ab-cdef-0123-456789ABCDEf-task.md",
+	".harness/handoffs/2026/10/12/zzzzzzzz-89ab-cdef-0123-456789abcdef-task.md",
+	".harness/handoffs/2026/10/12/task.md",
+	".harness/reports/2026/10/12/extra/01234567-89ab-cdef-0123-456789abcdef-audit.md",
+	".harness/reports/2026/10/12/01234567-89ab-cdef-0123-456789abcdef-audit.txt",
+	"/.harness/plans/2026-10-12-lean-instruction-architecture.md",
+	"~/.harness/plans/2026-10-12-lean-instruction-architecture.md",
+	".harness\\plans\\2026-10-12-lean-instruction-architecture.md",
+	".harness//plans/2026-10-12-lean-instruction-architecture.md",
+	".harness/./plans/2026-10-12-lean-instruction-architecture.md",
+	".harness/plans/ignored/../2026-10-12-lean-instruction-architecture.md",
+] as const;
+
+test("capability version 1 uses the exact path and operation matrix", () => {
+	assert.equal(ARTIFACT_CAPABILITY_VERSION, 1);
+	for (const operation of ["read", "write", "edit"] as const) {
+		for (const path of Object.values(CAPABILITY_PATHS)) {
+			assert.equal(
+				isArtifactCapabilityPath(operation, path),
+				CAPABILITY_MATRIX[operation].includes(path),
+				`${operation} ${path}`,
+			);
+		}
+		for (const path of REJECTED_CAPABILITY_PATHS) {
+			assert.equal(isArtifactCapabilityPath(operation, path), false, `${operation} ${path}`);
+		}
+	}
+});
+
+test("the root capability announces after listening and responds to package-first requests", () => {
+	const order: string[] = [];
+	const listeners = new Map<string, (payload: unknown) => void>();
+	const emitted: Array<{ channel: string; payload: unknown }> = [];
+	const events = {
+		on(channel: string, listener: (payload: unknown) => void) {
+			order.push(`on:${channel}`);
+			listeners.set(channel, listener);
+			return () => listeners.delete(channel);
+		},
+		emit(channel: string, payload: unknown) {
+			order.push(`emit:${channel}`);
+			emitted.push({ channel, payload });
+		},
+	};
+
+	registerArtifactCapability({ events } as never);
+	assert.deepEqual(order.slice(0, 2), [
+		`on:${ARTIFACT_CAPABILITY_REQUEST_CHANNEL}`,
+		`emit:${ARTIFACT_CAPABILITY_CHANNEL}`,
+	]);
+	assert.deepEqual(emitted, [
+		{ channel: ARTIFACT_CAPABILITY_CHANNEL, payload: { version: 1, mutations: true } },
+	]);
+
+	listeners.get(ARTIFACT_CAPABILITY_REQUEST_CHANNEL)?.({});
+	assert.deepEqual(emitted.at(-1), {
+		channel: ARTIFACT_CAPABILITY_CHANNEL,
+		payload: { version: 1, mutations: true },
+	});
 });
 
 test("up to three leading spaces still count as structure, as in rendered Markdown", () => {

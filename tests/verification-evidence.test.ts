@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "bun:test";
+import type { EventBus } from "@earendil-works/pi-coding-agent";
+import {
+	BACKGROUND_TASK_REQUEST_CHANNEL,
+	BACKGROUND_TASK_RESPONSE_CHANNEL,
+	BACKGROUND_TASK_RESPONSE_SCHEMA,
+	BACKGROUND_TASK_TERMINAL_CHANNEL,
+	BACKGROUND_TASK_TERMINAL_SCHEMA,
+	type BackgroundTaskSnapshot,
+} from "../extensions/artifact-contracts/background-tasks.ts";
 import {
 	MAX_EXPOSED_OUTPUT_BYTES,
 	canonicalCommand,
@@ -31,7 +40,14 @@ const candidate = createCandidateIdentity({
 	kind: "dirty",
 });
 
-function record(command = "'bun' 'test'", exitCode = 0, valid = true, cwd = ".") {
+function record(
+	command = "'bun' 'test'",
+	exitCode = 0,
+	valid = true,
+	cwd = ".",
+	candidateIdentity = candidate,
+	attempt?: ReturnType<typeof beginVerificationAttempt>,
+) {
 	const output = `full output ${sequence}`;
 	const logPath = join(root, `${sequence++}.log`);
 	writeFileSync(logPath, output, { mode: 0o600 });
@@ -40,13 +56,13 @@ function record(command = "'bun' 'test'", exitCode = 0, valid = true, cwd = ".")
 		command,
 		argv: ["bun", "test"],
 		cwd,
-		candidate,
+		candidate: candidateIdentity,
 		exitCode,
 		logPath,
 		logSha256: createHash("sha256").update(output).digest("hex"),
 		valid,
 		invalidReason: valid ? undefined : "candidate changed during verification",
-	});
+	}, attempt);
 }
 
 afterEach(() => clearVerificationEvidence());
@@ -71,19 +87,39 @@ test("claims require exact command and exit matches", () => {
 	assert.match(verificationClaimErrors({ evidenceId: `verify_${"f".repeat(64)}`, command: evidence.command, exitCode: 0 })[0], /not found/);
 });
 
-test("only the latest record for one command and cwd is reportable", () => {
+test("only the latest record for one repository, command, and cwd is reportable", () => {
 	const older = record();
 	const latest = record();
 	assert.match(verificationClaimErrors({ evidenceId: older.id, command: older.command, exitCode: 0 })[0], /obsolete/);
 	assert.deepEqual(verificationClaimErrors({ evidenceId: latest.id, command: latest.command, exitCode: 0 }), []);
-	beginVerificationAttempt(latest.command, latest.cwd);
+	beginVerificationAttempt(candidate.repositoryRoot, latest.command, latest.cwd);
 	assert.match(verificationClaimErrors({ evidenceId: latest.id, command: latest.command, exitCode: 0 })[0], /obsolete/);
+});
+
+test("identical checks in linked worktrees remain independently reportable", () => {
+	const command = "'bun' 'test'";
+	const primary = record(command);
+	const linkedCandidate = createCandidateIdentity({
+		repositoryRoot: "/repo-linked",
+		head: candidate.head,
+		tree: candidate.tree,
+		kind: candidate.kind,
+	});
+	const linkedAttempt = beginVerificationAttempt(linkedCandidate.repositoryRoot, command, ".");
+	assert.deepEqual(verificationClaimErrors({ evidenceId: primary.id, command, exitCode: 0 }), []);
+	const linked = record(command, 0, true, ".", linkedCandidate, linkedAttempt);
+	assert.deepEqual(verificationClaimErrors({ evidenceId: primary.id, command, exitCode: 0 }), []);
+	assert.deepEqual(verificationClaimErrors({ evidenceId: linked.id, command, exitCode: 0 }), []);
+
+	beginVerificationAttempt(candidate.repositoryRoot, command, ".");
+	assert.match(verificationClaimErrors({ evidenceId: primary.id, command, exitCode: 0 })[0], /obsolete/);
+	assert.deepEqual(verificationClaimErrors({ evidenceId: linked.id, command, exitCode: 0 }), []);
 });
 
 test("failed attempts remain scoped to the exact command and cwd", () => {
 	const command = "'bun' 'test'";
 	const firstCwd = record(command, 0, true, "packages/a");
-	beginVerificationAttempt(command, firstCwd.cwd);
+	beginVerificationAttempt(candidate.repositoryRoot, command, firstCwd.cwd);
 	const secondCwd = record(command, 0, true, "packages/b");
 	assert.match(verificationClaimErrors({ evidenceId: firstCwd.id, command, exitCode: 0 })[0], /obsolete/);
 	assert.deepEqual(verificationClaimErrors({ evidenceId: secondCwd.id, command, exitCode: 0 }), []);
@@ -91,7 +127,7 @@ test("failed attempts remain scoped to the exact command and cwd", () => {
 
 test("tool completion before recording invalidates an overlapping verification attempt", () => {
 	const command = "'bun' 'test' 'overlap'";
-	const attempt = beginVerificationAttempt(command, ".");
+	const attempt = beginVerificationAttempt(candidate.repositoryRoot, command, ".");
 	invalidateVerificationEvidence("bash tool activity completed after verification");
 	const output = `full output ${sequence}`;
 	const logPath = join(root, `${sequence++}.log`);
@@ -130,7 +166,10 @@ test("invalid, missing, and tampered evidence fails closed", () => {
 });
 
 type ProcessResult = { exitCode: number; output: string };
-type FakeBashOptions = { omitExitFor?: (command: string) => boolean };
+type FakeBashOptions = {
+	omitExitFor?: (command: string) => boolean;
+	resultFor?: (command: string) => ProcessResult | undefined;
+};
 
 async function runProcess(argv: readonly string[], cwd: string): Promise<ProcessResult> {
 	const process = Bun.spawn([...argv], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -168,7 +207,7 @@ function makeContext(directory: string, options: FakeBashOptions = {}): Verifica
 			if (typeof args !== "object" || args === null || Array.isArray(args)) throw new Error("invalid fake bash input");
 			const input = args as { command?: unknown; timeout?: unknown };
 			if (typeof input.command !== "string" || typeof input.timeout !== "number") throw new Error("invalid fake bash input");
-			const result = await runProcess(["bash", "-c", input.command], directory);
+			const result = options.resultFor?.(input.command) ?? await runProcess(["bash", "-c", input.command], directory);
 			const structuredContent: Record<string, string | number | boolean> = {
 				output: result.output,
 				truncated: false,
@@ -199,6 +238,127 @@ async function newRepository(): Promise<string> {
 	const directory = await repository();
 	runtimeRepositories.push(directory);
 	return directory;
+}
+
+type FakeBackgroundService = EventBus & {
+	counts: Record<"run" | "status" | "logs", number>;
+	task: BackgroundTaskSnapshot;
+	complete(status?: "completed" | "failed" | "killed", exitCode?: number | null): void;
+};
+
+function backgroundService(directory: string, options: {
+	status?: "running" | "completed" | "failed" | "killed";
+	exitCode?: number | null;
+	omitExitCode?: boolean;
+	output?: string;
+	outputPath?: string;
+	logsPath?: string;
+	logsText?: string;
+	emitTerminalOnRun?: boolean;
+} = {}): FakeBackgroundService {
+	const listeners = new Map<string, Set<(value: unknown) => void>>();
+	const counts = { run: 0, status: 0, logs: 0 };
+	const output = Buffer.from(options.output ?? "verification output\n");
+	const outputPath = options.outputPath ?? ".pi/tasks/session/task-1.output";
+	const absoluteOutputPath = outputPath.startsWith("/") ? outputPath : join(directory, outputPath);
+	if (!options.outputPath) mkdirSync(join(directory, ".pi", "tasks", "session"), { recursive: true });
+	if (!options.outputPath) writeFileSync(absoluteOutputPath, output);
+	let command = "";
+	let task: BackgroundTaskSnapshot = {
+		id: "task-1",
+		name: "Verification",
+		command,
+		status: options.status ?? "completed",
+		outputPath,
+		cwd: directory,
+		startTime: 1,
+		...(options.status === "running" ? {} : { endTime: 2 }),
+		...(options.omitExitCode ? {} : { exitCode: options.exitCode ?? 0 }),
+		bytesWritten: output.byteLength,
+		isAgent: false,
+		notified: options.status !== "running",
+		notifyOnCompletion: true,
+		triggerOnCompletion: true,
+	};
+	const service = {
+		on(channel: string, listener: (value: unknown) => void) {
+			const channelListeners = listeners.get(channel) ?? new Set();
+			channelListeners.add(listener);
+			listeners.set(channel, channelListeners);
+			return () => channelListeners.delete(listener);
+		},
+		emit(channel: string, value: unknown) {
+			for (const listener of listeners.get(channel) ?? []) listener(value);
+		},
+		counts,
+		get task() { return task; },
+		complete(status: "completed" | "failed" | "killed" = "completed", exitCode: number | null = 0) {
+			task = {
+				...task,
+				status,
+				endTime: 2,
+				...(options.omitExitCode ? {} : { exitCode }),
+				notified: true,
+			};
+			service.emit(BACKGROUND_TASK_TERMINAL_CHANNEL, {
+				schema_version: BACKGROUND_TASK_TERMINAL_SCHEMA,
+				task,
+			});
+		},
+	} as FakeBackgroundService;
+	service.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
+		if (typeof value !== "object" || value === null) throw new Error("malformed request");
+		const request = value as { request_id?: unknown; operation?: unknown; payload?: Record<string, unknown> };
+		if (typeof request.request_id !== "string" || typeof request.operation !== "string") throw new Error("malformed request");
+		if (request.operation === "run") {
+			counts.run += 1;
+			command = String(request.payload?.command ?? "");
+			task = { ...task, command };
+			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+				request_id: request.request_id,
+				operation: "run",
+				ok: true,
+				result: task,
+			});
+			if (task.status !== "running" && options.emitTerminalOnRun !== false) service.complete(task.status, task.exitCode ?? null);
+			return;
+		}
+		if (request.operation === "status") {
+			counts.status += 1;
+			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+				request_id: request.request_id,
+				operation: "status",
+				ok: true,
+				result: { tasks: [task] },
+			});
+			return;
+		}
+		if (request.operation === "logs") {
+			counts.logs += 1;
+			const boundedText = output.subarray(0, MAX_EXPOSED_OUTPUT_BYTES).toString("utf8");
+			const truncated = output.byteLength > MAX_EXPOSED_OUTPUT_BYTES;
+			const text = truncated
+				? `${boundedText}\n\n[Showing head ${MAX_EXPOSED_OUTPUT_BYTES} bytes of ${output.byteLength} bytes; ${output.byteLength - MAX_EXPOSED_OUTPUT_BYTES} bytes omitted. Full output: ${outputPath}]`
+				: `${boundedText}\n\n[Full output: ${outputPath}]`;
+			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+				request_id: request.request_id,
+				operation: "logs",
+				ok: true,
+				result: {
+					task,
+					path: options.logsPath ?? outputPath,
+					bytesRead: Math.min(output.byteLength, MAX_EXPOSED_OUTPUT_BYTES),
+					truncated,
+					tail: false,
+					text: options.logsText ?? text,
+				},
+			});
+		}
+	});
+	return service;
 }
 
 process.on("exit", () => {
@@ -253,6 +413,87 @@ test("candidate capture preserves HEAD, branch, real index, status, stash, and f
 	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
 	assert.deepEqual(await repositorySnapshot(directory), before);
 	assert.equal(readFileSync(join(directory, "tracked.txt"), "utf8"), "base\n");
+});
+
+test("candidate capture tolerates embedded repository warnings", async () => {
+	const directory = await newRepository();
+	const embedded = join(directory, "embedded");
+	mkdirSync(embedded);
+	await git(embedded, "init", "--quiet");
+	await git(embedded, "config", "user.email", "verification@example.test");
+	await git(embedded, "config", "user.name", "Verification Test");
+	writeFileSync(join(embedded, "tracked.txt"), "embedded\n");
+	await git(embedded, "add", "tracked.txt");
+	await git(embedded, "commit", "--quiet", "-m", "embedded");
+
+	const candidate = await captureCandidate(makeContext(directory));
+	assert.equal(candidate.kind, "dirty");
+});
+
+test("candidate capture reports staging and malformed tree diagnostics", async () => {
+	const directory = await newRepository();
+	const failedAdd = makeContext(directory, {
+		resultFor: (command) => command.includes("git add -A")
+			? { exitCode: 1, output: "embedded staging failed" }
+			: undefined,
+	});
+	await assert.rejects(captureCandidate(failedAdd), /temporary Git index staging failed with exit 1: embedded staging failed/);
+
+	const malformedTree = makeContext(directory, {
+		resultFor: (command) => command.includes("git write-tree")
+			? { exitCode: 0, output: `${"x".repeat(MAX_EXPOSED_OUTPUT_BYTES + 100)}tree diagnostic` }
+			: undefined,
+	});
+	await assert.rejects(
+		captureCandidate(malformedTree),
+		(error: Error) => error.message.includes("invalid Git tree output")
+			&& error.message.includes("tree diagnostic")
+			&& error.message.length < MAX_EXPOSED_OUTPUT_BYTES + 200,
+	);
+});
+
+test("capture and run target linked sibling worktrees only", { timeout: 30_000 }, async () => {
+	const directory = await newRepository();
+	const worktreeContainer = mkdtempSync(join(tmpdir(), "verification-linked-worktree-"));
+	runtimeRepositories.push(worktreeContainer);
+	const worktree = join(worktreeContainer, "candidate");
+	await git(directory, "worktree", "add", "--quiet", "-b", "isolated-candidate", worktree);
+	writeFileSync(join(worktree, "candidate.txt"), "isolated\n");
+	const context = makeContext(directory);
+
+	const captured = await executeVerificationEvidence(
+		"linked-capture",
+		{ operation: "capture", repositoryRoot: worktree },
+		undefined,
+		context,
+	);
+	assert.equal(captured.details.operation, "capture");
+	if (captured.details.operation !== "capture") throw new Error("expected capture result");
+	assert.equal(captured.details.candidate.repositoryRoot, await git(worktree, "rev-parse", "--show-toplevel"));
+	assert.equal(captured.details.candidate.kind, "dirty");
+
+	const run = await executeVerification(
+		"linked-run",
+		{ operation: "run", repositoryRoot: worktree, argv: ["git", "rev-parse", "--show-toplevel"], cwd: ".", timeout: 10 },
+		context,
+	);
+	assert.equal(run.output.trim(), captured.details.candidate.repositoryRoot);
+	assert.equal(run.evidence.candidate.repositoryRoot, captured.details.candidate.repositoryRoot);
+
+	await assert.rejects(
+		executeVerification("relative-root", { operation: "run", repositoryRoot: "../candidate", argv: ["true"], cwd: ".", timeout: 10 }, context),
+		/repositoryRoot must be absolute/,
+	);
+	mkdirSync(join(worktree, "subdirectory"));
+	await assert.rejects(
+		executeVerification("subdirectory-root", { operation: "run", repositoryRoot: join(worktree, "subdirectory"), argv: ["true"], cwd: ".", timeout: 10 }, context),
+		/repositoryRoot must be the worktree top level/,
+	);
+	const unrelated = await newRepository();
+	await assert.rejects(
+		executeVerification("unrelated-root", { operation: "run", repositoryRoot: unrelated, argv: ["true"], cwd: ".", timeout: 10 }, context),
+		/linked worktree of the session repository/,
+	);
 });
 
 test("non-Git and unborn repositories fail descriptively", async () => {
@@ -395,18 +636,252 @@ test("capture operation returns a structured candidate", async () => {
 	assert.equal(result.structuredContent?.operation, "capture");
 });
 
-test("verification runners keep Bash callable but hide it from the model", () => {
-	let runnerTool: { prepareLoadout?: () => { hiddenDeclarations?: readonly string[] } } | undefined;
-	registerVerificationEvidence(
-		{ registerTool: (tool: never) => { runnerTool = tool; } } as never,
-		{ PI_SUBAGENT_AGENT: "verification-runner" },
+test("background start and early terminal collect preserve the verification contract", { timeout: 30_000 }, async () => {
+	const directory = await newRepository();
+	const fullOutput = "x".repeat(MAX_EXPOSED_OUTPUT_BYTES + 100);
+	const service = backgroundService(directory, { output: fullOutput });
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence(
+		"start-success",
+		{ operation: "start", argv: ["printf", "%s", "verification"], cwd: ".", timeout: 10 },
+		undefined,
+		context,
+		service,
 	);
-	assert.deepEqual(runnerTool?.prepareLoadout?.().hiddenDeclarations, ["bash"]);
+	assert.equal(started.details.operation, "start");
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	assert.equal(started.details.taskId, "task-1");
+	assert.match(started.details.task.command, /cd .* && 'printf' '%s' 'verification'/);
+	const collected = await executeVerificationEvidence(
+		"collect-success",
+		{ operation: "collect", taskId: started.details.taskId },
+		undefined,
+		context,
+		service,
+	);
+	assert.equal(collected.isError, false);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.argv[0], "printf");
+	assert.equal(collected.details.evidence.cwd, ".");
+	assert.equal(collected.details.output.length, MAX_EXPOSED_OUTPUT_BYTES);
+	assert.deepEqual(readFileSync(collected.details.evidence.logPath), Buffer.from(fullOutput));
+	assert.equal(service.counts.status, 0);
+	assert.equal(service.counts.logs, 1);
+	await assert.rejects(
+		executeVerificationEvidence("collect-duplicate", { operation: "collect", taskId: started.details.taskId }, undefined, context, service),
+		/already collected/,
+	);
+});
 
-	let implementationTool: { prepareLoadout?: unknown } | undefined;
-	registerVerificationEvidence(
-		{ registerTool: (tool: never) => { implementationTool = tool; } } as never,
-		{ PI_SUBAGENT_AGENT: "backend-engineer" },
+test("background collect accepts empty bounded-log text for silent commands", { timeout: 30_000 }, async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { output: "", logsText: "" });
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence(
+		"start-silent",
+		{ operation: "start", argv: ["true"], cwd: ".", timeout: 10 },
+		undefined,
+		context,
+		service,
 	);
-	assert.equal(implementationTool?.prepareLoadout, undefined);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const collected = await executeVerificationEvidence(
+		"collect-silent",
+		{ operation: "collect", taskId: started.details.taskId },
+		undefined,
+		context,
+		service,
+	);
+	assert.equal(collected.isError, false);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.output, "");
+	assert.equal(readFileSync(collected.details.evidence.logPath).byteLength, 0);
+});
+
+test("background collect performs one status query and rejects a running task", { timeout: 30_000 }, async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false });
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence(
+		"start-running",
+		{ operation: "start", argv: ["true"], cwd: ".", timeout: 10 },
+		undefined,
+		context,
+		service,
+	);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	await assert.rejects(
+		executeVerificationEvidence("collect-running", { operation: "collect", taskId: started.details.taskId }, undefined, context, service),
+		/still running/,
+	);
+	assert.equal(service.counts.status, 1);
+	service.complete();
+	const collected = await executeVerificationEvidence(
+		"collect-after-terminal",
+		{ operation: "collect", taskId: started.details.taskId },
+		undefined,
+		context,
+		service,
+	);
+	assert.equal(collected.isError, false);
+	assert.equal(service.counts.status, 1);
+});
+
+test("background collect reports nonzero exits and candidate mutation", { timeout: 30_000 }, async () => {
+	const failedDirectory = await newRepository();
+	const failedService = backgroundService(failedDirectory, { exitCode: 7 });
+	const failedContext = makeContext(failedDirectory);
+	const failedStart = await executeVerificationEvidence(
+		"start-nonzero",
+		{ operation: "start", argv: ["false"], cwd: ".", timeout: 10 },
+		undefined,
+		failedContext,
+		failedService,
+	);
+	if (failedStart.details.operation !== "start") throw new Error("expected start result");
+	const failedCollect = await executeVerificationEvidence(
+		"collect-nonzero",
+		{ operation: "collect", taskId: failedStart.details.taskId },
+		undefined,
+		failedContext,
+		failedService,
+	);
+	assert.equal(failedCollect.isError, true);
+	if (failedCollect.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(failedCollect.details.evidence.exitCode, 7);
+	assert.equal(failedCollect.details.evidence.valid, true);
+
+	const mutatedDirectory = await newRepository();
+	const mutatedService = backgroundService(mutatedDirectory);
+	const mutatedContext = makeContext(mutatedDirectory);
+	const mutatedStart = await executeVerificationEvidence(
+		"start-mutated",
+		{ operation: "start", argv: ["true"], cwd: ".", timeout: 10 },
+		undefined,
+		mutatedContext,
+		mutatedService,
+	);
+	if (mutatedStart.details.operation !== "start") throw new Error("expected start result");
+	writeFileSync(join(mutatedDirectory, "tracked.txt"), "changed after start\n");
+	const mutatedCollect = await executeVerificationEvidence(
+		"collect-mutated",
+		{ operation: "collect", taskId: mutatedStart.details.taskId },
+		undefined,
+		mutatedContext,
+		mutatedService,
+	);
+	assert.equal(mutatedCollect.isError, true);
+	if (mutatedCollect.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(mutatedCollect.details.evidence.valid, false);
+	assert.equal(mutatedCollect.details.evidence.invalidReason, "candidate changed during verification");
+});
+
+test.each(["failed", "killed"] as const)("%s tasks without an exit code are invalid", { timeout: 30_000 }, async (status) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { status, omitExitCode: true });
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence(
+		`start-${status}`,
+		{ operation: "start", argv: ["true"], cwd: ".", timeout: 10 },
+		undefined,
+		context,
+		service,
+	);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const collected = await executeVerificationEvidence(
+		`collect-${status}`,
+		{ operation: "collect", taskId: started.details.taskId },
+		undefined,
+		context,
+		service,
+	);
+	assert.equal(collected.isError, true);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.exitCode, -1);
+	assert.match(collected.details.evidence.invalidReason ?? "", /did not report a numeric exit code/);
+});
+
+test("background output paths fail closed for missing and symlinked files", { timeout: 30_000 }, async () => {
+	const missingDirectory = await newRepository();
+	const missingService = backgroundService(missingDirectory, { outputPath: ".pi/tasks/session/missing.output" });
+	const missingContext = makeContext(missingDirectory);
+	const missingStart = await executeVerificationEvidence(
+		"start-missing-output",
+		{ operation: "start", argv: ["true"], cwd: ".", timeout: 10 },
+		undefined,
+		missingContext,
+		missingService,
+	);
+	if (missingStart.details.operation !== "start") throw new Error("expected start result");
+	await assert.rejects(
+		executeVerificationEvidence("collect-missing-output", { operation: "collect", taskId: missingStart.details.taskId }, undefined, missingContext, missingService),
+		/could not read background task output path/,
+	);
+
+	const symlinkDirectory = await newRepository();
+	const tasksDirectory = join(symlinkDirectory, ".pi", "tasks", "session");
+	mkdirSync(tasksDirectory, { recursive: true });
+	const outside = join(symlinkDirectory, "outside.output");
+	writeFileSync(outside, "outside\n");
+	const symlinkOutput = join(tasksDirectory, "symlink.output");
+	symlinkSync(outside, symlinkOutput);
+	const symlinkService = backgroundService(symlinkDirectory, { outputPath: ".pi/tasks/session/symlink.output" });
+	const symlinkContext = makeContext(symlinkDirectory);
+	const symlinkStart = await executeVerificationEvidence(
+		"start-symlink-output",
+		{ operation: "start", argv: ["true"], cwd: ".", timeout: 10 },
+		undefined,
+		symlinkContext,
+		symlinkService,
+	);
+	if (symlinkStart.details.operation !== "start") throw new Error("expected start result");
+	await assert.rejects(
+		executeVerificationEvidence("collect-symlink-output", { operation: "collect", taskId: symlinkStart.details.taskId }, undefined, symlinkContext, symlinkService),
+		/symbolic link/,
+	);
+});
+
+test("start preserves validation and fails when the EventBus is unavailable", async () => {
+	const directory = await newRepository();
+	const context = makeContext(directory);
+	const unavailable = {
+		on: () => () => undefined,
+		emit: () => { throw new Error("service unavailable"); },
+	} as EventBus;
+	await assert.rejects(
+		executeVerificationEvidence("start-unavailable", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, context, unavailable),
+		/service unavailable/,
+	);
+	await assert.rejects(
+		executeVerificationEvidence("start-timeout", { operation: "start", argv: ["true"], cwd: ".", timeout: 601 }, undefined, context, unavailable),
+		/timeout/,
+	);
+	await assert.rejects(
+		executeVerificationEvidence("start-shell", { operation: "start", argv: ["sh", "-c", "true"], cwd: ".", timeout: 10 }, undefined, context, unavailable),
+		/shell command wrappers/,
+	);
+	await assert.rejects(
+		executeVerificationEvidence("collect-unknown", { operation: "collect", taskId: "unknown" }, undefined, context, unavailable),
+		/unknown/,
+	);
+});
+
+test("malformed terminal frames are rejected by the shared EventBus listener", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	registerVerificationEvidence({ events: service, registerTool: () => undefined } as never);
+	assert.throws(() => service.emit(BACKGROUND_TASK_TERMINAL_CHANNEL, {
+		schema_version: BACKGROUND_TASK_TERMINAL_SCHEMA,
+		task: { id: "task-1", status: "completed", extra: true },
+	}), /unknown key|background task/);
+});
+
+test("verification evidence uses one background-first shared tool contract", () => {
+	let tool: { prepareLoadout?: unknown; promptGuidelines?: string[] } | undefined;
+	registerVerificationEvidence({ registerTool: (registered: never) => { tool = registered; } } as never);
+	assert.equal(tool?.prepareLoadout, undefined);
+	const guidance = tool?.promptGuidelines?.join("\n") ?? "";
+	assert.match(guidance, /Default to start/);
+	assert.match(guidance, /automatic terminal notification without polling/);
+	assert.match(guidance, /expected lack of parallel work is not sufficient/);
 });

@@ -3,12 +3,19 @@ import { test } from "bun:test";
 import { briefInstructions, checkSubagentLaunch, registerBriefHook } from "../extensions/artifact-contracts/briefs.ts";
 import { renderTemplate } from "../extensions/artifact-contracts/render.ts";
 
+const contextLines = [
+	"- Source of truth: Active plan and decisions.",
+	"- Verified facts: The cited repository patterns are current.",
+	"- Read first: The smallest exact owned paths.",
+	"- Open questions: None.",
+] as const;
+
 const validBrief = [
 	"## Objective",
 	"Deliver the requested result.",
 	"",
 	"## Context",
-	"Use the cited repository patterns.",
+	...contextLines,
 	"",
 	"## Scope",
 	"Change only the owned files.",
@@ -31,6 +38,25 @@ test("single briefs pass when valid and block with the template when invalid", (
 	const reason = blocked(checkSubagentLaunch({ task: "## Objective\nIncomplete" }));
 	assert.match(reason, /missing section/);
 	assert.equal(reason.endsWith(`Template:\n${renderTemplate("brief")}`), true);
+});
+
+test.each([
+	["missing", contextLines.slice(0, 3)],
+	["blank", [...contextLines.slice(0, 2), "- Read first: ", contextLines[3]]],
+	["duplicate", [...contextLines.slice(0, 3), contextLines[2]]],
+	["reordered", [contextLines[1], contextLines[0], ...contextLines.slice(2)]],
+	["extra", [...contextLines, "- Extra: not allowed"]],
+] as const)("brief Context rejects %s evidence packets", (_case, lines) => {
+	const brief = validBrief.replace(contextLines.join("\n"), lines.join("\n"));
+	assert.match(blocked(checkSubagentLaunch({ task: brief })), /Context|Source of truth|Verified facts|Read first|Open questions/);
+});
+
+test("the rendered brief template owns the canonical evidence labels and remains unfilled", () => {
+	const template = renderTemplate("brief");
+	for (const label of ["Source of truth", "Verified facts", "Read first", "Open questions"]) {
+		assert.equal((template.match(new RegExp(`- ${label}:`, "g")) ?? []).length, 1, label);
+	}
+	assert.equal((blocked(checkSubagentLaunch({ task: template })).match(/fill marker/g) ?? []).length, 8);
 });
 
 test("non-empty children are validated by name and empty children fall back to task", () => {
@@ -86,10 +112,16 @@ test("the registered hook only checks subagent calls", () => {
 	assert.equal(handler({ toolName: "subagent", input: { task: validBrief } }), undefined);
 });
 
-test("main sessions get the brief template up front; children do not", () => {
-	const registered = (env: Record<string, string>) => {
+test("main sessions receive the template only while subagent is active; children do not", () => {
+	const registered = (env: Record<string, string>, tools = ["subagent"]) => {
 		const starts: ((event: { systemPromptOptions: { appendSystemPrompt?: string } }) => void)[] = [];
-		registerBriefHook({ on: (event: string, next: never) => (event === "before_agent_start" && starts.push(next), () => undefined) } as never, env);
+		registerBriefHook(
+			{
+				on: (event: string, next: never) => (event === "before_agent_start" && starts.push(next), () => undefined),
+				getActiveTools: () => tools,
+			} as never,
+			env,
+		);
 		return starts;
 	};
 
@@ -102,6 +134,16 @@ test("main sessions get the brief template up front; children do not", () => {
 	start({ systemPromptOptions: prior });
 	assert.equal(prior.appendSystemPrompt, `Prior\n\n${briefInstructions()}`);
 	assert.ok(briefInstructions().includes(renderTemplate("brief")));
+
+	const [inactiveStart] = registered({}, ["read"]);
+	const inactive: { appendSystemPrompt?: string } = {};
+	inactiveStart({ systemPromptOptions: inactive });
+	assert.equal(inactive.appendSystemPrompt, undefined);
+
+	const [toggledStart] = registered({}, ["read", "subagent"]);
+	const toggled: { appendSystemPrompt?: string } = {};
+	toggledStart({ systemPromptOptions: toggled });
+	assert.equal(toggled.appendSystemPrompt, briefInstructions());
 
 	assert.equal(registered({ PI_SUBAGENT_AGENT: "code-explorer" }).length, 0);
 });

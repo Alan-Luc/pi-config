@@ -5,7 +5,11 @@ export function renderTemplate(schemaId: SchemaId): string {
 	return [
 		...schema.preamble.map((line) => line.example),
 		...(schema.preamble.length ? [""] : []),
-		...schema.sections.flatMap((section) => [`## ${section.heading}`, `<!-- fill: ${section.hint} -->`, ""]),
+		...schema.sections.flatMap((section) => [
+			`## ${section.heading}`,
+			...(section.lines?.map((line) => line.example) ?? [section.none || section.hint.endsWith("or None.") ? "None." : `<!-- fill: ${section.hint} -->`]),
+			"",
+		]),
 	].join("\n");
 }
 
