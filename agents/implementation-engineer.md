@@ -5,7 +5,7 @@ mode: background
 async: true
 auto-exit: true
 model: openai-codex/gpt-5.6-luna
-thinking: high
+thinking: medium
 tools: read,bash,edit,write,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate
 session-mode: lineage-only
 parent-close-policy: terminate
