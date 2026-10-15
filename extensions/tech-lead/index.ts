@@ -4,6 +4,7 @@ import { isSubagentChildEnvironment } from "../lib/shared.ts";
 import { appendInstructions } from "../artifact-contracts/render.ts";
 
 const SUBAGENT_TOOLS = ["subagent", "subagent_resume", "subagent_kill"];
+const UNUSED_TASK_TOOLS = ["TaskOutput", "TaskStop", "TaskExecute"];
 
 /** Appends the ported opencode tech-lead instructions to the main session's system prompt only. */
 export default function registerTechLead(
@@ -23,6 +24,9 @@ export default function registerTechLead(
 		(next === -1 ? "" : instructions.slice(next));
 
 	let soloTools: string[] | undefined; // tools active before solo; defined iff solo is on
+	pi.on("session_start", () => {
+		pi.setActiveTools(pi.getActiveTools().filter((name) => !UNUSED_TASK_TOOLS.includes(name)));
+	});
 	pi.on("before_agent_start", (event) =>
 		appendInstructions(event.systemPromptOptions, soloTools ? soloInstructions : instructions),
 	);

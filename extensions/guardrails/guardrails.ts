@@ -1,4 +1,5 @@
-import { lstat, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
@@ -74,7 +75,7 @@ async function resolvePhysicalCandidate(base: string, value: string): Promise<st
 	return current;
 }
 
-async function requireReviewArtifact(value: string): Promise<void> {
+async function requireReviewArtifact(value: string): Promise<Buffer> {
 	if (hasParentTraversal(value)) throw new Error(`Patch artifact cannot contain parent traversal: ${value}`);
 	const candidate = resolve(value);
 	if (!isAbsolute(value) || !isContained(REVIEW_ARTIFACT_ROOT, candidate)) {
@@ -90,9 +91,14 @@ async function requireReviewArtifact(value: string): Promise<void> {
 	if (stat.isSymbolicLink()) throw new Error(`Patch artifact cannot be a symbolic link: ${candidate}`);
 	if (!stat.isFile()) throw new Error(`Patch artifact must be a regular file: ${candidate}`);
 	await requireNoSymlinkTraversal(dirname(candidate), REVIEW_ARTIFACT_ROOT, "Patch artifact");
+	try {
+		return await readFile(candidate);
+	} catch (error) {
+		throw new Error(`Could not read Patch artifact ${candidate}: ${errorMessage(error)}`);
+	}
 }
 
-async function validateLightReview(input: unknown): Promise<void> {
+async function validateBoundedReview(input: unknown): Promise<void> {
 	const launches: RecordValue[] = [];
 	if (!isRecord(input)) return;
 	if (Array.isArray(input.children) && input.children.length > 0) {
@@ -101,13 +107,48 @@ async function validateLightReview(input: unknown): Promise<void> {
 		launches.push(input);
 	}
 	for (const launch of launches) {
-		if (launch.agent !== "code-reviewer-light") continue;
+		if (launch.agent !== "code-reviewer") continue;
 		const task = typeof launch.task === "string" ? launch.task : "";
 		const artifactMatch = task.match(/^Patch artifact:[ \t]*(.*)$/im);
-		if (!artifactMatch || !/^Review paths:[ \t]*\S+/im.test(task)) {
-			throw new Error(`Blocked unbounded code-reviewer-light task; use the runtime review root:\nPatch artifact: ${resolve(REVIEW_ARTIFACT_ROOT, "<name>.patch")}\nReview paths: <exact paths>`);
+		const reviewPathsMatch = task.match(/^Review paths:[ \t]*(.*)$/im);
+		const excludedPreDirtyPathsMatch = task.match(/^Excluded pre-dirty paths:[ \t]*(.*)$/im);
+		const candidateMatch = task.match(/^Candidate:[ \t]*(candidate_[0-9a-f]{64})$/im);
+		const patchHashMatch = task.match(/^Patch SHA-256:[ \t]*([0-9a-f]{64})$/im);
+		const reviewPathsText = reviewPathsMatch?.[1].trim() ?? "";
+		let reviewPaths: string[] = [];
+		if (reviewPathsText.startsWith("[")) {
+			try {
+				const parsed: unknown = JSON.parse(reviewPathsText);
+				if (Array.isArray(parsed) && parsed.every((path): path is string => typeof path === "string")) reviewPaths = parsed;
+			} catch {
+				reviewPaths = [];
+			}
+		} else {
+			reviewPaths = reviewPathsText.split(/[ \t]+/).filter(Boolean);
 		}
-		await requireReviewArtifact(artifactMatch[1].trim());
+		let excludedPreDirtyPaths: string[] | undefined;
+		try {
+			const parsed: unknown = JSON.parse(excludedPreDirtyPathsMatch?.[1].trim() ?? "");
+			if (Array.isArray(parsed) && parsed.every((path): path is string => typeof path === "string")) excludedPreDirtyPaths = parsed;
+		} catch {
+			excludedPreDirtyPaths = undefined;
+		}
+		if (
+			!artifactMatch
+			|| reviewPaths.length === 0
+			|| reviewPaths.some((path) => !isAbsolute(path))
+			|| excludedPreDirtyPaths === undefined
+			|| excludedPreDirtyPaths.some((path) => !isAbsolute(path))
+			|| !candidateMatch
+			|| !patchHashMatch
+		) {
+			throw new Error(`Blocked unbounded code-reviewer task; use generated review metadata:\nCandidate: candidate_<id>\nPatch SHA-256: <sha256>\nPatch artifact: ${resolve(REVIEW_ARTIFACT_ROOT, "<name>.patch")}\nReview paths: <exact absolute paths>\nExcluded pre-dirty paths: <exact absolute paths excluded from the patch>`);
+		}
+		const artifactBytes = await requireReviewArtifact(artifactMatch[1].trim());
+		const actualPatchSha256 = createHash("sha256").update(artifactBytes).digest("hex");
+		if (actualPatchSha256 !== patchHashMatch[1]) {
+			throw new Error(`Patch artifact SHA-256 does not match generated Patch SHA-256: expected ${patchHashMatch[1]}, got ${actualPatchSha256}`);
+		}
 	}
 }
 
@@ -140,15 +181,15 @@ function tokenizeShell(command: string): ShellCommand[] | undefined {
 function isAssignment(value: string | undefined): boolean { return Boolean(value && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(value)); }
 function isGit(value: string | undefined): boolean { return value === "git" || Boolean(value && /(?:^|\/)git$/.test(value)); }
 
-function isVerificationIndexCapture(command: string): boolean {
+function isVerificationIndexCommand(command: string): boolean {
 	const commands = tokenizeShell(command);
-	if (!commands || commands.length !== 3) return false;
-	const [changeDirectory, add, writeTree] = commands;
+	if (!commands || commands.length !== 2) return false;
+	const [changeDirectory, gitCommand] = commands;
 	if (changeDirectory.length !== 2 || changeDirectory[0] !== "cd" || !isAbsolute(changeDirectory[1])) return false;
-	if (add.length !== 4 || add[1] !== "git" || add[2] !== "add" || add[3] !== "-A") return false;
-	if (writeTree.length !== 3 || writeTree[1] !== "git" || writeTree[2] !== "write-tree") return false;
-	if (add[0] !== writeTree[0] || !add[0].startsWith("GIT_INDEX_FILE=")) return false;
-	const indexPath = add[0].slice("GIT_INDEX_FILE=".length);
+	const isAdd = gitCommand.length === 4 && gitCommand[1] === "git" && gitCommand[2] === "add" && gitCommand[3] === "-A";
+	const isWriteTree = gitCommand.length === 3 && gitCommand[1] === "git" && gitCommand[2] === "write-tree";
+	if ((!isAdd && !isWriteTree) || !gitCommand[0].startsWith("GIT_INDEX_FILE=")) return false;
+	const indexPath = gitCommand[0].slice("GIT_INDEX_FILE=".length);
 	const indexDirectory = dirname(indexPath);
 	return isAbsolute(indexPath)
 		&& basename(indexPath) === "index"
@@ -262,7 +303,7 @@ async function validateWorktree(args: string[], projectRoot: string, workdir: st
 	await requireNoSymlinkTraversal(candidate, worktreeRoot, "Git worktree destination");
 }
 
-const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which commits only when Alan asks.";
+const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which owns local commits and may push only with Alan's explicit authorization.";
 
 async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean, allowGitIndexFile = false): Promise<void> {
 	const retargets = [...command.matchAll(/\b(?:export\s+)?(GIT_[A-Z0-9_]*)(\+?=)/g)];
@@ -302,14 +343,14 @@ export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string
 			return;
 		}
 		if (event.toolName === "subagent") {
-			await validateLightReview(event.input);
+			await validateBoundedReview(event.input);
 			return;
 		}
 		if (event.toolName !== "bash" || !isRecord(event.input) || typeof event.input.command !== "string") return;
 		const command = event.input.command;
 		const allowGitIndexFile = event.parentToolCallId !== undefined
 			&& verificationCalls.has(event.parentToolCallId)
-			&& isVerificationIndexCapture(command);
+			&& isVerificationIndexCommand(command);
 		await validateGit(command, ctx.cwd, ctx.cwd, isChild, allowGitIndexFile);
 		const normalized = normalize(command);
 		const blocker = infrastructureFailures.get(normalized);

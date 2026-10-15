@@ -7,6 +7,8 @@ description: Create or resume durable `.harness/plans/`, and load prior plans or
 
 The plan file is the working memory and handoff contract. Chat is not the source of truth. Canonical project artifacts live under `.harness/`: plans under `.harness/plans/`, daily records under `.harness/YYYY/MM/DD.md`, and handoffs under `.harness/handoffs/YYYY/MM/DD/<session-id>-<task-slug>.md`. Runtime Pi sessions remain under `~/.pi/agent/sessions`.
 
+Unless Alan explicitly requests planning, truly trivial direct work is exempt: do not create or load a plan, task list, work log, review, handoff, or report for an exact mechanical action and its direct check.
+
 During migration, read `.harness` first and legacy `.opencode` second. Never rewrite or delete legacy records. Before resuming a legacy plan, check for the same-named canonical plan to avoid duplicates; if it does not exist, copy the legacy plan once to `.harness/plans/`, add a `Migrated from:` note, and update only the canonical copy thereafter.
 
 ## Ticket context preflight
@@ -14,8 +16,8 @@ During migration, read `.harness` first and legacy `.opencode` second. Never rew
 For ticket-shaped implementation, even when the user did not request planning:
 
 1. Extract the ticket and dependency IDs.
-2. Search `.harness/plans/`, `.opencode/plans/`, `.harness/YYYY/`, and `.opencode/YYYY/` for those IDs.
-3. Read matching plans and decision entries before questions, edits, or delegation.
+2. Search `.harness/plans/`, `.opencode/plans/`, `.harness/YYYY/`, and `.opencode/YYYY/` for those IDs, plus relevant dated logs for resumed or related work.
+3. Read matching plans, decision entries, and dated-log milestones before questions, edits, or repeated reconnaissance.
 4. Tell the user which artifacts govern the work and surface implementation-relevant conflicts.
 
 This preflight supplies context; it does not by itself create a plan or add an approval gate.
@@ -78,6 +80,6 @@ A plan does not authorize commits, pushes, destructive Git, deployment, or scope
 
 ## Contract-first parallel work
 
-Use this only when at least two genuinely disjoint slices share an API, schema, event, or serialized type. Skip routine, same-file, and no-shared-contract work. The parent creates the smallest compile-safe shared contract slice, runs a focused contract/type check, then launches disjoint Pi agents when an installed delegation tool is available.
+Use this only when at least two genuinely disjoint slices share an API, schema, event, or serialized type. Skip routine, same-file, and no-shared-contract work. The parent creates the smallest compile-safe shared contract slice, runs a focused contract/type check, then derives the ready set from approved dependencies and exact path ownership before launching every ready disjoint Pi agent together when an installed delegation tool is available.
 
 Keep shared contract paths parent-owned and read-only to delegated agents. Delegated agents report required changes to the parent; the parent verifies once and rebriefs affected consumers. Add no placeholder behavior or broad scaffolding.

@@ -178,6 +178,27 @@ test("non-exact plan edits are blocked with an exact unique oldText retry", () =
 });
 
 test.each([
+	["write through a symlinked reports parent", (cwd: string, outside: string): SymlinkCase => {
+		const relPath = ".harness/reports/2026/10/01/01234567-89ab-cdef-0123-456789abcdef-audit.md";
+		const outsidePath = join(outside, "reports", "2026/10/01/01234567-89ab-cdef-0123-456789abcdef-audit.md");
+		mkdirSync(dirname(outsidePath), { recursive: true });
+		mkdirSync(join(cwd, ".harness"));
+		symlinkSync(join(outside, "reports"), join(cwd, ".harness/reports"));
+		return { event: writeEvent(relPath, "freeform report\n"), outsidePath };
+	}],
+	["edit through a symlinked report leaf", (cwd: string, outside: string): SymlinkCase => {
+		const relPath = ".harness/reports/2026/10/01/01234567-89ab-cdef-0123-456789abcdef-audit.md";
+		const outsideContent = "freeform report\n";
+		const outsidePath = join(outside, "escaped-report.md");
+		writeFileSync(outsidePath, outsideContent);
+		mkdirSync(dirname(join(cwd, relPath)), { recursive: true });
+		symlinkSync(outsidePath, join(cwd, relPath));
+		return {
+			event: editEvent(relPath, [{ oldText: "freeform", newText: "updated" }]),
+			outsidePath,
+			outsideContent,
+		};
+	}],
 	["write through a symlinked plans parent", (cwd: string, outside: string): SymlinkCase => {
 		const relPath = ".harness/plans/2026-10-01-example.md";
 		const outsidePath = join(outside, "plans", "2026-10-01-example.md");
@@ -243,6 +264,24 @@ test.each([
 		rmSync(cwd, { force: true, recursive: true });
 		rmSync(outside, { force: true, recursive: true });
 	}
+});
+
+test("freeform reports require canonical repository-relative paths", () => {
+	withTempDir((cwd) => {
+		const relPath = ".harness/reports/2026/10/01/01234567-89ab-cdef-0123-456789abcdef-audit.md";
+		const handler = registeredHandler();
+		assert.equal(handler(writeEvent(relPath, "freeform report\n"), context(cwd)), undefined);
+		assert.equal(handler(editEvent(relPath, [{ oldText: "freeform", newText: "updated" }]), context(cwd)), undefined);
+
+		for (const path of [
+			`./${relPath}`,
+			join(cwd, relPath),
+			relPath.replaceAll("/", "\\"),
+			`.harness/reports/2026/10/01/ignored/../${relPath.split("/").at(-1)}`,
+		]) {
+			assert.match(blockedReason(handler(writeEvent(path, "freeform report\n"), context(cwd))), /canonical/);
+		}
+	});
 });
 
 test("handoff documents are create-only and validate new writes", () => {

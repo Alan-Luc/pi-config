@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, test } from "bun:test";
 import { correctionMessage, failureReport, registerHandoffHooks, replyInstructions, replySchema } from "../extensions/artifact-contracts/handoffs.ts";
+import {
+	BACKGROUND_TASK_REQUEST_CHANNEL,
+	BACKGROUND_TASK_RESPONSE_CHANNEL,
+	BACKGROUND_TASK_RESPONSE_SCHEMA,
+} from "../extensions/artifact-contracts/background-tasks.ts";
 import { renderTemplate } from "../extensions/artifact-contracts/render.ts";
 import {
 	createCandidateIdentity,
@@ -15,12 +20,47 @@ const child = { PI_SUBAGENT_AGENT: "code-explorer" };
 const valid = "## Status\ndone\n\n## Answer\nFound it.\n\n## Relevant paths\n`src/a.ts:1`\n\n## Uncertainty\nNone.";
 
 type Handler = (event: never) => unknown;
-function hooks(env: Record<string, string | undefined>): Record<string, Handler> {
+type StatusResponse = (requestId: unknown) => Record<string, unknown>;
+
+function record(value: unknown): Record<string, unknown> {
+	assert.equal(typeof value, "object");
+	assert.notEqual(value, null);
+	return value as Record<string, unknown>;
+}
+
+function hooks(env: Record<string, string | undefined>, statusResponse?: StatusResponse): Record<string, Handler> {
 	const previous = { ...process.env };
 	for (const key of Object.keys(process.env)) delete process.env[key];
 	Object.assign(process.env, env);
 	const registered: Record<string, Handler> = {};
-	registerHandoffHooks({ on: (name: string, handler: Handler) => { registered[name] = handler; return () => undefined; } } as never);
+	const listeners = new Map<string, Set<(value: unknown) => void>>();
+	const events = {
+		on(channel: string, listener: (value: unknown) => void) {
+			const channelListeners = listeners.get(channel) ?? new Set<(value: unknown) => void>();
+			channelListeners.add(listener);
+			listeners.set(channel, channelListeners);
+			return () => channelListeners.delete(listener);
+		},
+		emit(channel: string, value: unknown) {
+			for (const listener of listeners.get(channel) ?? []) listener(value);
+		},
+	};
+	events.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
+		const request = record(value);
+		assert.equal(request.operation, "status");
+		assert.deepEqual(request.payload, {});
+		events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, statusResponse?.(request.request_id) ?? {
+			schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+			request_id: request.request_id,
+			operation: "status",
+			ok: true,
+			result: { tasks: [] },
+		});
+	});
+	registerHandoffHooks({
+		on: (name: string, handler: Handler) => { registered[name] = handler; return () => undefined; },
+		events,
+	} as never);
 	for (const key of Object.keys(process.env)) delete process.env[key];
 	Object.assign(process.env, previous);
 	return registered;
@@ -38,13 +78,41 @@ function event(text: string, stopReason = "stop", toolCall = false): never {
 	return { message: message(text, stopReason, toolCall) } as never;
 }
 
+type TaskStatus = "running" | "completed" | "failed" | "killed";
+
+function backgroundTask(id: string, status: TaskStatus, name = id): Record<string, unknown> {
+	return {
+		id,
+		name,
+		command: "bun test",
+		status,
+		outputPath: `.pi/tasks/${id}.output`,
+		cwd: "/repo",
+		startTime: 1,
+		...(status === "running" ? {} : { endTime: 2, exitCode: status === "completed" ? 0 : 1 }),
+		bytesWritten: 0,
+		isAgent: false,
+		notified: status !== "running",
+		notifyOnCompletion: true,
+		triggerOnCompletion: true,
+	};
+}
+
+function statusFrame(requestId: unknown, tasks: readonly unknown[]): Record<string, unknown> {
+	return {
+		schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+		request_id: requestId,
+		operation: "status",
+		ok: true,
+		result: { tasks },
+	};
+}
+
 test("selects schemas and does nothing outside children or for null schemas", () => {
 	assert.equal(replySchema({}), null);
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-explorer" }), "explorer");
-	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "requirements-clarifier" }), "requirements");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-reviewer" }), "review");
-	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-reviewer-light" }), "reviewLight");
-	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "verification-runner" }), "worker");
+	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "implementation-engineer" }), "worker");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "other" }), "worker");
 	assert.deepEqual(hooks({}), {});
 });
@@ -62,39 +130,139 @@ test("appends the template without dropping the prior prompt", () => {
 	assert.equal(unset.systemPromptOptions.appendSystemPrompt, replyInstructions("explorer"));
 });
 
-test("valid, tool-call, and aborted replies are untouched", () => {
-	const registered = hooks(child);
+test("valid replies query status once while invalid and non-final replies do not", async () => {
+	let requests = 0;
+	const registered = hooks(child, (requestId) => {
+		requests++;
+		return statusFrame(requestId, []);
+	});
 	registered.agent_start({} as never);
-	assert.equal(registered.message_end(event(valid)), undefined);
+	assert.equal(await registered.message_end(event(valid)), undefined);
+	assert.equal(requests, 1);
 	assert.equal(registered.turn_end({} as never), undefined);
-	assert.equal(registered.message_end(event("bad", "stop", true)), undefined);
-	assert.equal(registered.message_end(event("bad", "aborted")), undefined);
+	assert.equal(await registered.message_end(event("bad", "stop", true)), undefined);
+	assert.equal(await registered.message_end(event("bad", "aborted")), undefined);
+	assert.equal(await registered.message_end(event("bad", "error")), undefined);
+	assert.equal(requests, 1);
 	assert.equal(registered.turn_end({} as never), undefined);
 });
 
-test("re-prompts twice, then replaces the reply with a fenced failure report", () => {
+test("does not register or query background status outside child environments", () => {
+	let requests = 0;
+	assert.deepEqual(hooks({}, () => {
+		requests++;
+		return statusFrame("unused", []);
+	}), {});
+	assert.equal(requests, 0);
+});
+
+test("running child jobs reject through the correction lifecycle", async () => {
+	let requests = 0;
+	const registered = hooks(child, (requestId) => {
+		requests++;
+		return statusFrame(requestId, [backgroundTask("job-running", "running", "Build")]);
+	});
+	registered.agent_start({} as never);
+	await registered.message_end(event(valid));
+	const correction = registered.turn_end({} as never) as { continue: boolean; entries: Array<{ content: string }> };
+	assert.equal(correction.continue, true);
+	assert.match(correction.entries[0].content, /background tasks still running: job-running \(Build\)/);
+	assert.equal(requests, 1);
+});
+
+test.each(["completed", "failed", "killed"] as const)("terminal child job status %s permits the reply", async (status) => {
+	let requests = 0;
+	const registered = hooks(child, (requestId) => {
+		requests++;
+		return statusFrame(requestId, [backgroundTask(`job-${status}`, status)]);
+	});
+	registered.agent_start({} as never);
+	assert.equal(await registered.message_end(event(valid)), undefined);
+	assert.equal(registered.turn_end({} as never), undefined);
+	assert.equal(requests, 1);
+});
+
+test("a corrected reply succeeds after running work becomes terminal", async () => {
+	let requests = 0;
+	const registered = hooks(child, (requestId) => {
+		const tasks = requests++ === 0 ? [backgroundTask("job-1", "running")] : [backgroundTask("job-1", "completed")];
+		return statusFrame(requestId, tasks);
+	});
+	registered.agent_start({} as never);
+	await registered.message_end(event(valid));
+	assert.notEqual(registered.turn_end({} as never), undefined);
+	assert.equal(await registered.message_end(event(valid)), undefined);
+	assert.equal(registered.turn_end({} as never), undefined);
+	assert.equal(requests, 2);
+});
+
+test("multiple running jobs produce bounded deterministic validation text", async () => {
+	const registered = hooks(child, (requestId) => statusFrame(requestId, [
+		backgroundTask("job-6", "running", "Six"),
+		backgroundTask("job-2", "running", "Two"),
+		backgroundTask("job-4", "running", "Four"),
+		backgroundTask("job-1", "running", "One"),
+		backgroundTask("job-5", "running", "Five"),
+		backgroundTask("job-3", "running", "Three"),
+	]));
+	registered.agent_start({} as never);
+	await registered.message_end(event(valid));
+	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
+	assert.match(correction.entries[0].content, /background tasks still running: job-1 \(One\), job-2 \(Two\), job-3 \(Three\), job-4 \(Four\), job-5 \(Five\), and 1 more/);
+	assert.doesNotMatch(correction.entries[0].content, /job-6 \(Six\)/);
+});
+
+test("status service failures fail closed through correction", async () => {
+	const registered = hooks(child, (requestId) => ({
+		schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+		request_id: requestId,
+		operation: "status",
+		ok: false,
+		error: "service unavailable",
+	}));
+	registered.agent_start({} as never);
+	await registered.message_end(event(valid));
+	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
+	assert.match(correction.entries[0].content, /background task status check failed: .*service unavailable/);
+});
+
+test("malformed status responses fail closed through correction", async () => {
+	const registered = hooks(child, (requestId) => ({
+		schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+		request_id: requestId,
+		operation: "status",
+		ok: true,
+		result: { tasks: "malformed" },
+	}));
+	registered.agent_start({} as never);
+	await registered.message_end(event(valid));
+	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
+	assert.match(correction.entries[0].content, /background task status check failed: .*must be an array/);
+});
+
+test("re-prompts twice, then replaces the reply with a fenced failure report", async () => {
 	const registered = hooks(child);
 	registered.agent_start({} as never);
 	for (let attempt = 0; attempt < 2; attempt++) {
-		assert.equal(registered.message_end(event("bad")), undefined);
+		assert.equal(await registered.message_end(event("bad")), undefined);
 		const correction = registered.turn_end({} as never) as { continue: boolean; entries: Array<{ content: string }> };
 		assert.equal(correction.continue, true);
 		assert.match(correction.entries[0].content, /Validation errors:/);
 	}
 	const original = "bad with ``` inside";
-	const replacement = registered.message_end(event(original)) as { message: { content: Array<{ text: string }> } };
+	const replacement = await registered.message_end(event(original)) as { message: { content: Array<{ text: string }> } };
 	assert.match(replacement.message.content[0].text, /## Status\nfailed/);
 	assert.match(replacement.message.content[0].text, /````\nbad with ``` inside\n````/);
 	assert.equal(registered.turn_end({} as never), undefined);
 });
 
-test("agent_start resets retry state", () => {
+test("agent_start resets retry state", async () => {
 	const registered = hooks(child);
 	registered.agent_start({} as never);
-	registered.message_end(event("bad"));
+	await registered.message_end(event("bad"));
 	registered.turn_end({} as never);
 	registered.agent_start({} as never);
-	registered.message_end(event("bad"));
+	await registered.message_end(event("bad"));
 	const correction = registered.turn_end({} as never) as { continue: boolean };
 	assert.equal(correction.continue, true);
 });
@@ -128,96 +296,96 @@ function evidence(command: string, exitCode = 0) {
 }
 afterAll(() => rmSync(evidenceRoot, { recursive: true, force: true }));
 
-test("Verified by must match current evidence exactly", () => {
+test("Verified by must match current evidence exactly", async () => {
 	const registered = hooks(worker);
 	registered.agent_start({} as never);
 	const run = evidence("'bun' 'test' 'tests/'");
-	assert.equal(registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`))), undefined);
+	assert.equal(await registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`))), undefined);
 	assert.equal(registered.turn_end({} as never), undefined);
-	assert.equal(registered.message_end(event(workerReply("- Not run: no time"))), undefined);
+	assert.equal(await registered.message_end(event(workerReply("- Not run: no time"))), undefined);
 	assert.equal(registered.turn_end({} as never), undefined);
 
-	registered.message_end(event(workerReply(`- \`'pnpm' 'typecheck'\` → exit 0 [evidence: ${run.id}]`)));
+	await registered.message_end(event(workerReply(`- \`'pnpm' 'typecheck'\` → exit 0 [evidence: ${run.id}]`)));
 	let correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
 	assert.match(correction.entries[0].content, /command does not match evidence/);
 
-	registered.message_end(event(workerReply(`- \`${run.command}\` → exit 1 [evidence: ${run.id}]`)));
+	await registered.message_end(event(workerReply(`- \`${run.command}\` → exit 1 [evidence: ${run.id}]`)));
 	correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
 	assert.match(correction.entries[0].content, /reported exit 1, evidence recorded 0/);
 });
 
-test("indented Verified by claims still require current evidence", () => {
+test("indented Verified by claims still require current evidence", async () => {
 	const registered = hooks(worker);
 	registered.agent_start({} as never);
 	const reply = workerReply(`   - \`'bun' 'test'\` → exit 0 [evidence: verify_${"f".repeat(64)}]`)
 		.replace("\n## Verified by\n", "\n   ## Verified by\n");
-	registered.message_end(event(reply));
+	await registered.message_end(event(reply));
 	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
 	assert.match(correction.entries[0].content, /evidence .* was not found/);
 });
 
-test("fenced Verified by headings cannot hide the real evidence section", () => {
+test("fenced Verified by headings cannot hide the real evidence section", async () => {
 	const registered = hooks(worker);
 	registered.agent_start({} as never);
 	const reply = workerReply(`- \`'bun' 'test'\` → exit 0 [evidence: verify_${"f".repeat(64)}]`)
 		.replace("## Key decisions\nNone.", "## Key decisions\n```md\n## Verified by\n- Not run: example\n```");
-	registered.message_end(event(reply));
+	await registered.message_end(event(reply));
 	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
 	assert.match(correction.entries[0].content, /evidence .* was not found/);
 });
 
-test("CRLF Verified by claims still require current evidence", () => {
+test("CRLF Verified by claims still require current evidence", async () => {
 	const registered = hooks(worker);
 	registered.agent_start({} as never);
 	const reply = workerReply(`- \`'bun' 'test'\` → exit 0 [evidence: verify_${"f".repeat(64)}]`).replaceAll("\n", "\r\n");
-	registered.message_end(event(reply));
+	await registered.message_end(event(reply));
 	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
 	assert.match(correction.entries[0].content, /evidence .* was not found/);
 });
 
-test("verification evidence resets at agent_start", () => {
+test("verification evidence resets at agent_start", async () => {
 	const registered = hooks(worker);
 	registered.agent_start({} as never);
 	const run = evidence("'bun' 'test'");
 	registered.agent_start({} as never);
-	registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`)));
+	await registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`)));
 	assert.notEqual(registered.turn_end({} as never), undefined);
 });
 
-test("write-capable tool activity after a check invalidates its evidence", () => {
+test("write-capable tool activity after a check invalidates its evidence", async () => {
 	for (const toolName of ["bash", "edit", "write"]) {
 		const registered = hooks(worker);
 		registered.agent_start({} as never);
 		const run = evidence(`'bun' 'test' '${toolName}'`);
 		registered.tool_call({ toolName, toolCallId: toolName, input: {} } as never);
-		registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`)));
+		await registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`)));
 		const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
 		assert.match(correction.entries[0].content, new RegExp(`stale: ${toolName} tool activity`));
 	}
 });
 
-test("overlapping write-capable tools invalidate evidence when they finish", () => {
+test("overlapping write-capable tools invalidate evidence when they finish", async () => {
 	const registered = hooks(worker);
 	registered.agent_start({} as never);
 	registered.tool_call({ toolName: "bash", toolCallId: "overlap", input: {} } as never);
 	const run = evidence("'bun' 'test' 'overlap'");
 	registered.tool_result({ toolName: "bash", toolCallId: "overlap", input: {}, content: [], isError: false } as never);
-	registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`)));
+	await registered.message_end(event(workerReply(`- \`${run.command}\` → exit 0 [evidence: ${run.id}]`)));
 	const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
 	assert.match(correction.entries[0].content, /stale: bash tool activity completed/);
 });
 
-test("non-worker schemas ignore Verified by", () => {
+test("non-worker schemas ignore Verified by", async () => {
 	const registered = hooks(child);
 	registered.agent_start({} as never);
-	assert.equal(registered.message_end(event(valid + "\n\n## Verified by\n- `nope` → exit 0")), undefined);
+	assert.equal(await registered.message_end(event(valid + "\n\n## Verified by\n- `nope` → exit 0")), undefined);
 });
 
-test("raw or masked Bash claims are rejected without evidence", () => {
+test("raw or masked Bash claims are rejected without evidence", async () => {
 	for (const item of ["- `bun test tests/` → exit 0", "- `bun test tests/ || true` → exit 0", "- `bun test tests/ | tail -5` → exit 0"]) {
 		const registered = hooks(worker);
 		registered.agent_start({} as never);
-		registered.message_end(event(workerReply(item)));
+		await registered.message_end(event(workerReply(item)));
 		const correction = registered.turn_end({} as never) as { entries: Array<{ content: string }> };
 		assert.match(correction.entries[0].content, /expected item matching/);
 	}
