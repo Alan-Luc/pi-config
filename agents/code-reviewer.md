@@ -4,7 +4,7 @@ description: Review an exact bounded patch for material correctness, security, p
 mode: background
 async: true
 auto-exit: true
-model: openai-codex/gpt-5.6-luna
+model: openai-codex/gpt-6-luna
 thinking: high
 tools: read,grep,find,inspect_context,inspect_change
 session-mode: lineage-only

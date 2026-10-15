@@ -4,7 +4,7 @@ description: Locate ownership, callers, contracts, or configuration for one boun
 mode: background
 async: true
 auto-exit: true
-model: openai-codex/gpt-5.6-luna
+model: openai-codex/gpt-6-luna
 thinking: low
 tools: read,bash,grep,find,inspect_context,inspect_change
 skills: none

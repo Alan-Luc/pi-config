@@ -165,8 +165,8 @@ test("the roster contains exactly four agents with deliberate tool scopes", () =
 	assert.match(agents["implementation-engineer"], /^thinking: medium$/m);
 	assert.match(agents["test-automation-engineer"], /^thinking: high$/m);
 	assert.deepEqual(settings.modelThinkingLevels, {
-		"openai-codex/gpt-5.6-sol": "high",
-		"openai-codex/gpt-5.6-luna": "high",
+		"openai-codex/gpt-6.1-sol": "high",
+		"openai-codex/gpt-6-luna": "high",
 	});
 	for (const name of ["code-explorer", "code-reviewer"]) {
 		assert.doesNotMatch(agents[name], /^tools: .*\bTask(?:Create|List|Get|Update)\b/m);
@@ -186,7 +186,7 @@ test("implementation and review roles preserve material behavior", () => {
 	includesAll(globalInstructions, ["trust-boundary validation", "accessibility", "strict types"]);
 	includesAll(agents["implementation-engineer"], ["focused happy and meaningful failure-path tests", "verification_evidence"]);
 	includesAll(agents["code-reviewer"], ["Patch artifact:", "Review paths:", "Use at most 12 combined", "wider risk", "P0", "P1", "P2", "Never edit"]);
-	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-5\.6-luna$/m);
+	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-6-luna$/m);
 	assert.ok(reviewPrompt.includes("`Review range: HEAD` for current worktree changes"));
 	assert.ok(reviewPrompt.includes("`Review range: <base>...<head>` for a committed branch"));
 	assert.ok(reviewPrompt.includes("one remediation review covering only the remediation delta and affected contracts"));
