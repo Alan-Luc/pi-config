@@ -898,7 +898,8 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 		description: "Capture a Git candidate, run one synchronous exact argv check, or start and later collect one immutable verification task, optionally in a linked worktree.",
 		promptSnippet: "Capture, run, or start/collect bounded verification evidence",
 		promptGuidelines: [
-			"Use capture before coordinating checks and run only one exact argument vector with a repository-relative cwd; run is synchronous, while start must be followed by its terminal notification and then collect with the exact task id; never poll.",
+			"Use capture before coordinating checks and run only one exact argument vector with a repository-relative cwd.",
+			"Default to start, automatic terminal notification without polling, then collect with the exact task id. Use synchronous run only when the background service is unavailable, the user explicitly requests it, or a stated concrete correctness or lifecycle constraint requires same-turn completion; expected lack of parallel work is not sufficient.",
 			"A failed command or changed candidate is evidence of failure; do not mask either result.",
 		],
 		parameters: VERIFICATION_EVIDENCE_PARAMETERS,

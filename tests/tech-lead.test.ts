@@ -75,6 +75,11 @@ const deliveryOwners = [
 		requiredMarker: "Before freezing the candidate, reconcile or kill every task-owned background job.",
 	},
 	{
+		invariantName: "background-first verification",
+		canonicalOwnerPath: "AGENTS.md",
+		requiredMarker: "Default to background `start`/`collect`; synchronous `run` requires",
+	},
+	{
 		invariantName: "authorization",
 		canonicalOwnerPath: "AGENTS.md",
 		requiredMarker: "Never push without Alan's explicit authorization",

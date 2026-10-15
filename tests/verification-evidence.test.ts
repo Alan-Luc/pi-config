@@ -876,8 +876,12 @@ test("malformed terminal frames are rejected by the shared EventBus listener", a
 	}), /unknown key|background task/);
 });
 
-test("verification evidence uses one shared tool contract", () => {
-	let tool: { prepareLoadout?: unknown } | undefined;
+test("verification evidence uses one background-first shared tool contract", () => {
+	let tool: { prepareLoadout?: unknown; promptGuidelines?: string[] } | undefined;
 	registerVerificationEvidence({ registerTool: (registered: never) => { tool = registered; } } as never);
 	assert.equal(tool?.prepareLoadout, undefined);
+	const guidance = tool?.promptGuidelines?.join("\n") ?? "";
+	assert.match(guidance, /Default to start/);
+	assert.match(guidance, /automatic terminal notification without polling/);
+	assert.match(guidance, /expected lack of parallel work is not sufficient/);
 });
