@@ -148,7 +148,7 @@ function preparationMetadata(): ReviewPreparationResult {
 	};
 }
 
-test("captures baseline records, later baseline edits, Bash-created changes, binary bytes, and literal pathspecs", async () => {
+test("captures later edits to pre-dirty paths, Bash-created changes, binary bytes, and literal pathspecs", async () => {
 	const root = await repository();
 	writeFileSync(join(root, "baseline.txt"), "baseline before task\n");
 	const harness = toolCallHandler(root);
@@ -174,9 +174,9 @@ test("captures baseline records, later baseline edits, Bash-created changes, bin
 	assert.equal(paths.some((path) => path.endsWith("/delete.txt")), true);
 	assert.equal(paths.some((path) => path.endsWith("/binary-new.bin")), true);
 	assert.equal(paths.some((path) => path.endsWith("/--literal path")), true);
-	assert.equal(paths.some((path) => path.endsWith("/baseline.txt")), false);
+	assert.equal(paths.some((path) => path.endsWith("/baseline.txt")), true);
 	const excludedPreDirtyPaths = JSON.parse(task.match(/^Excluded pre-dirty paths: (.*)$/m)?.[1] ?? "[]") as string[];
-	assert.equal(excludedPreDirtyPaths.some((path) => path.endsWith("/baseline.txt")), true);
+	assert.deepEqual(excludedPreDirtyPaths, []);
 
 	const artifact = task.match(/^Patch artifact: (.*)$/m)?.[1];
 	if (!artifact) throw new Error("missing patch artifact");
@@ -238,7 +238,37 @@ test("serializes concurrent first captures and preparations, repeats determinist
 	assert.match(String(noInferredAcceptance.task).match(/^Review paths: (.*)$/m)?.[1] ?? "", /second-task\.txt/);
 });
 
-test("rejects failed capture and no-diff review without mutating non-reviewer briefs", async () => {
+test("reviews explicit existing worktree and branch ranges without a task mutation", async () => {
+	const worktreeRoot = await repository();
+	writeFileSync(join(worktreeRoot, "task.txt"), "existing worktree change\n");
+	const worktreeHarness = toolCallHandler(worktreeRoot);
+	const worktreeReview = { agent: "code-reviewer", task: brief("Review range: HEAD") };
+	await worktreeHarness.call(launch(worktreeReview));
+	const worktreePaths = JSON.parse(worktreeReview.task.match(/^Review paths: (.*)$/m)?.[1] ?? "[]") as string[];
+	assert.equal(worktreePaths.includes(join(realpathSync(worktreeRoot), "task.txt")), true);
+	const worktreeArtifact = worktreeReview.task.match(/^Patch artifact: (.*)$/m)?.[1];
+	if (!worktreeArtifact) throw new Error("missing worktree patch artifact");
+	artifactDirectories.push(dirname(worktreeArtifact));
+	assert.match(readFileSync(worktreeArtifact, "utf8"), /existing worktree change/);
+
+	const branchRoot = await repository();
+	await git(branchRoot, "branch", "-M", "main");
+	await git(branchRoot, "checkout", "--quiet", "-b", "feature");
+	writeFileSync(join(branchRoot, "task.txt"), "existing branch change\n");
+	await git(branchRoot, "add", "task.txt");
+	await git(branchRoot, "commit", "--quiet", "-m", "feature change");
+	const branchHarness = toolCallHandler(branchRoot);
+	const branchReview = { agent: "code-reviewer", task: brief("Review range: main...HEAD") };
+	await branchHarness.call(launch(branchReview));
+	const branchPaths = JSON.parse(branchReview.task.match(/^Review paths: (.*)$/m)?.[1] ?? "[]") as string[];
+	assert.equal(branchPaths.includes(join(realpathSync(branchRoot), "task.txt")), true);
+	const branchArtifact = branchReview.task.match(/^Patch artifact: (.*)$/m)?.[1];
+	if (!branchArtifact) throw new Error("missing branch patch artifact");
+	artifactDirectories.push(dirname(branchArtifact));
+	assert.match(readFileSync(branchArtifact, "utf8"), /existing branch change/);
+});
+
+test("rejects invalid, duplicate, empty, and failed review preparation without mutating non-reviewer briefs", async () => {
 	const root = await repository();
 	const failed = toolCallHandler(root, true);
 	await assert.rejects(failed.call(mutation()), /Git command failed|working tree/);
@@ -247,7 +277,13 @@ test("rejects failed capture and no-diff review without mutating non-reviewer br
 	const noDiffRoot = await repository();
 	const noDiff = toolCallHandler(noDiffRoot);
 	await noDiff.call(mutation());
-	await assert.rejects(noDiff.call(launch({ agent: "code-reviewer", task: brief() })), /no task-owned diff/);
+	await assert.rejects(noDiff.call(launch({ agent: "code-reviewer", task: brief() })), /no task-owned diff.*Review range: HEAD/);
+	await assert.rejects(noDiff.call(launch({ agent: "code-reviewer", task: brief("Review range: --stat") })), /invalid Review range/);
+	await assert.rejects(
+		noDiff.call(launch({ agent: "code-reviewer", task: brief("Review range: HEAD\nReview range: main...HEAD") })),
+		/exactly one Review range line/,
+	);
+	await assert.rejects(noDiff.call(launch({ agent: "code-reviewer", task: brief("Review range: HEAD") })), /no changes for Review range: HEAD/);
 
 	writeFileSync(join(noDiffRoot, "new-task.txt"), "changed\n");
 	const implementation = { agent: "implementation-engineer", task: brief("keep unchanged") };
@@ -315,7 +351,7 @@ test("rejects a symlinked review root before creating outside descendants", asyn
 		if (hadRoot) renameSync(REVIEW_ARTIFACT_ROOT, backup);
 		symlinkSync(outside, REVIEW_ARTIFACT_ROOT);
 		await assert.rejects(
-			prepareReview(harness.exec, { candidate: boundaryCandidate, baselinePaths: new Set() }, root),
+			prepareReview(harness.exec, { candidate: boundaryCandidate }, root),
 			/symbolic link/,
 		);
 		assert.equal(readdirSync(outside).includes("review-preparation"), false);
@@ -332,7 +368,7 @@ test("reuses candidate identity and rejects a pre-existing patch symlink", async
 	const harness = toolCallHandler(root);
 	await harness.call(mutation());
 	const candidate = await captureCandidateWithExec(harness.exec, root);
-	const boundary: TaskBoundary = { candidate, baselinePaths: new Set() };
+	const boundary: TaskBoundary = { candidate };
 	writeFileSync(join(root, "task.txt"), "changed\n");
 	const first = await prepareReview(harness.exec, boundary, root);
 	artifactDirectories.push(dirname(first.patchArtifact));

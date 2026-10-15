@@ -26,6 +26,7 @@ const REVIEW_DIRECTORY = join(REVIEW_ARTIFACT_ROOT, "review-preparation");
 const ROOT_MUTATION_TOOLS = new Set(["bash", "edit", "write"]);
 const DELEGATED_MUTATION_AGENTS = new Set(["implementation-engineer", "test-automation-engineer"]);
 const GENERATED_METADATA_PREFIXES = ["Candidate:", "Patch SHA-256:", "Patch artifact:", "Review paths:", "Excluded pre-dirty paths:"] as const;
+const REVISION = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
 export type DiffRecord = Readonly<{
 	status: string;
@@ -35,7 +36,6 @@ export type DiffRecord = Readonly<{
 
 export type TaskBoundary = Readonly<{
 	candidate: CandidateIdentity;
-	baselinePaths: ReadonlySet<string>;
 }>;
 
 type ExecResult = Readonly<{
@@ -106,12 +106,57 @@ function recordPaths(record: DiffRecord): string[] {
 	return [record.oldPath, record.newPath].filter((path): path is string => path !== undefined);
 }
 
-function baselinePathSet(records: readonly DiffRecord[]): ReadonlySet<string> {
-	return new Set(records.flatMap(recordPaths));
+type ParsedReviewRange = Readonly<{ left: string; operator?: ".." | "..."; right?: string }>;
+
+function parseReviewRange(value: string): ParsedReviewRange | undefined {
+	const operator = value.includes("...") ? "..." : value.includes("..") ? ".." : undefined;
+	if (operator === undefined) return REVISION.test(value) ? { left: value } : undefined;
+	const separator = value.indexOf(operator);
+	const left = value.slice(0, separator);
+	const right = value.slice(separator + operator.length);
+	if (!REVISION.test(left) || !REVISION.test(right) || left.includes("..") || right.includes("..")) return undefined;
+	return { left, operator, right };
 }
 
-function taskRecords(records: readonly DiffRecord[], baselinePaths: ReadonlySet<string>): DiffRecord[] {
-	return records.filter((record) => recordPaths(record).every((path) => !baselinePaths.has(path)));
+function requestedReviewRange(task: string): string | undefined {
+	const matches = [...task.matchAll(/^ {0,3}Review range:[ \t]*(\S+)[ \t]*$/gm)];
+	if (matches.length > 1) throw new Error("review preparation accepts exactly one Review range line");
+	const value = matches[0]?.[1];
+	if (value !== undefined && parseReviewRange(value) === undefined) {
+		throw new Error(`review preparation received invalid Review range: ${value}`);
+	}
+	return value;
+}
+
+async function resolveCommit(
+	exec: CandidateExec,
+	repositoryRoot: string,
+	revision: string,
+	signal: AbortSignal | undefined,
+): Promise<string> {
+	const commit = (await executeGit(exec, repositoryRoot, ["rev-parse", "--verify", `${revision}^{commit}`], signal)).trim();
+	if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error(`review preparation received invalid commit for Review range: ${revision}`);
+	return commit;
+}
+
+async function reviewDiffArguments(
+	exec: CandidateExec,
+	boundary: TaskBoundary,
+	current: CandidateIdentity,
+	reviewRange: string | undefined,
+	signal: AbortSignal | undefined,
+): Promise<{ args: string[]; description: string }> {
+	if (reviewRange === undefined) {
+		return { args: [boundary.candidate.tree, current.tree], description: "task-owned diff" };
+	}
+	const parsed = parseReviewRange(reviewRange);
+	if (!parsed) throw new Error(`review preparation received invalid Review range: ${reviewRange}`);
+	const left = await resolveCommit(exec, current.repositoryRoot, parsed.left, signal);
+	if (parsed.operator === undefined || parsed.right === undefined) {
+		return { args: [`${left}^{tree}`, current.tree], description: `Review range: ${reviewRange}` };
+	}
+	const right = await resolveCommit(exec, current.repositoryRoot, parsed.right, signal);
+	return { args: [`${left}${parsed.operator}${right}`], description: `Review range: ${reviewRange}` };
 }
 
 function literalPathspec(path: string): string {
@@ -254,22 +299,23 @@ export async function prepareReview(
 	boundary: TaskBoundary,
 	sessionDirectory: string,
 	signal?: AbortSignal,
+	reviewRange?: string,
 ): Promise<ReviewPreparationResult> {
 	const current = await captureCandidateWithExec(exec, sessionDirectory, signal, boundary.candidate.repositoryRoot);
-	const baselineTree = boundary.candidate.tree;
-	const changedRecords = parseNameStatus(await executeGit(
+	const diff = await reviewDiffArguments(exec, boundary, current, reviewRange, signal);
+	const records = parseNameStatus(await executeGit(
 		exec,
 		current.repositoryRoot,
-		["diff-tree", "--no-commit-id", "-r", "--name-status", "-z", "--find-renames", baselineTree, current.tree, "--"],
+		["diff", "--name-status", "-z", "--find-renames", ...diff.args, "--"],
 		signal,
 	));
-	const records = taskRecords(changedRecords, boundary.baselinePaths);
-	if (records.length === 0) throw new Error("review preparation found no task-owned diff to review");
+	if (records.length === 0) {
+		if (reviewRange === undefined) {
+			throw new Error("review preparation found no task-owned diff to review; add Review range: HEAD for existing worktree changes or Review range: main...HEAD for an existing branch");
+		}
+		throw new Error(`review preparation found no changes for ${diff.description}`);
+	}
 	const paths = absoluteReviewPaths(current.repositoryRoot, records);
-	const excludedPreDirtyPaths = absolutePaths(
-		current.repositoryRoot,
-		changedRecords.flatMap(recordPaths).filter((path) => boundary.baselinePaths.has(path)),
-	);
 	const patch = await executeGit(
 		exec,
 		current.repositoryRoot,
@@ -279,20 +325,19 @@ export async function prepareReview(
 			"--full-index",
 			"--no-ext-diff",
 			"--find-renames",
-			baselineTree,
-			current.tree,
+			...diff.args,
 			"--",
 			...paths.map((path) => literalPathspec(relative(current.repositoryRoot, path))),
 		],
 		signal,
 	);
 	const patchBytes = Buffer.from(patch);
-	if (patchBytes.byteLength === 0) throw new Error("review preparation found no patch bytes for the task-owned diff");
+	if (patchBytes.byteLength === 0) throw new Error(`review preparation found no patch bytes for ${diff.description}`);
 	const patchSha256 = createHash("sha256").update(patchBytes).digest("hex");
 	ensureReviewDirectories();
 	const patchArtifact = join(REVIEW_DIRECTORY, `${current.id}-${patchSha256}.patch`);
 	writePatch(patchArtifact, patchBytes);
-	return { candidate: current, patchArtifact, patchSha256, reviewPaths: paths, excludedPreDirtyPaths };
+	return { candidate: current, patchArtifact, patchSha256, reviewPaths: paths, excludedPreDirtyPaths: [] };
 }
 
 export function addReviewMetadata(task: string, result: ReviewPreparationResult): string {
@@ -303,20 +348,14 @@ export function registerReviewPreparation(pi: ExtensionAPI): void {
 	const exec: CandidateExec = (command, args, options) => pi.exec(command, args, options);
 	let boundary: TaskBoundary | undefined;
 	let capturePromise: Promise<TaskBoundary> | undefined;
-	let preparationPromise: Promise<ReviewPreparationResult> | undefined;
+	const preparationPromises = new Map<string, Promise<ReviewPreparationResult>>();
 
 	const captureBoundary = (ctx: { cwd: string; signal?: AbortSignal }): Promise<TaskBoundary> => {
 		if (capturePromise) return capturePromise;
 		capturePromise = (async () => {
 			const candidate = await captureCandidateWithExec(exec, ctx.cwd, ctx.signal);
 			if (candidate.head === null) throw new Error("review preparation requires a committed HEAD");
-			const records = parseNameStatus(await executeGit(
-				exec,
-				candidate.repositoryRoot,
-				["diff-tree", "--no-commit-id", "-r", "--name-status", "-z", "--find-renames", `${candidate.head}^{tree}`, candidate.tree, "--"],
-				ctx.signal,
-			));
-			return { candidate, baselinePaths: baselinePathSet(records) };
+			return { candidate };
 		})().then((next) => {
 			boundary = next;
 			return next;
@@ -339,15 +378,21 @@ export function registerReviewPreparation(pi: ExtensionAPI): void {
 		return boundary;
 	};
 
-	const prepare = async (ctx: { cwd: string; signal?: AbortSignal }): Promise<ReviewPreparationResult> => {
-		if (preparationPromise) return preparationPromise;
-		preparationPromise = (async () => {
+	const prepare = async (
+		ctx: { cwd: string; signal?: AbortSignal },
+		reviewRange: string | undefined,
+	): Promise<ReviewPreparationResult> => {
+		const key = reviewRange ?? "<task-owned>";
+		const existing = preparationPromises.get(key);
+		if (existing) return existing;
+		const preparation = (async () => {
 			const activeBoundary = await ensureBoundary(ctx);
-			return prepareReview(exec, activeBoundary, ctx.cwd, ctx.signal);
+			return prepareReview(exec, activeBoundary, ctx.cwd, ctx.signal, reviewRange);
 		})().finally(() => {
-			preparationPromise = undefined;
+			if (preparationPromises.get(key) === preparation) preparationPromises.delete(key);
 		});
-		return preparationPromise;
+		preparationPromises.set(key, preparation);
+		return preparation;
 	};
 
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
@@ -360,9 +405,9 @@ export function registerReviewPreparation(pi: ExtensionAPI): void {
 		}
 		const reviewerLaunches = launches.filter((launch) => launch.agent === "code-reviewer");
 		if (reviewerLaunches.length === 0) return;
-		const result = await prepare(ctx);
 		for (const launch of reviewerLaunches) {
 			if (typeof launch.task !== "string") continue;
+			const result = await prepare(ctx, requestedReviewRange(launch.task));
 			const nextTask = addReviewMetadata(launch.task, result);
 			const validation = validate("brief", nextTask);
 			if (!validation.ok) return { block: true, reason: `Generated code-reviewer brief is invalid:\n${validation.errors.join("\n")}` };

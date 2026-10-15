@@ -181,6 +181,8 @@ test("implementation and review roles preserve material behavior", () => {
 	includesAll(agents["implementation-engineer"], ["focused happy and meaningful failure-path tests", "verification_evidence"]);
 	includesAll(agents["code-reviewer"], ["Patch artifact:", "Review paths:", "Use at most 12 combined", "wider risk", "P0", "P1", "P2", "Never edit"]);
 	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-5\.6-luna$/m);
+	assert.ok(reviewPrompt.includes("`Review range: HEAD` for current worktree changes"));
+	assert.ok(reviewPrompt.includes("`Review range: <base>...<head>` for a committed branch"));
 	assert.ok(reviewPrompt.includes("one remediation review covering only the remediation delta and affected contracts"));
 	assert.ok(reviewPrompt.includes("do not independently rereview an unchanged patch"));
 });
