@@ -112,6 +112,19 @@ test("startup policy has one bounded aggregate budget", () => {
 	assert.ok(!techLead.includes("node:os.tmpdir()/pi"));
 });
 
+test("temporary dogfooding reuses evidence and records friction without ceremonial work", () => {
+	assert.ok(globalInstructions.includes("extensions/extension-dogfooding.md"));
+	const dogfooding = readFileSync(new URL("../extensions/extension-dogfooding.md", import.meta.url), "utf8");
+	includesAll(dogfooding, [
+		"`inspect_context`", "`inspect_change`", "`verification_evidence` background `start`",
+		"automatic terminal notification, then `collect`", "do not poll",
+		"same established evidence", "session-local ID", "The parent owns sharing",
+		"No extra agents, checks, packet refreshes, or benchmarks",
+		"Alongside the final non-trivial work-log entry", "Expected help versus actual result",
+		"Fallback/workaround and outcome", "No extension friction observed",
+	]);
+});
+
 test("the router preserves direct, planning, and approval controls", () => {
 	includesAll(techLead, [
 		"Direct is default",
