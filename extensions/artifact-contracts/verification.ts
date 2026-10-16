@@ -17,7 +17,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
@@ -236,6 +236,7 @@ type StartedVerificationTask = {
 	argv: readonly string[];
 	cwd: string;
 	repositoryRoot: string;
+	outputDirectory: string;
 	task: BackgroundTaskSnapshot;
 	terminal?: BackgroundTaskSnapshot;
 	result?: VerificationCollectResult;
@@ -606,21 +607,27 @@ function writeVerificationLog(toolCallId: string, output: string): { path: strin
 	return writeVerificationLogBytes(toolCallId, Buffer.from(output));
 }
 
-function secureBackgroundOutputPath(repositoryRoot: string, outputPath: string): string {
+function secureBackgroundOutputPath(sessionDirectory: string, outputPath: string, taskId: string): string {
 	if (outputPath.includes("\0")) throw new Error("verification_evidence background task output path contains NUL bytes");
 	if (outputPath.split(/[\\/]/).some((segment) => segment === "..")) {
 		throw new Error("verification_evidence background task output path may not traverse parent directories");
 	}
-	const tasksRoot = join(repositoryRoot, ".pi", "tasks");
-	const resolved = resolve(repositoryRoot, outputPath);
+	const resolved = resolve(sessionDirectory, outputPath);
+	const temporaryRoot = realpathSync(tmpdir());
+	const runtimeDirectory = dirname(resolved);
+	const externalRuntime = isAbsolute(outputPath)
+		&& dirname(runtimeDirectory) === temporaryRoot
+		&& basename(runtimeDirectory).startsWith("pi-background-tasks-");
+	if (externalRuntime && basename(resolved) !== `${taskId}.output`) {
+		throw new Error("verification_evidence background task output path has a different task filename");
+	}
+	const tasksRoot = externalRuntime ? runtimeDirectory : join(sessionDirectory, ".pi", "tasks");
 	if (resolved === tasksRoot || !isWithin(tasksRoot, resolved)) {
-		throw new Error("verification_evidence background task output path must be under the repository .pi/tasks tree");
+		throw new Error("verification_evidence background task output path must be under its private runtime or session .pi/tasks tree");
 	}
-	const components = relative(repositoryRoot, resolved).split(/[\\/]/).filter(Boolean);
-	if (components[0] !== ".pi" || components[1] !== "tasks") {
-		throw new Error("verification_evidence background task output path must be under the repository .pi/tasks tree");
-	}
-	let current = repositoryRoot;
+	const root = externalRuntime ? temporaryRoot : sessionDirectory;
+	const components = relative(root, resolved).split(/[\\/]/).filter(Boolean);
+	let current = root;
 	try {
 		for (const [index, component] of components.entries()) {
 			current = join(current, component);
@@ -640,13 +647,13 @@ function secureBackgroundOutputPath(repositoryRoot: string, outputPath: string):
 }
 
 function readBackgroundOutput(
-	repositoryRoot: string,
+	sessionDirectory: string,
 	task: BackgroundTaskSnapshot,
 	logs: BackgroundTaskLogsResult,
 ): Buffer {
 	if (logs.task.id !== task.id) throw new Error("verification_evidence background task logs returned a different task");
-	const taskPath = secureBackgroundOutputPath(repositoryRoot, task.outputPath);
-	const logPath = secureBackgroundOutputPath(repositoryRoot, logs.path);
+	const taskPath = secureBackgroundOutputPath(sessionDirectory, task.outputPath, task.id);
+	const logPath = secureBackgroundOutputPath(sessionDirectory, logs.path, task.id);
 	if (taskPath !== logPath) throw new Error("verification_evidence background task log path does not match task metadata");
 	if (logs.bytesRead > MAX_EXPOSED_OUTPUT_BYTES) {
 		throw new Error(`verification_evidence background task logs exceed ${MAX_EXPOSED_OUTPUT_BYTES} bytes`);
@@ -780,6 +787,7 @@ async function executeVerificationStart(
 		argv: Object.freeze([...params.argv]),
 		cwd: workingDirectory.relative,
 		repositoryRoot: repository.root,
+		outputDirectory: realpathSync(ctx.cwd),
 		task,
 		...(task.status === "running" ? { terminal: pendingStart.terminalTasks.get(task.id) } : { terminal: task }),
 	};
@@ -821,7 +829,7 @@ async function executeVerificationCollect(
 		maxBytes: MAX_EXPOSED_OUTPUT_BYTES,
 		tail: false,
 	});
-	const outputBytes = readBackgroundOutput(started.repositoryRoot, terminal, logs);
+	const outputBytes = readBackgroundOutput(started.outputDirectory, terminal, logs);
 	const after = await captureCandidate(ctx, signal, started.repositoryRoot);
 	const candidateUnchanged = started.candidate.id === after.id;
 	if (!candidateUnchanged) invalidateVerificationEvidence("candidate changed during verification");
