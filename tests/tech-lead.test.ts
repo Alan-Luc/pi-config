@@ -206,6 +206,19 @@ test("implementation and review roles preserve material behavior", () => {
 	assert.ok(reviewPrompt.includes("do not independently rereview an unchanged patch"));
 });
 
+it.each([
+	{ name: "review prompt", instructions: reviewPrompt },
+	{ name: "reviewer agent", instructions: agents["code-reviewer"] },
+])("$name distinguishes worktree and committed review targets", ({ instructions }) => {
+	includesAll(instructions, [
+		"Establish the review target",
+		"`{}`",
+		"`base` and `head`",
+		'"direct"',
+		'"merge-base"',
+		"An empty worktree packet does not mean there are no task changes",
+	]);
+});
 
 test("global instructions retain Alan-specific conventions", () => {
 	includesAll(globalInstructions, [
