@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, test } from "bun:test";
+import { basename, dirname, isAbsolute, join } from "node:path";
+import { afterEach, it, test } from "bun:test";
 import type { EventBus } from "@earendil-works/pi-coding-agent";
 import {
 	BACKGROUND_TASK_REQUEST_CHANNEL,
@@ -259,10 +259,10 @@ function backgroundService(directory: string, options: {
 	const listeners = new Map<string, Set<(value: unknown) => void>>();
 	const counts = { run: 0, status: 0, logs: 0 };
 	const output = Buffer.from(options.output ?? "verification output\n");
-	const outputPath = options.outputPath ?? ".pi/tasks/session/task-1.output";
-	const absoluteOutputPath = outputPath.startsWith("/") ? outputPath : join(directory, outputPath);
-	if (!options.outputPath) mkdirSync(join(directory, ".pi", "tasks", "session"), { recursive: true });
-	if (!options.outputPath) writeFileSync(absoluteOutputPath, output);
+	const runtimeDirectory = mkdtempSync(join(realpathSync(tmpdir()), "pi-background-tasks-test-"));
+	runtimeRepositories.push(runtimeDirectory);
+	const outputPath = options.outputPath ?? join(runtimeDirectory, "task-1.output");
+	const absoluteOutputPath = isAbsolute(outputPath) ? outputPath : join(directory, outputPath);
 	let command = "";
 	let task: BackgroundTaskSnapshot = {
 		id: "task-1",
@@ -312,6 +312,10 @@ function backgroundService(directory: string, options: {
 		if (typeof request.request_id !== "string" || typeof request.operation !== "string") throw new Error("malformed request");
 		if (request.operation === "run") {
 			counts.run += 1;
+			if (!options.outputPath) {
+				writeFileSync(absoluteOutputPath, output);
+				writeFileSync(join(runtimeDirectory, "task-1.json"), "{}\n");
+			}
 			command = String(request.payload?.command ?? "");
 			task = { ...task, command };
 			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
@@ -651,6 +655,8 @@ test("background start and early terminal collect preserve the verification cont
 	assert.equal(started.details.operation, "start");
 	if (started.details.operation !== "start") throw new Error("expected start result");
 	assert.equal(started.details.taskId, "task-1");
+	assert.equal(started.details.candidate.kind, "clean");
+	assert.equal(await git(directory, "status", "--porcelain", "--untracked-files=all"), "");
 	assert.match(started.details.task.command, /cd .* && 'printf' '%s' 'verification'/);
 	const collected = await executeVerificationEvidence(
 		"collect-success",
@@ -671,6 +677,89 @@ test("background start and early terminal collect preserve the verification cont
 		executeVerificationEvidence("collect-duplicate", { operation: "collect", taskId: started.details.taskId }, undefined, context, service),
 		/already collected/,
 	);
+});
+
+it.each(["linked worktree", "session subdirectory"])("legacy background output belongs to the service directory: %s", async (scenario) => {
+	const directory = await newRepository();
+	const sessionDirectory = join(directory, "session");
+	mkdirSync(sessionDirectory);
+	let repositoryRoot = directory;
+	if (scenario === "linked worktree") {
+		const container = mkdtempSync(join(tmpdir(), "verification-background-linked-"));
+		runtimeRepositories.push(container);
+		repositoryRoot = join(container, "candidate");
+		await git(directory, "worktree", "add", "--quiet", "--detach", repositoryRoot);
+	}
+	const outputPath = ".pi/tasks/session/task-1.output";
+	mkdirSync(dirname(join(sessionDirectory, outputPath)), { recursive: true });
+	writeFileSync(join(sessionDirectory, outputPath), "verification output\n");
+	const service = backgroundService(sessionDirectory, { outputPath });
+	const context = makeContext(sessionDirectory);
+	const started = await executeVerificationEvidence("legacy-start", {
+		operation: "start", repositoryRoot, argv: ["true"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const collected = await executeVerificationEvidence("legacy-collect", {
+		operation: "collect", taskId: started.details.taskId,
+	}, undefined, context, service);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.isError, false);
+	assert.equal(collected.details.evidence.candidate.repositoryRoot, realpathSync(repositoryRoot));
+	assert.equal(collected.details.output, "verification output\n");
+});
+
+it.each([
+	{ name: "unstaged source", path: "tracked.txt", stage: false },
+	{ name: "staged source", path: "tracked.txt", stage: true },
+	{ name: "untracked source", path: "new.txt", stage: false },
+	{ name: "Pi configuration", path: ".pi/settings.json", stage: false },
+	{ name: "source inside a legacy tasks directory", path: ".pi/tasks/source.ts", stage: false },
+])("external runtime output does not hide $name mutations", async ({ path, stage }) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("mutation-start", {
+		operation: "start", argv: ["true"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	mkdirSync(dirname(join(directory, path)), { recursive: true });
+	writeFileSync(join(directory, path), "changed\n");
+	if (stage) await git(directory, "add", path);
+	const collected = await executeVerificationEvidence("mutation-collect", {
+		operation: "collect", taskId: started.details.taskId,
+	}, undefined, context, service);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.exitCode, 0);
+	assert.equal(collected.details.evidence.valid, false);
+	assert.equal(collected.details.evidence.invalidReason, "candidate changed during verification");
+});
+
+it.each(["arbitrary temporary directory", "wrong task filename", "symlinked runtime directory", "traversal"])("external runtime output rejects %s", async (scenario) => {
+	const directory = await newRepository();
+	const runtimeDirectory = mkdtempSync(join(realpathSync(tmpdir()), scenario === "arbitrary temporary directory" ? "other-runtime-" : "pi-background-tasks-test-"));
+	runtimeRepositories.push(runtimeDirectory);
+	writeFileSync(join(runtimeDirectory, "task-1.output"), "verification output\n");
+	let outputPath = join(runtimeDirectory, "task-1.output");
+	if (scenario === "wrong task filename") {
+		outputPath = join(runtimeDirectory, "another-task.output");
+		writeFileSync(outputPath, "verification output\n");
+	} else if (scenario === "symlinked runtime directory") {
+		const link = `${runtimeDirectory}-link`;
+		symlinkSync(runtimeDirectory, link);
+		runtimeRepositories.push(link);
+		outputPath = join(link, "task-1.output");
+	} else if (scenario === "traversal") {
+		outputPath = `${runtimeDirectory}/../${basename(runtimeDirectory)}/task-1.output`;
+	}
+	const service = backgroundService(directory, { outputPath });
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("unsafe-runtime-start", {
+		operation: "start", argv: ["true"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	await assert.rejects(executeVerificationEvidence("unsafe-runtime-collect", {
+		operation: "collect", taskId: started.details.taskId,
+	}, undefined, context, service), /output path|symbolic link|task filename/);
 });
 
 test("background collect accepts empty bounded-log text for silent commands", { timeout: 30_000 }, async () => {
