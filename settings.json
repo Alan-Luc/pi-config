@@ -23,7 +23,7 @@
   "fullscreenCopyOnSelect": true,
   "tuiMode": "fullscreen",
   "modelThinkingLevels": {
-    "openai-codex/gpt-6.1-sol": "high",
+    "openai-codex/gpt-6.1-sol": "medium",
     "openai-codex/gpt-6-luna": "high"
   },
   "hideThinkingBlock": true,
