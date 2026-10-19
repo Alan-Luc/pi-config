@@ -178,7 +178,7 @@ test("the roster contains exactly four agents with deliberate tool scopes", () =
 	assert.match(agents["implementation-engineer"], /^thinking: medium$/m);
 	assert.match(agents["test-automation-engineer"], /^thinking: high$/m);
 	assert.deepEqual(settings.modelThinkingLevels, {
-		"openai-codex/gpt-6.1-sol": "high",
+		"openai-codex/gpt-6.1-sol": "medium",
 		"openai-codex/gpt-6-luna": "high",
 	});
 	for (const name of ["code-explorer", "code-reviewer"]) {
