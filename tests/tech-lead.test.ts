@@ -209,8 +209,10 @@ test("implementation and review roles preserve material behavior", () => {
 it.each([
 	{ name: "review prompt", instructions: reviewPrompt },
 	{ name: "reviewer agent", instructions: agents["code-reviewer"] },
-])("$name distinguishes worktree and committed review targets", ({ instructions }) => {
+])("$name reuses evidence and distinguishes review targets", ({ instructions }) => {
 	includesAll(instructions, [
+		"only when Git evidence is missing or inputs changed",
+		"do not repeat a recorded failure on unchanged inputs",
 		"Establish the review target",
 		"`{}`",
 		"`base` and `head`",
@@ -218,6 +220,8 @@ it.each([
 		'"merge-base"',
 		"An empty worktree packet does not mean there are no task changes",
 	]);
+	assert.match(instructions, /reuse supplied same-target Git evidence/i);
+	assert.doesNotMatch(instructions, /(?:use|calling) `inspect_change` once/i);
 });
 
 test("global instructions retain Alan-specific conventions", () => {
