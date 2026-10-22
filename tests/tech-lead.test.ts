@@ -325,6 +325,32 @@ test("solo runtime discloses unavailable cross-model evidence", async () => {
 	assert.equal(session.prompt(), techLead);
 });
 
+it.each(["correctness-review", "structural-review", "deslop"])("the %s skill preserves selective routing and source provenance", (name) => {
+	const directory = new URL(`../skills/${name}/`, import.meta.url);
+	const skill = readFileSync(new URL("SKILL.md", directory), "utf8");
+	assert.ok(skill.includes(`name: ${name}`));
+	assert.match(skill, /^description: .+/m);
+	assert.match(skill, /^license: MIT$/m);
+	assert.doesNotMatch(skill, /^disable-model-invocation: true$/m);
+	includesAll(skill, ["eb4db2b55b2b7dec3d9282754cddf0a56bf4ff10", "candidate", "[License](LICENSE)"]);
+	const license = readFileSync(new URL("LICENSE", directory), "utf8");
+	includesAll(license, ["Copyright (c) 2026 Cursor", "Permission is hereby granted", "THE SOFTWARE IS PROVIDED"]);
+	for (const match of skill.matchAll(/\]\(([^)]+)\)/g)) {
+		if (!match[1].includes("://")) assert.ok(existsSync(new URL(match[1], directory)), match[1]);
+	}
+});
+
+test("review routing selects risk before capacity and keeps pair coverage honest", () => {
+	includesAll(techLead, ["consequential architectural", "prompts/code_review.md", "eight live children", "capacity"]);
+	includesAll(reviewPrompt, [
+		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
+		"eight live children", "complete pairs", "canonical role", "protected", "missing counterpart", "not votes",
+		"correctness-review", "structural-review", "deslop", "fresh selected reviewer-profile",
+	]);
+	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
+	includesAll(cleanup, ["Ponytail", "trust-boundary", "data-loss", "unchanged behavior", "not a mandatory extra"]);
+});
+
 test("main sessions append the router while children do not", () => {
 	const starts: Array<(event: { systemPromptOptions: { appendSystemPrompt?: string } }) => void> = [];
 	registerTechLead(

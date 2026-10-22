@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, test } from "bun:test";
+import { afterAll, it, test } from "bun:test";
 import { correctionMessage, failureReport, registerHandoffHooks, replyInstructions, replySchema } from "../extensions/artifact-contracts/handoffs.ts";
 import {
 	BACKGROUND_TASK_REQUEST_CHANNEL,
@@ -115,6 +115,10 @@ test("selects schemas and does nothing outside children or for null schemas", ()
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "implementation-engineer" }), "worker");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "other" }), "worker");
 	assert.deepEqual(hooks({}), {});
+});
+
+it.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus"])("selects the same review contract for counterpart %s", (agent) => {
+	assert.equal(replySchema({ PI_SUBAGENT_AGENT: agent }), "review");
 });
 
 test("appends the template without dropping the prior prompt", () => {
