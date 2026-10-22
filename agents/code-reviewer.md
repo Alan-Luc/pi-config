@@ -1,10 +1,11 @@
 ---
 name: code-reviewer
-description: Review an exact bounded patch for material correctness, security, performance, and test gaps. Expand to named connected-code or architecture risks only when the brief says so; callers may explicitly override the model for wider high-risk reviews.
+description: Review an exact bounded patch for material correctness, security, performance, and test gaps. Expand only to briefed connected risks; select persisted counterpart profiles instead of inferred model overrides.
 mode: background
 async: true
 auto-exit: true
 model: openai-codex/gpt-6-luna
+allow-model-override: false
 thinking: high
 tools: read,grep,find,inspect_context,inspect_change
 session-mode: lineage-only

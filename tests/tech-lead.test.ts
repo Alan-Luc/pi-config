@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { it, test } from "bun:test";
 import registerTechLead from "../extensions/tech-lead/index.ts";
 import { briefInstructions } from "../extensions/artifact-contracts/briefs.ts";
+import { getEffectiveAgentDefinitions } from "../git/github.com/Alan-Luc/pi-subagents/src/agents/definitions.ts";
 
 const techLead = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
 const durablePlan = readFileSync(new URL("../skills/durable-plan/SKILL.md", import.meta.url), "utf8");
@@ -170,11 +171,16 @@ it.each(deliveryOwners)("delivery invariant: $invariantName", ({ canonicalOwnerP
 	assert.ok(owner.includes(requiredMarker), `${canonicalOwnerPath} is missing ${requiredMarker}`);
 });
 
-test("the roster contains exactly four agents with deliberate tool scopes", () => {
+test("the roster keeps four role owners with exact persisted model profiles", () => {
 	assert.deepEqual(Object.keys(agents).sort(), [
 		"code-explorer",
 		"code-reviewer",
+		"code-reviewer-opus",
+		"code-reviewer-sol",
+		"code-reviewer-sonnet",
 		"implementation-engineer",
+		"implementation-engineer-opus",
+		"implementation-engineer-sol",
 		"test-automation-engineer",
 	]);
 	for (const name of ["implementation-engineer", "test-automation-engineer"]) {
@@ -200,6 +206,39 @@ test("the roster contains exactly four agents with deliberate tool scopes", () =
 	for (const removed of ["backend-engineer", "frontend-engineer", "code-reviewer-light", "requirements-clarifier"]) {
 		assert.equal(existsSync(new URL(`../agents/${removed}.md`, import.meta.url)), false);
 		assert.ok(!reviewPrompt.includes(removed));
+	}
+});
+
+it.each([
+	{ name: "code-explorer", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "code-explorer" },
+	{ name: "implementation-engineer", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "implementation-engineer" },
+	{ name: "test-automation-engineer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "test-automation-engineer" },
+	{ name: "code-reviewer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "code-reviewer" },
+	{ name: "code-reviewer-sonnet", model: "anthropic/claude-sonnet-5-5", thinking: "high", canonical: "code-reviewer" },
+	{ name: "code-reviewer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "code-reviewer" },
+	{ name: "code-reviewer-opus", model: "anthropic/claude-opus-5-5", thinking: "high", canonical: "code-reviewer" },
+	{ name: "implementation-engineer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "implementation-engineer" },
+	{ name: "implementation-engineer-opus", model: "anthropic/claude-opus-5-5", thinking: "high", canonical: "implementation-engineer" },
+])("the installed loader resolves $name without inferred overrides", ({ name, model, thinking, canonical }) => {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = new URL("../", import.meta.url).pathname;
+	try {
+		const definitions = getEffectiveAgentDefinitions(process.env.PI_CODING_AGENT_DIR);
+		const profile = definitions.find((definition) => definition.name === name);
+		const owner = definitions.find((definition) => definition.name === canonical);
+		assert.ok(profile && owner);
+		assert.equal(profile.model, model);
+		assert.equal(profile.thinking, thinking);
+		assert.equal(profile.allowModelOverride, false);
+		assert.equal(profile.tools, owner.tools);
+		assert.equal(profile.skills, owner.skills);
+		assert.notEqual(profile.noContextFiles, true);
+		assert.equal(profile.parentClosePolicy, "terminate");
+		assert.equal(profile.spawning, false);
+		if (name !== canonical) assert.ok(profile.body?.includes(`agents/${canonical}.md`));
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
 	}
 });
 

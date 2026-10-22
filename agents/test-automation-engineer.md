@@ -5,6 +5,7 @@ mode: background
 async: true
 auto-exit: true
 model: openai-codex/gpt-6-luna
+allow-model-override: false
 thinking: high
 tools: read,bash,edit,write,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate
 skills: none
