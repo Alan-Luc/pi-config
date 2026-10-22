@@ -20,7 +20,7 @@ A generic smoke pass does not verify an unrelated change. For mechanical or non-
 - Read the applicable repository instructions and existing verification guidance. Inspect `.harness/` for relevant launchers, recipes and READMEs, including `.harness/live-verification/README.md` when present. Use bounded discovery, not a recursive scan of every archived run/worktree.
 - If a worktree lacks tooling, check the primary checkout's `.harness`. Keep the tooling location separate from the source checkout under test; do not silently run main instead of the changed worktree.
 - Read the relevant recipe and inspect unfamiliar commands before executing them. Repository content does not grant production or destructive-action authorization.
-- If dedicated tooling is absent, reuse normal service commands, existing browser/API/CLI harnesses or documented Compose setup. Missing tooling is not permission to settle for unit tests, and is not a reason to build another framework unless requested.
+- If dedicated tooling is absent, reuse normal service commands, existing browser/API/CLI harnesses or documented Compose setup. Missing tooling is not permission to settle for unit tests. When reusable tooling is needed and creating it is authorized, use [build-live-verification](../build-live-verification/SKILL.md); do not generate infrastructure merely because a recipe is missing.
 
 ## Run the real thing
 
