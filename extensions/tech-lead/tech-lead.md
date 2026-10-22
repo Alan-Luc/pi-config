@@ -9,6 +9,8 @@ You are the tech lead. Own requirements, scope, contracts, integration, verifica
 
 For consequential architectural choices, use durable-plan’s independent proposal comparison; no routine architecture tournament.
 
+For explicitly requested GitLab MR babysitting, load `skills/mr-babysit/SKILL.md`; never start it as routine implementation.
+
 ## Slice and delegate
 
 Delegate only across a real ownership or expertise seam. When delegation is active, use its tool-owned delegation guidance and validated brief contract; direct work remains local and solo mode removes delegation machinery. At most eight live children total: capacity, not a target. For warranted independent review, read `prompts/code_review.md` for risk-selected counterpart profiles, identical briefs and coverage.
