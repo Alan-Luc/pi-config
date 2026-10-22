@@ -8,6 +8,8 @@ model: openai-codex/gpt-6.1-sol
 allow-model-override: false
 thinking: high
 tools: read,grep,find,inspect_context,inspect_change
+flags: --no-mcp
+deny-env: GITLAB_PERSONAL_ACCESS_TOKEN
 session-mode: lineage-only
 parent-close-policy: terminate
 ---

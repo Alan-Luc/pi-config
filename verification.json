@@ -16,6 +16,7 @@
         "tests/permission-policy.test.ts",
         "tests/pi-vim-autocomplete-enter.test.mjs",
         "tests/review-preparation.test.ts",
+        "tests/role-mcp.test.ts",
         "tests/tech-lead.test.ts",
         "tests/verification-evidence.test.ts",
         "tests/verification-recipes.test.ts",
