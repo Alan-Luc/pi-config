@@ -112,6 +112,14 @@ test("startup policy has one bounded aggregate budget", () => {
 	assert.ok(!techLead.includes("node:os.tmpdir()/pi"));
 });
 
+test("common verification routes both skills and independent live checks alongside tests", () => {
+	const routing = globalInstructions.split("\n").find((line) => line.includes("`live-verification`") && line.includes("`build-live-verification`"));
+	assert.ok(routing, "both procedural skills have always-known verification routing");
+	assert.match(routing, /live checks alongside tests in parallel when independent/);
+	assert.match(routing, /prerequisites|shared mutable state/);
+	assert.match(routing, /both results before claiming verified completion/);
+});
+
 test("temporary dogfooding reuses evidence and records friction without ceremonial work", () => {
 	assert.ok(globalInstructions.includes("extensions/extension-dogfooding.md"));
 	const dogfooding = readFileSync(new URL("../extensions/extension-dogfooding.md", import.meta.url), "utf8");

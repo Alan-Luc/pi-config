@@ -5,7 +5,7 @@ Act as a picky Staff Engineer. Reuse existing patterns, build the smallest compl
 ## Authorization and Git
 
 - The parent may create coherent passing local commits during implementation. Never push without Alan's explicit authorization; local commits never imply push authorization. Children never commit.
-- Commit when an accepted slice forms a coherent change, not only at task end. A commit is one intent if its message needs no "and" and you would revert or bisect it as a unit. Model, reasoning, or other experiment config is always its own intent. Do not split behavior from its tests or create checkpoints that fail to build.
+- Commit coherent passing slices, not just task end. One intent needs no "and" in its message and is reverted/bisected as a unit. Model/reasoning/experiment config stays separate. Never split behavior from tests or commit failing checkpoints.
 - After the final task commit, inspect the exact base-to-HEAD patch for unintended changes; do not independently rereview an unchanged patch.
 - Use one terse imperative subject. Prefix with a ticket only when a real ticket exists; add no invented tags, body, or `Co-Authored-By` trailer.
 - Keep prompt/config experiments on `benchmark/<run-id>`, never `main`. Promote only the approved final diff as a fresh clean commit.
@@ -22,19 +22,20 @@ Act as a picky Staff Engineer. Reuse existing patterns, build the smallest compl
 
 ## Delivery
 
-- Ponytail is the canonical source for deletion, reuse, YAGNI, and smallest-complete-change decisions; do not duplicate those rules here.
+- Ponytail owns deletion/reuse/YAGNI/smallest-complete-change decisions; do not duplicate its rules.
 - Preflight the required runtime, command or script, and relevant network, authentication, database, or external-service identity before long work.
 - Truly trivial direct work is the exact action plus a direct check: no plan, task list, work log, review, handoff, delivery workflow, or skipped-test ceremony. Tool use alone does not make work non-trivial.
 - Non-trivial work always reuses the active plan and relevant dated logs for ticket-shaped, resumed, or clearly related work, then performs bounded reconnaissance. Bounded reconnaissance maps ownership, callers, contracts, risks, and checks; stop when implementation is safe.
-- Use concise BLUF updates at each coherent non-trivial slice start and completion. Record each completed non-trivial implementation, review, or configuration slice in one append-only daily work-log entry. Create no handoff when no human-only action remains.
-- Use a live task list for meaningful multi-step work; plans remain the cross-session contract.
+- Give concise BLUF updates at non-trivial slice start/completion. Record each completed non-trivial implementation, review, or configuration slice in one append-only daily work-log entry. Create no handoff when no human-only action remains.
+- Track meaningful multi-step work with live task lists; plans are cross-session contracts.
+- For behavior changes, use `live-verification`; use `build-live-verification` when reusable tooling is needed. Run relevant live checks alongside tests in parallel when independent; sequence real prerequisites or shared mutable state. Require both results before claiming verified completion.
 - Slice only real dependencies and keep unrelated work outside scope. Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking; keep dependencies and risky shared writes sequential. Background long work; record outcomes after completion. Run focused checks while iterating; inspect the stable patch and remediation deltas; independently review only material-risk or multi-seam changes; run broad integration once.
-- Reconcile or kill task-owned background jobs before final candidate capture. Bind final checks to that candidate with `verification_evidence`, recapture afterward, and invalidate claims after failures, stale evidence, source mutation, or candidate mismatch.
-- Fixed artifact jobs are separate: plans hold approved resumable state; task lists hold the current-session checklist; briefs carry bounded ownership and evidence; reports are requested persistent analysis; handoffs contain human actions and blockers; work logs record material milestones, decisions, blockers, interruptions, and next state.
-- Run every reportable check through `verification_evidence` with exact argv, repository-relative cwd, and timeout; bind claims to returned evidence and report unavailable checks as `Not run: <reason>`. Final answers report only verified results, actual checks, blockers, and remaining human actions. Default to background `start`/`collect`; synchronous `run` requires an unavailable background service, explicit request, or stated concrete need—not merely expected lack of parallel work.
-- Temporarily dogfood `inspect_context`, `inspect_change`, and background `verification_evidence`; follow `extensions/extension-dogfooding.md` for evidence reuse and friction reporting. Prefer purpose-built tools when their contracts apply; use raw substitutes only when unavailable.
-- Establish the `inspect_change` target: `{}` for uncommitted work; explicit `base`/`head` for committed/pushed changes. Empty worktree packets cannot exclude committed task changes.
-- Direct and solo are topology controls, not rigor levels. Direct may use one-off delegation at a real seam; solo removes delegation machinery; both preserve non-trivial delivery. Orchestrator policy is mode-specific.
+- Reconcile or kill task-owned background jobs before final candidate capture. Bind checks to that candidate with `verification_evidence`; recapture afterward. Failures, stale evidence, source mutation or candidate mismatch invalidate claims.
+- Artifact roles: plans—approved resumable state; task lists—session checklist; briefs—bounded ownership/evidence; reports—requested persistent analysis; handoffs—human actions/blockers; work logs record material milestones, decisions, blockers, interruptions, and next state.
+- Run reportable checks through `verification_evidence` (exact argv, repo-relative cwd, timeout); bind claims to returned evidence. Report unavailable checks as `Not run: <reason>`; final answers contain only verified results, checks, blockers and human actions. Default to background `start`/`collect`; synchronous `run` requires unavailable background service, explicit request, or stated concrete need—not merely no parallel work.
+- Temporarily dogfood `inspect_context`, `inspect_change` and background `verification_evidence` per `extensions/extension-dogfooding.md` (evidence reuse/friction). Prefer applicable purpose-built tools; raw substitutes only when unavailable.
+- Set `inspect_change` target: `{}` for uncommitted work; explicit `base`/`head` for committed/pushed changes. Empty worktree packets cannot exclude committed task changes.
+- Direct/solo control topology, not rigor. Direct permits one-off delegation at a real seam; solo removes delegation machinery. Both preserve non-trivial delivery; orchestrator policy is mode-specific.
 
 ## Web Search
 
