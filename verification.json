@@ -11,6 +11,7 @@
         "tests/background-task-events.test.ts",
         "tests/fff-default-excludes.test.mjs",
         "tests/guardrails.test.ts",
+        "tests/live-verification-skill.test.ts",
         "tests/permission-policy.test.ts",
         "tests/pi-vim-autocomplete-enter.test.mjs",
         "tests/review-preparation.test.ts",
