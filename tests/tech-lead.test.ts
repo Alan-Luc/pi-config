@@ -256,6 +256,36 @@ test("global instructions retain Alan-specific conventions", () => {
 	]);
 });
 
+test("common test-first standards reach roles without skill loading", () => {
+	includesAll(globalInstructions, [
+		"Before production behavior edits", "requirement-derived", "intended assertion failure",
+		"red/green/refactor", "Quick implementation", "coordination ceremony",
+		"genuinely impractical", "not a size or testing-cost exemption",
+		"internal refactor", "tautological", "same surface", "persisted effects",
+	]);
+	assert.equal(existsSync(new URL("../skills/tdd/SKILL.md", import.meta.url)), false);
+	for (const name of ["code-explorer", "test-automation-engineer"]) {
+		assert.match(agents[name], /^skills: none$/m);
+		assert.doesNotMatch(agents[name], /^no-context-files: true$/m);
+	}
+	includesAll(agents["implementation-engineer"], ["before production edits", "intended assertion", "red/green/refactor", "same surface"]);
+	includesAll(agents["test-automation-engineer"], ["requirement-derived", "internal refactor", "tautological"]);
+	includesAll(agents["code-explorer"], ["observable contracts", "test seams", "runtime prerequisites"]);
+	includesAll(agents["code-reviewer"], ["test value", "intended red", "real-surface"]);
+	includesAll(durablePlan, ["observable acceptance", "caller", "independent proposals", "shared", "judge-only"]);
+});
+
+test("solo runtime discloses unavailable cross-model evidence", async () => {
+	const session = harness(["read", "bash", "subagent", "subagent_resume", "subagent_kill"]);
+	session.initialize();
+	await session.toggle();
+	assert.ok(session.prompt().includes("Do not claim paired review or model diversity in solo mode"));
+	assert.ok(session.prompt().includes("disclose required coverage gaps"));
+	assert.deepEqual(session.tools(), ["read", "bash"]);
+	await session.toggle();
+	assert.equal(session.prompt(), techLead);
+});
+
 test("main sessions append the router while children do not", () => {
 	const starts: Array<(event: { systemPromptOptions: { appendSystemPrompt?: string } }) => void> = [];
 	registerTechLead(

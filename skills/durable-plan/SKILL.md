@@ -59,6 +59,9 @@ Do not write “as discussed” or rely on chat-only context. A fresh Pi session
 
 ## Authoring
 
+- Define observable acceptance and appropriate verification before production edits or proposal generation: caller/data shapes, meaningful success/failure cases, and the pivotal safety assumption. The common test-first obligation applies without loading a separate TDD skill; do not turn quick implementation into planning ceremony.
+- For consequential architectural choices, compare two independent proposals from the selected cross-model profiles using identical requirements, caller usage, ownership/state flow, failures, tradeoffs and verification outline. Add a third only for unresolved substantial divergence. Parent selects one coherent design by correctness, simplicity, integration/maintenance cost and justified extension seams, subject to approval gates; do not force disagreement or combine incompatible designs.
+- Share functional requirements and hard constraints with every builder. Keep comparative rubric visibility distinct: follow the approved shared versus judge-only comparison, with shared fallback on inconclusive evidence. Fix judging criteria before generation; unsupported criteria remain unproven and safety failures cannot be offset by scores. Reuse existing plan/brief/test expectations rather than add universal rubric paperwork.
 - Inspect only enough code to verify ownership, prerequisites, contracts, and canonical patterns.
 - Apply Ponytail before slicing; omit speculative abstractions and follow-ups.
 - For `plan with me`, keep the plan `draft` while collaborating, surface implementation-relevant decisions incrementally, and update the artifact as answers resolve them.

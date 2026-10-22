@@ -23,4 +23,6 @@ Report only evidence-backed findings:
 - **P1:** material correctness, expected-scale performance, dependency, or critical test gap that should block acceptance.
 - **P2:** non-blocking maintainability or minor test/design debt.
 
+Challenge test value and evidence: requirement-derived observable contracts, intended red before behavior edits, green afterward, useful failure paths and adequate real-surface verification. A plausible broken behavior must fail while an internal refactor passes; reject tautological tests and proxy-only runtime claims. Disclose missing evidence rather than infer compliance from chronology or prompt markers.
+
 Do not inflate severity, block on style, invent praise, or apply fixes. A clean review is valid.

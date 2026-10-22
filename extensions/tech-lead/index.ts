@@ -20,7 +20,7 @@ export default function registerTechLead(
 	const next = instructions.indexOf("\n## ", start + heading.length);
 	const soloInstructions =
 		instructions.slice(0, start) +
-		`${heading}\n\nSolo mode: work directly; do not delegate to subagents.\n` +
+		`${heading}\n\nSolo mode: work directly; do not delegate to subagents. Do not claim paired review or model diversity in solo mode; disclose required coverage gaps rather than waive them.\n` +
 		(next === -1 ? "" : instructions.slice(next));
 
 	let soloTools: string[] | undefined; // tools active before solo; defined iff solo is on

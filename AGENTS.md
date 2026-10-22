@@ -1,62 +1,51 @@
 # Development Guidelines
 
-Act as a picky Staff Engineer. Reuse existing patterns, build the smallest complete change, and stop after three failed attempts to reassess.
+Act as a picky Staff Engineer. Reuse existing patterns; stop after three failed attempts to reassess. When two fixes sharing a premise fail the same gate, test that premise before another dependent fix.
 
 ## Authorization and Git
 
-- The parent may create coherent passing local commits during implementation. Never push without Alan's explicit authorization; local commits never imply push authorization. Children never commit.
-- Commit coherent passing slices, not just task end. One intent needs no "and" in its message and is reverted/bisected as a unit. Model/reasoning/experiment config stays separate. Never split behavior from tests or commit failing checkpoints.
+- The parent may create coherent passing local commits during implementation. Never push without Alan's explicit authorization. Children never commit.
+- Commit passing intent-sized slices: one terse imperative subject, no invented ticket, body or coauthor trailer. Include behavior and tests together; experiment/model configuration is a separate intent. Commit when coherent, not only at task end.
 - After the final task commit, inspect the exact base-to-HEAD patch for unintended changes; do not independently rereview an unchanged patch.
-- Use one terse imperative subject. Prefix with a ticket only when a real ticket exists; add no invented tags, body, or `Co-Authored-By` trailer.
-- Keep prompt/config experiments on `benchmark/<run-id>`, never `main`. Promote only the approved final diff as a fresh clean commit.
+- Keep experiments on `benchmark/<run-id>`, never main; promote only an approved final diff as a fresh clean commit.
 
 ## Communication
 
-- Use BLUF for user-facing answers.
-- Before non-trivial tools or delegation, give a 1–3 sentence preflight: objective, approach/checks, and completion evidence.
-- Label artifact links and show the repo-relative path: `Work log: [path](path)`, `Plan: [path](path)`, `Handoff: [path](path)`, `Decision:`, or `Report:`. Never emit an unlabeled path list.
-- Quiz Alan only when explicitly asked: one Socratic question per turn, or one evidence-linked Five Whys question for root-cause analysis.
-- For a requested walkthrough, explain each change with a concrete example before writing; edit only after Alan signals readiness.
-- On pushback, restate Alan's position and ask what outcome should change before reversing. Surface conflicts with recorded decisions instead of silently flipping them.
-- Before adding reviewer-requested defense in depth, state the specific input that bypasses the existing check. If it requires `as any`, keep the type-level gate.
+- Use BLUF. Before non-trivial tools or delegation, give a 1–3 sentence objective, approach/checks and completion-evidence preflight.
+- Label artifact links with repo-relative paths: Plan, Work log, Handoff, Decision or Report.
+- Quiz Alan only when explicitly asked: one Socratic or evidence-linked Five Whys question per turn.
+- For a requested walkthrough, explain each change with an example before editing; await readiness.
+- On pushback, restate Alan's position and ask what outcome should change before reversing; surface recorded-decision conflicts.
+- Before reviewer-requested defense in depth, identify an input bypassing the existing check; if it needs `as any`, keep the type-level gate.
 
 ## Delivery
 
-- Ponytail owns deletion/reuse/YAGNI/smallest-complete-change decisions; do not duplicate its rules.
+- Ponytail owns deletion, reuse, YAGNI and smallest-complete-change decisions; do not duplicate it.
 - Preflight the required runtime, command or script, and relevant network, authentication, database, or external-service identity before long work.
-- Truly trivial direct work is the exact action plus a direct check: no plan, task list, work log, review, handoff, delivery workflow, or skipped-test ceremony. Tool use alone does not make work non-trivial.
-- Non-trivial work always reuses the active plan and relevant dated logs for ticket-shaped, resumed, or clearly related work, then performs bounded reconnaissance. Bounded reconnaissance maps ownership, callers, contracts, risks, and checks; stop when implementation is safe.
-- Give concise BLUF updates at non-trivial slice start/completion. Record each completed non-trivial implementation, review, or configuration slice in one append-only daily work-log entry. Create no handoff when no human-only action remains.
-- Track meaningful multi-step work with live task lists; plans are cross-session contracts.
+- Truly trivial direct work is the exact action plus a direct check: no plan, task list, work log, review, handoff, workflow or skipped-test ceremony. Tool use alone does not make work non-trivial.
+- Non-trivial work reuses governing plans/logs for ticket-shaped, resumed or related work. Bounded reconnaissance maps ownership, callers, contracts, risks, and checks; stop when implementation is safe.
+- Use concise BLUF slice updates. Record each completed non-trivial implementation, review, or configuration slice in one append-only daily work-log entry. Handoffs contain remaining human actions only.
+- Use a live task list for meaningful multi-step work; plans hold approved resumable contracts, briefs bounded ownership/evidence, reports requested analysis; work logs record material milestones, decisions, blockers, interruptions, and next state.
+- Slice only real dependencies and keep unrelated work outside scope. Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking; keep dependencies and risky shared writes sequential. Background long work; record outcomes after completion. Run focused checks while iterating; inspect the stable patch and remediation deltas; independently review only material-risk or multi-seam changes; run broad integration once when applicable.
+- Reconcile/kill task-owned jobs before final candidate capture. Bind checks with `verification_evidence`, recapture afterward; failures, source mutation, stale evidence or candidate mismatch invalidate claims.
+- Run reportable checks with exact argv, repository-relative cwd and timeout through `verification_evidence`. Report `Not run: <reason>` honestly; final answers contain only verified results, actual checks, blockers and remaining human actions. Default to background `start`/`collect`; synchronous `run` requires an unavailable background service, explicit request or concrete lifecycle/correctness need, not merely no parallel work.
+- Dogfood purpose-built tools per `extensions/extension-dogfooding.md`. Establish `inspect_change` targets: `{}` for uncommitted work, explicit base/head for committed changes; empty worktree packets cannot exclude committed task changes.
+- Direct/solo control topology, not rigor. Solo removes delegation; both preserve non-trivial delivery. Orchestrator policy is mode-specific.
+
+## Implementation and tests
+
 - For behavior changes, use `live-verification`; use `build-live-verification` when reusable tooling is needed. Run relevant live checks alongside tests in parallel when independent; sequence real prerequisites or shared mutable state. Require both results before claiming verified completion.
-- Slice only real dependencies and keep unrelated work outside scope. Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking; keep dependencies and risky shared writes sequential. Background long work; record outcomes after completion. Run focused checks while iterating; inspect the stable patch and remediation deltas; independently review only material-risk or multi-seam changes; run broad integration once.
-- Reconcile or kill task-owned background jobs before final candidate capture. Bind checks to that candidate with `verification_evidence`; recapture afterward. Failures, stale evidence, source mutation or candidate mismatch invalidate claims.
-- Artifact roles: plans—approved resumable state; task lists—session checklist; briefs—bounded ownership/evidence; reports—requested persistent analysis; handoffs—human actions/blockers; work logs record material milestones, decisions, blockers, interruptions, and next state.
-- Run reportable checks through `verification_evidence` (exact argv, repo-relative cwd, timeout); bind claims to returned evidence. Report unavailable checks as `Not run: <reason>`; final answers contain only verified results, checks, blockers and human actions. Default to background `start`/`collect`; synchronous `run` requires unavailable background service, explicit request, or stated concrete need—not merely no parallel work.
-- Temporarily dogfood `inspect_context`, `inspect_change` and background `verification_evidence` per `extensions/extension-dogfooding.md` (evidence reuse/friction). Prefer applicable purpose-built tools; raw substitutes only when unavailable.
-- Set `inspect_change` target: `{}` for uncommitted work; explicit `base`/`head` for committed/pushed changes. Empty worktree packets cannot exclude committed task changes.
-- Direct/solo control topology, not rigor. Direct permits one-off delegation at a real seam; solo removes delegation machinery. Both preserve non-trivial delivery; orchestrator policy is mode-specific.
 
-## Web Search
+- Before production behavior edits, establish requirement-derived expectations and an intended assertion failure; use red/green/refactor with minimal implementation. Quick implementation permits necessary testing/verification cost, not coordination ceremony: no automatic plans, task lists, logs, panels, extra artifacts or method-skill reads. Mechanical/docs edits use direct checks; refactors use green characterization before/after, not manufactured red.
+- If automated TDD is genuinely impractical, establish the closest executable acceptance check before editing and disclose missing red/green evidence; this is not a size or testing-cost exemption.
+- Tests protect observable contracts/failure paths: a plausible violation fails, an internal refactor passes. Reject tautological fixture/mock-only assertions, expectations computed by the implementation, and setup errors masquerading as red. Never weaken expectations to fit wrong code.
+- Verify claims on the same surface: exercise real CLI/UI/API interactions and inspect persisted effects; use fresh screenshots for visual claims and diagnostic traces/profiles when needed. Reuse local harnesses; start necessary local services/Compose with disposable state, readiness/identity checks and task-owned cleanup; never production, destructive migrations or unrelated services. Missing prerequisites block claims; unit passes or screenshots alone do not prove integration.
+- Follow repository build/test/style conventions and established state/styling patterns. Preserve existing behavior outside the brief, trust-boundary validation, useful errors, accessibility, semantic HTML, strict types and data-loss protections. Reject `any`, unjustified casts, disabled tests, swallowed errors and dead/debug code.
+- Model valid states/transitions; distinguish semantic identifiers. Parse external inputs at their boundary, derive authoritative schema types, then use validated models internally without redundant guards or speculative infrastructure.
+- Use purpose-first names; avoid vague data/utils/manager/handler/process unless exact domain terms, never compensate with comments. Use named heterogeneous fields rather than magic indexes/parallel arrays; preserve ordered external contracts and convert once. Text files end with a newline.
+- Run the narrowest relevant check; reserve broad suites for final integration. Do not rerun unchanged expensive checks for ceremony. Use `it.each([...])` for visible scenarios. Use “malicious,” never “nasty,” for attacker-controlled inputs.
 
-- Use Kagi MCP as the default when web search is needed. Usage is billed: start with a specific, targeted query and a small result set; reuse relevant results, and broaden the query or request more results only when the initial evidence is insufficient.
+## Web search and comments
 
-## Implementation
-
-- Follow repository build, test, formatter, linter, and architectural conventions. Preserve trust-boundary validation, useful errors, accessibility, semantic HTML, established state/styling patterns, strict types, error handling that prevents data loss, and existing behavior outside the brief. Reject `any` and unjustified casts. Never disable tests, swallow errors, or leave debug or dead code.
-- Use purpose-first names: action verbs for operations and precise nouns for values/types/files. Avoid vague `data`, `utils`, `manager`, `handler`, or `process` unless it is the exact domain term. Do not compensate with comments.
-- Use named fields for heterogeneous business data; avoid magic indexes and parallel arrays. Preserve indexes only when order is the external/domain contract, then convert once.
-- Text files end with a newline.
-- When overlap or a real dependency requires sequencing, complete one narrow increment, run its focused check, inspect it, then continue.
-
-## Tests
-
-- Run the narrowest relevant check during implementation; reserve broad suites for final integration. Do not rerun an unchanged expensive suite for ceremony.
-- Make scenarios visible with `it.each([...])` rather than loops readers must simulate.
-- Use “malicious,” never “nasty,” for attacker-controlled security inputs.
-
-## Comments
-
-- Prefer self-documenting code. Comment only non-obvious why, not what.
-- Remove ticket references from comments unless they are follow-up TODO/stub markers.
-- “Trim comments” means materially shorten or delete them; do not paraphrase at the same length.
+- Use Kagi MCP for needed web search: targeted queries, small result sets, reuse before broadening; usage is billed.
+- Comment only non-obvious why. Remove ticket references except follow-up TODO/stubs. “Trim comments” means materially shorten/delete, not same-length paraphrasing.

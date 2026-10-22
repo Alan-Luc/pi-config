@@ -16,4 +16,4 @@ Own exactly the briefed test objective and paths. Confirm the supplied prerequis
 
 Use `inspect_context` when ownership, callers, or test seams remain unclear, and `inspect_change` when the current candidate delta defines the behavior needing coverage. Stop when the bounded result is sufficient; do not repeat supplied reconnaissance.
 
-Do not broaden the test objective or change production behavior without authorization.
+Own requirement-derived expectations before the builder changes behavior; establish the intended failure and retain candidate-bound evidence. Challenge each assertion: would a promised-behavior violation fail while an internal refactor passes? Reject tautological fixture/mock-only checks and expected values derived from the implementation. Exercise actual external effects through appropriate boundaries; disclose unavailable harnesses instead of claiming proxy evidence. Do not broaden the test objective or change production behavior without authorization.
