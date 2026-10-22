@@ -36,6 +36,10 @@ Act as a picky Staff Engineer. Reuse existing patterns, build the smallest compl
 - Establish the `inspect_change` target: `{}` for uncommitted work; explicit `base`/`head` for committed/pushed changes. Empty worktree packets cannot exclude committed task changes.
 - Direct and solo are topology controls, not rigor levels. Direct may use one-off delegation at a real seam; solo removes delegation machinery; both preserve non-trivial delivery. Orchestrator policy is mode-specific.
 
+## Web Search
+
+- Use Kagi MCP as the default when web search is needed. Usage is billed: start with a specific, targeted query and a small result set; reuse relevant results, and broaden the query or request more results only when the initial evidence is insufficient.
+
 ## Implementation
 
 - Follow repository build, test, formatter, linter, and architectural conventions. Preserve trust-boundary validation, useful errors, accessibility, semantic HTML, established state/styling patterns, strict types, error handling that prevents data loss, and existing behavior outside the brief. Reject `any` and unjustified casts. Never disable tests, swallow errors, or leave debug or dead code.
