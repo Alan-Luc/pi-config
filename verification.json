@@ -12,6 +12,7 @@
         "tests/fff-default-excludes.test.mjs",
         "tests/guardrails.test.ts",
         "tests/live-verification-skill.test.ts",
+        "tests/mcp-config.test.ts",
         "tests/mr-babysit.test.ts",
         "tests/permission-policy.test.ts",
         "tests/pi-vim-autocomplete-enter.test.mjs",

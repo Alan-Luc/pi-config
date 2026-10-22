@@ -171,7 +171,7 @@ it.each(deliveryOwners)("delivery invariant: $invariantName", ({ canonicalOwnerP
 	assert.ok(owner.includes(requiredMarker), `${canonicalOwnerPath} is missing ${requiredMarker}`);
 });
 
-test("the roster keeps four role owners with exact persisted model profiles", () => {
+test("the roster keeps four role owners and the explicit MR observer with exact model profiles", () => {
 	assert.deepEqual(Object.keys(agents).sort(), [
 		"code-explorer",
 		"code-reviewer",
@@ -181,6 +181,7 @@ test("the roster keeps four role owners with exact persisted model profiles", ()
 		"implementation-engineer",
 		"implementation-engineer-opus",
 		"implementation-engineer-sol",
+		"mr-babysitter",
 		"test-automation-engineer",
 	]);
 	for (const name of ["implementation-engineer", "test-automation-engineer"]) {
@@ -211,6 +212,7 @@ test("the roster keeps four role owners with exact persisted model profiles", ()
 
 it.each([
 	{ name: "code-explorer", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "code-explorer" },
+	{ name: "mr-babysitter", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "mr-babysitter" },
 	{ name: "implementation-engineer", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "implementation-engineer" },
 	{ name: "test-automation-engineer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "test-automation-engineer" },
 	{ name: "code-reviewer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "code-reviewer" },
