@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
+import { AGENT_OUTPUT } from "../artifact-contracts/schemas.ts";
 
 // Keep review artifacts inside Pi's runtime-specific temporary directory.
 export const REVIEW_ARTIFACT_ROOT = resolve(tmpdir(), "pi");
@@ -107,7 +108,7 @@ async function validateBoundedReview(input: unknown): Promise<void> {
 		launches.push(input);
 	}
 	for (const launch of launches) {
-		if (launch.agent !== "code-reviewer") continue;
+		if (typeof launch.agent !== "string" || AGENT_OUTPUT[launch.agent] !== "review") continue;
 		const task = typeof launch.task === "string" ? launch.task : "";
 		const artifactMatch = task.match(/^Patch artifact:[ \t]*(.*)$/im);
 		const reviewPathsMatch = task.match(/^Review paths:[ \t]*(.*)$/im);

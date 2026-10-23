@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { registerGuardrails, REVIEW_ARTIFACT_ROOT } from "../extensions/guardrails/guardrails.ts";
+import { AGENT_OUTPUT } from "../extensions/artifact-contracts/schemas.ts";
 
 type Handler = (event: Record<string, unknown>, ctx: { cwd: string }) => unknown;
 function createPi() {
@@ -114,6 +115,21 @@ test("requires bounded existing review artifacts for single and child launches",
 	const outside = join(await mkdtemp(join(tmpdir(), "pi-review-outside-")), "review.patch");
 	await writeFile(outside, "diff\n");
 	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { children: [{ agent: "code-reviewer", task: `${metadata}\nPatch artifact: ${outside}\nReview paths: /tmp/project/src/example.ts` }] } }, { cwd: "/tmp/project" })).rejects.toThrow("lexically contained");
+});
+
+test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus"] as const)("enforces bounded metadata for registered reviewer profile %s", async (agent) => {
+	expect(AGENT_OUTPUT[agent]).toBe("review");
+	const path = await artifact();
+	const metadata = `Candidate: candidate_${"a".repeat(64)}\nPatch SHA-256: ${createHash("sha256").update("diff\n").digest("hex")}\nExcluded pre-dirty paths: []`;
+	const task = `${metadata}\nPatch artifact: ${path}\nReview paths: /tmp/project/src/example.ts`;
+	const handlers = createPi();
+	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { agent, task } }, { cwd: "/tmp/project" });
+	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { children: [{ agent, task }] } }, { cwd: "/tmp/project" });
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent, task: "" } }, { cwd: "/tmp/project" })).rejects.toThrow("generated review metadata");
+	const stale = task.replace(/^Patch SHA-256: .*$/m, `Patch SHA-256: ${"b".repeat(64)}`);
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "stale", input: { children: [{ agent, task: stale }] } }, { cwd: "/tmp/project" })).rejects.toThrow("does not match generated");
+	const outside = task.replace(path, "/outside/review.patch");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "outside", input: { agent, task: outside } }, { cwd: "/tmp/project" })).rejects.toThrow("lexically contained");
 });
 
 test("rejects a generated hash that does not match the exact patch bytes", async () => {

@@ -26,6 +26,7 @@ import {
 import { captureCandidateWithExec } from "../extensions/artifact-contracts/verification.ts";
 import { registerGuardrails, REVIEW_ARTIFACT_ROOT } from "../extensions/guardrails/guardrails.ts";
 import { validate } from "../extensions/artifact-contracts/validate.ts";
+import { AGENT_OUTPUT } from "../extensions/artifact-contracts/schemas.ts";
 
 type ProcessResult = { stdout: string; stderr: string; code: number };
 type ExecOptions = { cwd?: string; signal?: AbortSignal; timeout?: number };
@@ -147,6 +148,38 @@ function preparationMetadata(): ReviewPreparationResult {
 		excludedPreDirtyPaths: ["/tmp/project/baseline.txt"],
 	};
 }
+
+test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus"] as const)("prepares registered reviewer profile %s", async (agent) => {
+	assert.equal(AGENT_OUTPUT[agent], "review");
+	const root = await repository();
+	const harness = toolCallHandler(root);
+	await harness.call(mutation());
+	writeFileSync(join(root, "task.txt"), "changed\n");
+	const reviewer = { agent, task: brief("Review range: HEAD") };
+	await harness.call(launch(reviewer));
+	assert.match(reviewer.task, /^Candidate: candidate_[0-9a-f]{64}$/m);
+	assert.match(reviewer.task, /^Patch SHA-256: [0-9a-f]{64}$/m);
+	assert.match(reviewer.task, /^Patch artifact: \/.*\.patch$/m);
+	assert.match(reviewer.task, /^Review paths: \[.*task\.txt.*\]$/m);
+	const artifact = reviewer.task.match(/^Patch artifact: (.*)$/m)?.[1];
+	if (!artifact) throw new Error("missing generated patch artifact");
+	artifactDirectories.push(dirname(artifact));
+});
+
+test("prepares six registered reviewers with identical range metadata and task text", async () => {
+	const root = await repository();
+	const harness = toolCallHandler(root);
+	await harness.call(mutation());
+	writeFileSync(join(root, "task.txt"), "changed\n");
+	const children = ["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer", "code-reviewer-opus"]
+		.map((agent) => ({ agent, task: brief("Review range: HEAD") }));
+	await harness.call(launch({ children }));
+	for (const child of children) assert.match(child.task, /^Patch artifact:/m);
+	assert.equal(new Set(children.map(({ task }) => task)).size, 1);
+	const artifact = children[0]?.task.match(/^Patch artifact: (.*)$/m)?.[1];
+	if (!artifact) throw new Error("missing generated patch artifact");
+	artifactDirectories.push(dirname(artifact));
+});
 
 test("captures later edits to pre-dirty paths, Bash-created changes, binary bytes, and literal pathspecs", async () => {
 	const root = await repository();

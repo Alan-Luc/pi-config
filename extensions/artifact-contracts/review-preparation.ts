@@ -19,6 +19,7 @@ import {
 	type CandidateExec,
 } from "./verification.ts";
 import type { CandidateIdentity } from "./verification-store.ts";
+import { AGENT_OUTPUT } from "./schemas.ts";
 import { validate } from "./validate.ts";
 
 const CANDIDATE_TIMEOUT_SECONDS = 30;
@@ -403,7 +404,7 @@ export function registerReviewPreparation(pi: ExtensionAPI): void {
 		)) {
 			await ensureBoundary(ctx);
 		}
-		const reviewerLaunches = launches.filter((launch) => launch.agent === "code-reviewer");
+		const reviewerLaunches = launches.filter((launch) => typeof launch.agent === "string" && AGENT_OUTPUT[launch.agent] === "review");
 		if (reviewerLaunches.length === 0) return;
 		for (const launch of reviewerLaunches) {
 			if (typeof launch.task !== "string") continue;
