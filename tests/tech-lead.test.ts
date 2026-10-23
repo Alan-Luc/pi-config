@@ -170,6 +170,19 @@ test("one recipe skill owns preparation and six checkable cards without a second
 	}
 });
 
+test("task effort follows actual uncertainty within explicit locked-role capability", () => {
+	includesAll(taskRecipe, [
+		"smallest justified effort once", "short rationale in its existing brief",
+		"A ticket's tier or a role title does not determine", "thinking-overrides",
+		"locked model's supported levels", "never substitute a model",
+		"Review/design profiles retain their explicitly pinned effort", "Use `off` only where supported",
+		"exact trigger/repro/log/error lines", "No diagnosis, contract choice or unresolved failure-path design",
+		"worker reports the concrete missing fact", "parent reclassifies that subtask",
+		"not permission to silently drop a requested level or escalate models",
+	]);
+	assert.deepEqual([...taskRecipe.matchAll(/^\| `(off|low|medium|high)` \|/gm)].map((match) => match[1]), ["off", "low", "medium", "high"]);
+});
+
 test("the router preserves direct, planning, and approval controls", () => {
 	includesAll(techLead, [
 		"Direct/Focused/Full table in `AGENTS.md`",
