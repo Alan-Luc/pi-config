@@ -40,12 +40,15 @@ import {
 	type VerificationEvidence,
 } from "./verification-store.ts";
 
+import { createStagedSnapshot, type StagedSnapshot } from "./staged-verification.ts";
+
 const MAX_TIMEOUT_SECONDS = 600;
 const CANDIDATE_TIMEOUT_SECONDS = 30;
 export const MAX_EXPOSED_OUTPUT_BYTES = 4096;
 const VERIFICATION_LOG_DIRECTORY = join(tmpdir(), "pi", "verification");
 
 export const VERIFICATION_EVIDENCE_PARAMETERS = {
+	dependencies: { runtimeInputs: ["source"] },
 	oneOf: [
 		{
 			type: "object",
@@ -62,6 +65,8 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 			properties: {
 				operation: { const: "run" },
 				repositoryRoot: { type: "string", minLength: 1 },
+				source: { const: "staged" },
+				runtimeInputs: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
 				argv: { type: "array", items: { type: "string" }, minItems: 1 },
 				cwd: { type: "string", minLength: 1 },
 				timeout: { type: "number", exclusiveMinimum: 0, maximum: MAX_TIMEOUT_SECONDS },
@@ -74,6 +79,8 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 			properties: {
 				operation: { const: "start" },
 				repositoryRoot: { type: "string", minLength: 1 },
+				source: { const: "staged" },
+				runtimeInputs: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
 				argv: { type: "array", items: { type: "string" }, minItems: 1 },
 				cwd: { type: "string", minLength: 1 },
 				timeout: { type: "number", exclusiveMinimum: 0, maximum: MAX_TIMEOUT_SECONDS },
@@ -92,10 +99,14 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 		},
 	],
 } as const;
+type VerificationCheckSource =
+	| { source?: never; runtimeInputs?: never }
+	| { source: "staged"; runtimeInputs?: string[] };
+
 export type VerificationEvidenceInput =
 	| { operation: "capture"; repositoryRoot?: string; source?: "staged" }
-	| { operation: "run"; repositoryRoot?: string; argv: string[]; cwd: string; timeout: number }
-	| { operation: "start"; repositoryRoot?: string; argv: string[]; cwd: string; timeout: number }
+	| ({ operation: "run"; repositoryRoot?: string; argv: string[]; cwd: string; timeout: number } & VerificationCheckSource)
+	| ({ operation: "start"; repositoryRoot?: string; argv: string[]; cwd: string; timeout: number } & VerificationCheckSource)
 	| { operation: "collect"; taskId: string };
 
 const candidateOutputSchema = {
@@ -107,6 +118,15 @@ const candidateOutputSchema = {
 		tree: { type: "string" },
 		kind: { type: "string", enum: ["clean", "dirty"] },
 		source: { const: "staged" },
+		runtimeInputs: {
+			type: "array",
+			items: {
+				type: "object",
+				properties: { path: { type: "string" }, sha256: { type: "string" } },
+				required: ["path", "sha256"],
+				additionalProperties: false,
+			},
+		},
 	},
 	required: ["id", "repositoryRoot", "head", "tree", "kind"],
 	additionalProperties: false,
@@ -192,7 +212,7 @@ export const VERIFICATION_EVIDENCE_OUTPUT_SCHEMA = {
 	],
 } as const;
 
-export type VerificationToolContext = Pick<ExtensionToolContext, "cwd" | "executeTool">;
+export type VerificationToolContext = Pick<ExtensionToolContext, "cwd" | "executeTool"> & { exec?: CandidateExec };
 
 export type CandidateCaptureResult = Readonly<{
 	operation: "capture";
@@ -242,6 +262,7 @@ type StartedVerificationTask = {
 	task: BackgroundTaskSnapshot;
 	terminal?: BackgroundTaskSnapshot;
 	result?: VerificationCollectResult;
+	stagedSnapshot?: StagedSnapshot;
 };
 type PendingVerificationStart = { terminalTasks: Map<string, BackgroundTaskSnapshot> };
 type VerificationEventState = {
@@ -716,6 +737,60 @@ export async function captureCandidateWithExec(
 	return captureCandidateWithRunner(directCandidateCommand(exec), sessionDirectory, signal, repositoryRoot, source);
 }
 
+function stagedSnapshotExec(ctx: VerificationToolContext, signal?: AbortSignal): CandidateExec {
+	return async (file, args, options) => {
+		const cwd = options?.cwd ?? ctx.cwd;
+		const timeout = options?.timeout ?? CANDIDATE_TIMEOUT_SECONDS * 1000;
+		const commandSignal = options?.signal ?? signal;
+		if (ctx.exec) return ctx.exec(file, args, { cwd, timeout, signal: commandSignal });
+		const result = await executeBash(ctx, `cd ${shellQuote(cwd)} && ${[file, ...args].map(shellQuote).join(" ")}`, timeout / 1000, commandSignal);
+		return { stdout: result.output, stderr: "", code: result.exitCode, killed: false };
+	};
+}
+
+async function prepareStagedCheck(
+	ctx: VerificationToolContext,
+	params: VerificationCheckSource,
+	before: CandidateIdentity,
+	cwd: string,
+	signal?: AbortSignal,
+): Promise<StagedSnapshot | undefined> {
+	if (params.source === undefined) return undefined;
+	const snapshot = await createStagedSnapshot(stagedSnapshotExec(ctx, signal), before.repositoryRoot, cwd, params.runtimeInputs);
+	try {
+		await snapshot.validate();
+		if (snapshot.head !== before.head || snapshot.tree !== before.tree) throw new Error("staged candidate changed during snapshot preparation");
+		return snapshot;
+	} catch (error) {
+		snapshot.cleanup();
+		throw error;
+	}
+}
+
+function candidateWithRuntimeInputs(candidate: CandidateIdentity, snapshot?: StagedSnapshot): CandidateIdentity {
+	return snapshot?.runtimeInputs.length
+		? createCandidateIdentity({ ...candidate, runtimeInputs: snapshot.runtimeInputs })
+		: candidate;
+}
+
+async function candidateInvalidReason(
+	ctx: VerificationToolContext,
+	candidate: CandidateIdentity,
+	signal?: AbortSignal,
+	snapshot?: StagedSnapshot,
+): Promise<string | undefined> {
+	if (snapshot) {
+		try {
+			await snapshot.validate();
+			return undefined;
+		} catch (error) {
+			return `staged verification invalid: ${String(error)}`;
+		}
+	}
+	const after = await captureCandidate(ctx, signal, candidate.repositoryRoot);
+	return candidate.id === after.id ? undefined : "candidate changed during verification";
+}
+
 export async function executeVerification(
 	toolCallId: string,
 	params: Extract<VerificationEvidenceInput, { operation: "run" }>,
@@ -730,29 +805,35 @@ export async function executeVerification(
 	const workingDirectory = repositoryCwd(repository.root, cwd);
 	const attempt = beginVerificationAttempt(repository.root, command, workingDirectory.relative);
 	const runCandidateCommand = nestedCandidateCommand(ctx);
-	const before = await snapshotCandidate(runCandidateCommand, repository, signal);
-	const commandResult = await executeBash(
-		ctx,
-		`cd ${shellQuote(workingDirectory.absolute)} && ${command}`,
-		params.timeout,
-		signal,
-	);
-	const after = await snapshotCandidate(runCandidateCommand, repository, signal);
-	const valid = before.id === after.id;
-	if (!valid) invalidateVerificationEvidence("candidate changed during verification");
-	const log = writeLog(toolCallId, commandResult.output);
-	const evidence = recordVerificationEvidence({
-		command,
-		argv: params.argv,
-		cwd: workingDirectory.relative,
-		candidate: before,
-		exitCode: commandResult.exitCode,
-		logPath: log.path,
-		logSha256: log.sha256,
-		valid,
-		invalidReason: valid ? undefined : "candidate changed during verification",
-	}, attempt);
-	return { operation: "run", evidence, output: boundedOutput(commandResult.output) };
+	const before = await snapshotCandidate(runCandidateCommand, repository, signal, params.source);
+	const stagedSnapshot = await prepareStagedCheck(ctx, params, before, cwd, signal);
+	try {
+		const candidate = candidateWithRuntimeInputs(before, stagedSnapshot);
+		const commandResult = await executeBash(
+			ctx,
+			`cd ${shellQuote(stagedSnapshot?.cwd ?? workingDirectory.absolute)} && ${command}`,
+			params.timeout,
+			signal,
+		);
+		const invalidReason = await candidateInvalidReason(ctx, candidate, signal, stagedSnapshot);
+		const valid = invalidReason === undefined;
+		if (invalidReason !== undefined) invalidateVerificationEvidence(invalidReason);
+		const log = writeLog(toolCallId, commandResult.output);
+		const evidence = recordVerificationEvidence({
+			command,
+			argv: params.argv,
+			cwd: workingDirectory.relative,
+			candidate,
+			exitCode: commandResult.exitCode,
+			logPath: log.path,
+			logSha256: log.sha256,
+			valid,
+			invalidReason,
+		}, attempt);
+		return { operation: "run", evidence, output: boundedOutput(commandResult.output) };
+	} finally {
+		stagedSnapshot?.cleanup();
+	}
 }
 
 async function executeVerificationStart(
@@ -768,48 +849,53 @@ async function executeVerificationStart(
 	const workingDirectory = repositoryCwd(repository.root, cwd);
 	if (!events) throw new Error("verification_evidence background task service is unavailable");
 	const attempt = beginVerificationAttempt(repository.root, command, workingDirectory.relative);
-	const before = await snapshotCandidate(nestedCandidateCommand(ctx), repository, signal);
+	const before = await snapshotCandidate(nestedCandidateCommand(ctx), repository, signal, params.source);
+	const stagedSnapshot = await prepareStagedCheck(ctx, params, before, cwd, signal);
+	const candidate = candidateWithRuntimeInputs(before, stagedSnapshot);
 	const eventState = verificationEventState(events);
 	const pendingStart: PendingVerificationStart = { terminalTasks: new Map() };
 	eventState.pendingStarts.add(pendingStart);
-	let task: BackgroundTaskSnapshot;
+	let transferred = false;
 	try {
-		task = await requestBackgroundTask(events, "run", {
+		const task = await requestBackgroundTask(events, "run", {
 			name: "Verification",
-			command: `cd ${shellQuote(workingDirectory.absolute)} && ${command}`,
+			command: `cd ${shellQuote(stagedSnapshot?.cwd ?? workingDirectory.absolute)} && ${command}`,
 			isAgent: false,
 			timeoutSeconds: params.timeout,
 			notifyOnCompletion: true,
 			triggerOnCompletion: true,
 		});
+		if (task.isAgent || !task.notifyOnCompletion || !task.triggerOnCompletion) {
+			throw new Error("verification_evidence background task did not satisfy the verification run contract");
+		}
+		if (eventState.startedTasks.has(task.id)) throw new Error(`verification_evidence task ${task.id} was already started`);
+		const started: StartedVerificationTask = {
+			candidate,
+			stagedSnapshot,
+			attempt,
+			command,
+			argv: Object.freeze([...params.argv]),
+			cwd: workingDirectory.relative,
+			repositoryRoot: repository.root,
+			outputDirectory: realpathSync(ctx.cwd),
+			task,
+			...(task.status === "running" ? { terminal: pendingStart.terminalTasks.get(task.id) } : { terminal: task }),
+		};
+		eventState.startedTasks.set(task.id, started);
+		transferred = true;
+		return {
+			operation: "start",
+			taskId: task.id,
+			task,
+			candidate,
+			command,
+			argv: started.argv,
+			cwd: workingDirectory.relative,
+		};
 	} finally {
 		eventState.pendingStarts.delete(pendingStart);
+		if (!transferred) stagedSnapshot?.cleanup();
 	}
-	if (task.isAgent || !task.notifyOnCompletion || !task.triggerOnCompletion) {
-		throw new Error("verification_evidence background task did not satisfy the verification run contract");
-	}
-	if (eventState.startedTasks.has(task.id)) throw new Error(`verification_evidence task ${task.id} was already started`);
-	const started: StartedVerificationTask = {
-		candidate: before,
-		attempt,
-		command,
-		argv: Object.freeze([...params.argv]),
-		cwd: workingDirectory.relative,
-		repositoryRoot: repository.root,
-		outputDirectory: realpathSync(ctx.cwd),
-		task,
-		...(task.status === "running" ? { terminal: pendingStart.terminalTasks.get(task.id) } : { terminal: task }),
-	};
-	eventState.startedTasks.set(task.id, started);
-	return {
-		operation: "start",
-		taskId: task.id,
-		task,
-		candidate: before,
-		command,
-		argv: started.argv,
-		cwd: workingDirectory.relative,
-	};
 }
 
 async function executeVerificationCollect(
@@ -833,41 +919,45 @@ async function executeVerificationCollect(
 	}
 	if (terminal.status === "running") throw new Error(`verification_evidence task ${params.taskId} is still running`);
 
-	const logs = await requestBackgroundTask(events, "logs", {
-		taskId: params.taskId,
-		maxBytes: MAX_EXPOSED_OUTPUT_BYTES,
-		tail: false,
-	});
-	const outputBytes = readBackgroundOutput(started.outputDirectory, terminal, logs);
-	const after = await captureCandidate(ctx, signal, started.repositoryRoot);
-	const candidateUnchanged = started.candidate.id === after.id;
-	if (!candidateUnchanged) invalidateVerificationEvidence("candidate changed during verification");
-	const hasNumericExit = typeof terminal.exitCode === "number" && Number.isInteger(terminal.exitCode);
-	const exitCode = hasNumericExit ? terminal.exitCode : -1;
-	const valid = candidateUnchanged && hasNumericExit;
-	const invalidReason = candidateUnchanged
-		? (hasNumericExit ? undefined : `background verification task ${terminal.status} did not report a numeric exit code`)
-		: "candidate changed during verification";
-	const log = writeVerificationLogBytes(toolCallId, outputBytes);
-	const evidence = recordVerificationEvidence({
-		command: started.command,
-		argv: started.argv,
-		cwd: started.cwd,
-		candidate: started.candidate,
-		exitCode,
-		logPath: log.path,
-		logSha256: log.sha256,
-		valid,
-		invalidReason,
-	}, started.attempt);
-	const result: VerificationCollectResult = {
-		operation: "collect",
-		evidence,
-		output: boundedOutput(outputBytes.toString("utf8")),
-	};
-	started.terminal = terminal;
-	started.result = result;
-	return result;
+	try {
+		const logs = await requestBackgroundTask(events, "logs", {
+			taskId: params.taskId,
+			maxBytes: MAX_EXPOSED_OUTPUT_BYTES,
+			tail: false,
+		});
+		const outputBytes = readBackgroundOutput(started.outputDirectory, terminal, logs);
+		const candidateError = await candidateInvalidReason(ctx, started.candidate, signal, started.stagedSnapshot);
+		const candidateUnchanged = candidateError === undefined;
+		if (candidateError !== undefined) invalidateVerificationEvidence(candidateError);
+		const hasNumericExit = typeof terminal.exitCode === "number" && Number.isInteger(terminal.exitCode);
+		const exitCode = hasNumericExit ? terminal.exitCode : -1;
+		const valid = candidateUnchanged && hasNumericExit;
+		const invalidReason = candidateUnchanged
+			? (hasNumericExit ? undefined : `background verification task ${terminal.status} did not report a numeric exit code`)
+			: candidateError;
+		const log = writeVerificationLogBytes(toolCallId, outputBytes);
+		const evidence = recordVerificationEvidence({
+			command: started.command,
+			argv: started.argv,
+			cwd: started.cwd,
+			candidate: started.candidate,
+			exitCode,
+			logPath: log.path,
+			logSha256: log.sha256,
+			valid,
+			invalidReason,
+		}, started.attempt);
+		const result: VerificationCollectResult = {
+			operation: "collect",
+			evidence,
+			output: boundedOutput(outputBytes.toString("utf8")),
+		};
+		started.terminal = terminal;
+		started.result = result;
+		return result;
+	} finally {
+		started.stagedSnapshot?.cleanup();
+	}
 }
 
 function contentFor(result: VerificationEvidenceResult): string {
@@ -916,6 +1006,7 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 		promptSnippet: "Capture, run, or start/collect bounded verification evidence",
 		promptGuidelines: [
 			"Use capture before coordinating checks and run only one exact argument vector with a repository-relative cwd.",
+			"Use source: staged to check an isolated real-index snapshot; declare required ignored files/directories as runtimeInputs. Receipts pin their manifests; changed HEAD/index/source/inputs invalidate them. Missing snapshot prerequisites never fall back to live working files.",
 			"Default to start, automatic terminal notification without polling, then collect with the exact task id. Use synchronous run only when the background service is unavailable, the user explicitly requests it, or a stated concrete correctness or lifecycle constraint requires same-turn completion; expected lack of parallel work is not sufficient.",
 			"A failed command or changed candidate is evidence of failure; do not mask either result.",
 		],
@@ -928,6 +1019,10 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 			signal: AbortSignal | undefined,
 			_onUpdate: AgentToolUpdateCallback<VerificationEvidenceResult> | undefined,
 			ctx: ExtensionToolContext,
-		) => executeVerificationEvidence(toolCallId, params, signal, ctx, pi.events),
+		) => executeVerificationEvidence(toolCallId, params, signal, {
+			cwd: ctx.cwd,
+			executeTool: ctx.executeTool.bind(ctx),
+			exec: (file, args, options) => pi.exec(file, args, options),
+		}, pi.events),
 	});
 }

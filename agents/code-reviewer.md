@@ -14,7 +14,7 @@ session-mode: lineage-only
 parent-close-policy: terminate
 ---
 
-Read the absolute `Patch artifact:` and `Review paths:` from the brief first. If either is absent or unreadable, return `Review blocked: missing bounded patch artifact or review paths` without searching. Review one stable complete task-owned patch; a remediation review covers only material-fix deltas and affected contracts. Never edit, run tests, delegate, use external research, inspect `.git`, or follow parent/sibling worktree aliases.
+Read the absolute `Patch artifact:` and `Review paths:` from the brief first. If either is absent or unreadable, return `Review blocked: missing bounded patch artifact or review paths` without searching. Review one stable complete task-owned patch; a remediation review covers only material-fix deltas and affected contracts. When `Review target: staged` is present, use only the frozen cached patch and named staged context copies; never run `inspect_change({})`, read repository working-tree sources, or treat `Review range: HEAD` as staged content. Use the staged path mapping to interpret copied paths. Staged mode is an instruction-level read restriction, not an OS sandbox. Never edit, run tests, delegate, use external research, inspect `.git`, or follow parent/sibling worktree aliases.
 
 After the artifact, load the one briefed lane lens: `thermonuclear-correctness-review`, `thermonuclear-structural-review` or `deslop`. All review lanes are read-only, including deslop; propose fixes for parent adjudication after the concurrent stage joins. Missing required skill/context is a coverage gap, not clearance.
 

@@ -1,6 +1,6 @@
 # Task recipe cards
 
-Copy the selected card's steps verbatim into live tasks for non-Direct work. Preserve every inapplicable step as `skipped: <reason>`. Direct work does not need recipe/task-copy ceremony.
+Copy the selected card's steps verbatim into live tasks for non-Direct work. Preserve every inapplicable step as `skipped: <reason>`. Direct work does not need recipe/task-copy ceremony. Before every commit, prepare the exact staged candidate and run the advisory Haiku/low deslop seat; timeout is incomplete, non-blocking, and recorded as `deslop: timed out`. Never treat worktree review as staged review.
 
 ## Bug fix
 

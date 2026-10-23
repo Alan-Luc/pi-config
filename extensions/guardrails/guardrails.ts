@@ -17,7 +17,18 @@ const GIT_PUSH_OPTIONS_WITH_VALUES = new Set(["--exec", "--push-option", "--rece
 const GIT_WORKTREE_OPTIONS = new Set(["--checkout", "--detach", "--force", "--lock", "--no-checkout", "-f"]);
 const GIT_WORKTREE_OPTIONS_WITH_VALUES = new Set(["--reason"]);
 type RecordValue = Record<string, unknown>;
+type StagedReviewMapping = { reviewPath: string; originalPath: string; blob: string; sha256: string };
 type ShellCommand = string[];
+
+function isStagedReviewMapping(value: unknown): value is StagedReviewMapping {
+	return isRecord(value)
+		&& typeof value.reviewPath === "string"
+		&& typeof value.originalPath === "string"
+		&& typeof value.blob === "string"
+		&& /^[0-9a-f]{40,64}$/.test(value.blob)
+		&& typeof value.sha256 === "string"
+		&& /^[0-9a-f]{64}$/.test(value.sha256);
+}
 
 type CheckResult = { block: false } | { block: true; reason: string };
 
@@ -115,6 +126,8 @@ async function validateBoundedReview(input: unknown): Promise<void> {
 		const excludedPreDirtyPathsMatch = task.match(/^Excluded pre-dirty paths:[ \t]*(.*)$/im);
 		const candidateMatch = task.match(/^Candidate:[ \t]*(candidate_[0-9a-f]{64})$/im);
 		const patchHashMatch = task.match(/^Patch SHA-256:[ \t]*([0-9a-f]{64})$/im);
+		const reviewTargetMatches = [...task.matchAll(/^Review target:[ \t]*(.*)$/gim)];
+		const stagedMappingMatch = task.match(/^Staged path mapping:[ \t]*(.*)$/im);
 		const reviewPathsText = reviewPathsMatch?.[1].trim() ?? "";
 		let reviewPaths: string[] = [];
 		if (reviewPathsText.startsWith("[")) {
@@ -134,6 +147,25 @@ async function validateBoundedReview(input: unknown): Promise<void> {
 		} catch {
 			excludedPreDirtyPaths = undefined;
 		}
+		const reviewTarget = reviewTargetMatches[0]?.[1].trim();
+		if (reviewTargetMatches.length > 1 || (reviewTarget !== undefined && reviewTarget !== "staged")) {
+			throw new Error("Blocked code-reviewer task with an unknown or duplicate Review target");
+		}
+		if (reviewTarget === "staged" && /^ {0,3}Review range:/im.test(task)) {
+			throw new Error("Blocked staged review mixed with Review range");
+		}
+		let stagedMapping: StagedReviewMapping[] | undefined;
+		if (reviewTarget === "staged") {
+			try {
+				const parsed: unknown = JSON.parse(stagedMappingMatch?.[1] ?? "");
+				if (Array.isArray(parsed) && parsed.every(isStagedReviewMapping)) stagedMapping = parsed;
+			} catch {
+				stagedMapping = undefined;
+			}
+			if (!stagedMapping || stagedMapping.length === 0 || JSON.stringify(stagedMapping.map(({ reviewPath }) => reviewPath)) !== JSON.stringify(reviewPaths)) {
+				throw new Error("Blocked staged review with missing or mismatched staged path mapping");
+			}
+		}
 		if (
 			!artifactMatch
 			|| reviewPaths.length === 0
@@ -149,6 +181,24 @@ async function validateBoundedReview(input: unknown): Promise<void> {
 		const actualPatchSha256 = createHash("sha256").update(artifactBytes).digest("hex");
 		if (actualPatchSha256 !== patchHashMatch[1]) {
 			throw new Error(`Patch artifact SHA-256 does not match generated Patch SHA-256: expected ${patchHashMatch[1]}, got ${actualPatchSha256}`);
+		}
+		for (const entry of stagedMapping ?? []) {
+			if (!isAbsolute(entry.reviewPath) || !isContained(REVIEW_ARTIFACT_ROOT, resolve(entry.reviewPath))) {
+				throw new Error("Blocked staged review context outside the private review artifact root");
+			}
+			if (hasParentTraversal(entry.reviewPath)) throw new Error("Blocked staged review context with parent traversal");
+			await requireNoSymlinkTraversal(dirname(entry.reviewPath), REVIEW_ARTIFACT_ROOT, "Staged review context");
+			let bytes: Buffer;
+			try {
+				const metadata = await lstat(entry.reviewPath);
+				if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error("not a regular file");
+				bytes = await readFile(entry.reviewPath);
+			} catch (error) {
+				throw new Error(`Could not read staged review context ${entry.reviewPath}: ${errorMessage(error)}`);
+			}
+			if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) {
+				throw new Error(`Staged review context hash does not match generated mapping: ${entry.reviewPath}`);
+			}
 		}
 	}
 }

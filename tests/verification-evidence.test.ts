@@ -255,6 +255,7 @@ function backgroundService(directory: string, options: {
 	logsPath?: string;
 	logsText?: string;
 	emitTerminalOnRun?: boolean;
+	notifyOnCompletion?: boolean;
 } = {}): FakeBackgroundService {
 	const listeners = new Map<string, Set<(value: unknown) => void>>();
 	const counts = { run: 0, status: 0, logs: 0 };
@@ -277,7 +278,7 @@ function backgroundService(directory: string, options: {
 		bytesWritten: output.byteLength,
 		isAgent: false,
 		notified: options.status !== "running",
-		notifyOnCompletion: true,
+		notifyOnCompletion: options.notifyOnCompletion ?? true,
 		triggerOnCompletion: true,
 	};
 	const service = {
@@ -435,6 +436,96 @@ test("staged provenance distinguishes otherwise identical candidate inputs", () 
 	const fields = { repositoryRoot: "/repo", head: "a".repeat(40), tree: "b".repeat(40), kind: "dirty" as const };
 	const staged = { ...fields, source: "staged" as const };
 	assert.notEqual(createCandidateIdentity(staged).id, createCandidateIdentity(fields).id);
+});
+
+test("staged execution must not clear when the working tree repairs staged source", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, "tracked.txt"), "broken\n");
+	await git(directory, "add", "tracked.txt");
+	writeFileSync(join(directory, "tracked.txt"), "repaired\n");
+	const context = makeContext(directory);
+	const argv = ["node", "-e", "process.exit(require('node:fs').readFileSync('tracked.txt', 'utf8') === 'repaired\\n' ? 0 : 1)"];
+	const working = await executeVerification("working-repair", { operation: "run", argv, cwd: ".", timeout: 10 }, context);
+	assert.equal(working.evidence.exitCode, 0);
+
+	const staged = await executeVerification("staged-broken", {
+		operation: "run", argv, cwd: ".", timeout: 10, source: "staged",
+	}, context);
+	assert.equal(staged.evidence.exitCode, 1, "staged source must run broken index content, not the unstaged repair");
+	assert.equal(staged.evidence.valid, true);
+});
+
+test("staged execution pins runtime inputs against identical-byte symlink replacement", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, ".gitignore"), "/runtime.json\n");
+	await git(directory, "add", ".gitignore");
+	await git(directory, "commit", "--quiet", "-m", "ignore runtime input");
+	const input = join(directory, "runtime.json");
+	writeFileSync(input, "same bytes\n");
+	const external = mkdtempSync(join(tmpdir(), "verification-external-runtime-"));
+	runtimeRepositories.push(external);
+	const target = join(external, "runtime.json");
+	writeFileSync(target, "same bytes\n");
+	const request = {
+		operation: "run" as const, source: "staged" as const, runtimeInputs: ["runtime.json"],
+		argv: ["node", "-e", "const fs=require('node:fs');fs.unlinkSync(process.argv[1]);fs.symlinkSync(process.argv[2],process.argv[1])", input, target],
+		cwd: ".", timeout: 10,
+	};
+	const result = await executeVerification("runtime-symlink", request, makeContext(directory));
+	assert.equal(result.evidence.exitCode, 0);
+	assert.equal(result.evidence.valid, false, "unchanged bytes must not hide an external symlink replacing a pinned input");
+	assert.match(result.evidence.invalidReason ?? "", /symbolic link|escapes repository/);
+});
+
+test("staged execution runs green index content without touching the broken working file", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, "tracked.txt"), "repaired\n");
+	await git(directory, "add", "tracked.txt");
+	writeFileSync(join(directory, "tracked.txt"), "broken\n");
+	const index = readFileSync(join(directory, ".git", "index"));
+	const request = {
+		operation: "run" as const, source: "staged" as const,
+		argv: ["node", "-e", "process.exit(require('node:fs').readFileSync('tracked.txt','utf8')==='repaired\\n'?0:1)"],
+		cwd: ".", timeout: 10,
+	};
+	const result = await executeVerification("staged-green", request, makeContext(directory));
+	assert.equal(result.evidence.exitCode, 0);
+	assert.equal(result.evidence.valid, true);
+	assert.equal(result.evidence.candidate.source, "staged");
+	assert.deepEqual(result.evidence.argv, request.argv);
+	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
+	assert.equal(readFileSync(join(directory, "tracked.txt"), "utf8"), "broken\n");
+});
+
+test("staged execution preserves permission-sensitive runtime inputs", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, ".gitignore"), "/runtime.json\n");
+	await git(directory, "add", ".gitignore");
+	await git(directory, "commit", "--quiet", "-m", "ignore runtime input");
+	writeFileSync(join(directory, "runtime.json"), "runtime\n");
+	chmodSync(join(directory, "runtime.json"), 0o777);
+	const previousMask = process.umask(0o022);
+	try {
+		const result = await executeVerification("runtime-mode", {
+			operation: "run", source: "staged", runtimeInputs: ["runtime.json"], cwd: ".", timeout: 10,
+			argv: ["node", "-e", "process.exit(require('node:fs').statSync('runtime.json').mode & 0o020 ? 1 : 0)"],
+		}, makeContext(directory));
+		assert.equal(result.evidence.exitCode, 1, "copy umask must not conceal a group-writable declared runtime input");
+		assert.equal(result.evidence.valid, true);
+	} finally {
+		process.umask(previousMask);
+	}
+});
+
+test("staged runtime pins participate in immutable candidate identity", () => {
+	const fields = { repositoryRoot: "/repo", head: "a".repeat(40), tree: "b".repeat(40), kind: "dirty" as const, source: "staged" as const };
+	const first = { ...fields, runtimeInputs: [{ path: "runtime.json", sha256: "a".repeat(64) }] };
+	const second = { ...fields, runtimeInputs: [{ path: "runtime.json", sha256: "b".repeat(64) }] };
+	const captured = createCandidateIdentity(first);
+	assert.notEqual(captured.id, createCandidateIdentity(second).id);
+	first.runtimeInputs[0].sha256 = "c".repeat(64);
+	assert.ok("runtimeInputs" in captured);
+	assert.deepEqual(captured.runtimeInputs, [{ path: "runtime.json", sha256: "a".repeat(64) }]);
 });
 
 test("candidate capture preserves HEAD, branch, real index, status, stash, and files", async () => {
@@ -667,6 +758,87 @@ test("capture operation returns a structured candidate", async () => {
 	assert.equal(result.isError, undefined);
 	assert.equal(result.details.operation, "capture");
 	assert.equal(result.structuredContent?.operation, "capture");
+});
+
+test("staged background checks execute the index image and clean it after collection", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, "tracked.txt"), "broken\n");
+	await git(directory, "add", "tracked.txt");
+	writeFileSync(join(directory, "tracked.txt"), "repaired\n");
+	const service = backgroundService(directory, { exitCode: 1 });
+	const request = {
+		operation: "start" as const, source: "staged" as const, cwd: ".", timeout: 10,
+		argv: ["node", "-e", "console.log(process.cwd());process.exit(require('node:fs').readFileSync('tracked.txt','utf8')==='repaired\\n'?0:1)"],
+	};
+	const started = await executeVerificationEvidence("stage-start", request, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const executed = await runProcess(["bash", "-c", started.details.task.command], directory);
+	assert.equal(executed.exitCode, 1, "the background command must execute staged broken source, not the live repair");
+	const image = executed.output.trim();
+	assert.notEqual(realpathSync(image), realpathSync(directory));
+	assert.equal(started.details.candidate.source, "staged");
+	const collected = await executeVerificationEvidence("stage-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(collected.details.evidence.exitCode, 1);
+	assert.deepEqual(collected.details.evidence.argv, request.argv);
+	assert.throws(() => statSync(image), /ENOENT/);
+	assert.equal(readFileSync(join(directory, "tracked.txt"), "utf8"), "repaired\n");
+	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
+});
+
+test("staged background collection invalidates index drift and cleans its image", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const request = { operation: "start" as const, source: "staged" as const, cwd: ".", timeout: 10, argv: ["node", "-e", "console.log(process.cwd())"] };
+	const started = await executeVerificationEvidence("drift-start", request, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const executed = await runProcess(["bash", "-c", started.details.task.command], directory);
+	assert.equal(executed.exitCode, 0);
+	const image = executed.output.trim();
+	assert.notEqual(realpathSync(image), realpathSync(directory));
+	writeFileSync(join(directory, "tracked.txt"), "restaged\n");
+	await git(directory, "add", "tracked.txt");
+	const collected = await executeVerificationEvidence("drift-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, false);
+	assert.match(collected.details.evidence.invalidReason ?? "", /index changed/);
+	assert.throws(() => statSync(image), /ENOENT/);
+});
+
+test("rejected staged start responses clean their private image", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { notifyOnCompletion: false });
+	await assert.rejects(executeVerificationEvidence("bad-stage-start", {
+		operation: "start", source: "staged", cwd: ".", timeout: 10,
+		argv: ["node", "-e", "console.log(process.cwd())"],
+	}, undefined, makeContext(directory), service), /did not satisfy the verification run contract/);
+	const executed = await runProcess(["bash", "-c", service.task.command], directory);
+	try {
+		assert.notEqual(executed.exitCode, 0, "rejected start must not leave an executable source image behind");
+	} finally {
+		if (executed.exitCode === 0) {
+			const image = realpathSync(executed.output.trim());
+			assert.ok(image.startsWith(`${realpathSync(tmpdir())}/pi-staged-verification-`));
+			rmSync(dirname(image), { recursive: true, force: true });
+		}
+	}
+});
+
+test("staged collection failure cleans its image without claiming evidence", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const started = await executeVerificationEvidence("missing-stage-log", {
+		operation: "start", source: "staged", cwd: ".", timeout: 10, argv: ["node", "-e", "console.log(process.cwd())"],
+	}, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const executed = await runProcess(["bash", "-c", started.details.task.command], directory);
+	assert.equal(executed.exitCode, 0);
+	const image = executed.output.trim();
+	assert.notEqual(realpathSync(image), realpathSync(directory));
+	unlinkSync(service.task.outputPath);
+	await assert.rejects(executeVerificationEvidence("missing-stage-log-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service), /output path/);
+	assert.throws(() => statSync(image), /ENOENT/);
 });
 
 test("background start and early terminal collect preserve the verification contract", { timeout: 30_000 }, async () => {

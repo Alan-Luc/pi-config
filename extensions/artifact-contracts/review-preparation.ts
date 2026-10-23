@@ -26,7 +26,7 @@ const CANDIDATE_TIMEOUT_SECONDS = 30;
 const REVIEW_DIRECTORY = join(REVIEW_ARTIFACT_ROOT, "review-preparation");
 const ROOT_MUTATION_TOOLS = new Set(["bash", "edit", "write"]);
 const DELEGATED_MUTATION_AGENTS = new Set(["implementation-engineer", "test-automation-engineer"]);
-const GENERATED_METADATA_PREFIXES = ["Candidate:", "Patch SHA-256:", "Patch artifact:", "Review paths:", "Excluded pre-dirty paths:"] as const;
+const GENERATED_METADATA_PREFIXES = ["Candidate:", "Patch SHA-256:", "Patch artifact:", "Review paths:", "Excluded pre-dirty paths:", "Review target:", "Staged path mapping:"] as const;
 const REVISION = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
 export type DiffRecord = Readonly<{
@@ -51,6 +51,8 @@ export type ReviewPreparationResult = Readonly<{
 	patchSha256: string;
 	reviewPaths: readonly string[];
 	excludedPreDirtyPaths: readonly string[];
+	reviewTarget?: "staged";
+	stagedPathMapping?: readonly Readonly<{ reviewPath: string; originalPath: string; blob: string; sha256: string }>[];
 }>;
 
 function isWithin(root: string, candidate: string): boolean {
@@ -117,6 +119,14 @@ function parseReviewRange(value: string): ParsedReviewRange | undefined {
 	const right = value.slice(separator + operator.length);
 	if (!REVISION.test(left) || !REVISION.test(right) || left.includes("..") || right.includes("..")) return undefined;
 	return { left, operator, right };
+}
+
+function requestedReviewTarget(task: string): "staged" | undefined {
+	const matches = [...task.matchAll(/^ {0,3}Review target:[ \t]*(.*)$/gm)];
+	if (matches.length > 1) throw new Error("review preparation accepts exactly one Review target line");
+	const value = matches[0]?.[1].trim();
+	if (value !== undefined && value !== "staged") throw new Error(`review preparation received unknown Review target: ${value || "<empty>"}`);
+	return value;
 }
 
 function requestedReviewRange(task: string): string | undefined {
@@ -254,6 +264,94 @@ function writePatch(path: string, bytes: Buffer): void {
 	}
 }
 
+async function treeBlobs(
+	exec: CandidateExec,
+	root: string,
+	tree: string,
+	signal: AbortSignal | undefined,
+): Promise<Map<string, string>> {
+	const output = await executeGit(exec, root, ["ls-tree", "-r", "-z", "--full-tree", tree], signal);
+	const blobs = new Map<string, string>();
+	for (const record of output.split("\0")) {
+		if (!record) continue;
+		const separator = record.indexOf("\t");
+		const metadata = record.slice(0, separator).split(" ");
+		const path = record.slice(separator + 1);
+		const object = metadata[2];
+		if (separator < 0 || metadata[1] !== "blob" || !object || !/^[0-9a-f]{40,64}$/.test(object)) {
+			throw new Error("review preparation received malformed Git tree entry");
+		}
+		blobs.set(path, object);
+	}
+	return blobs;
+}
+
+function gitBlobObjectId(blob: string, bytes: Buffer): string {
+	const algorithm = blob.length === 64 ? "sha256" : "sha1";
+	return createHash(algorithm).update(`blob ${bytes.byteLength}\0`).update(bytes).digest("hex");
+}
+
+function writeStagedCopy(path: string, bytes: Buffer): void {
+	try {
+		const descriptor = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
+		try {
+			writeAll(descriptor, bytes);
+			fchmodSync(descriptor, 0o600);
+		} finally {
+			closeSync(descriptor);
+		}
+	} catch (error: unknown) {
+		const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+		if (code !== "EEXIST") throw error;
+		const descriptor = openExistingPatch(path);
+		try {
+			if (!fstatSync(descriptor).isFile() || !readFileSync(descriptor).equals(bytes)) {
+				throw new Error(`review preparation staged context already exists with different bytes: ${path}`);
+			}
+		} finally {
+			closeSync(descriptor);
+		}
+	}
+}
+
+async function stagedReviewPaths(
+	exec: CandidateExec,
+	candidate: CandidateIdentity,
+	records: readonly DiffRecord[],
+	signal: AbortSignal | undefined,
+): Promise<{ paths: string[]; mapping: Array<{ reviewPath: string; originalPath: string; blob: string; sha256: string }> }> {
+	if (candidate.head === null || candidate.source !== "staged") throw new Error("staged review requires a committed staged candidate");
+	const root = candidate.repositoryRoot;
+	const stagedBlobs = await treeBlobs(exec, root, candidate.tree, signal);
+	const headBlobs = await treeBlobs(exec, root, `${candidate.head}^{tree}`, signal);
+	const files = new Map<string, { originalPath: string; blob: string }>();
+	for (const record of records) {
+		if (record.newPath !== undefined) {
+			const blob = stagedBlobs.get(record.newPath);
+			if (blob) files.set(record.newPath, { originalPath: record.newPath, blob });
+		}
+		if (record.newPath === undefined && record.oldPath !== undefined) {
+			const blob = headBlobs.get(record.oldPath);
+			if (blob) files.set(record.oldPath, { originalPath: record.oldPath, blob });
+		}
+	}
+	if (files.size === 0) throw new Error("staged review has no staged file contexts to prepare");
+	const directory = join(REVIEW_DIRECTORY, `${candidate.id}-context`);
+	ensureDirectory(directory, "staged review context directory");
+	const mapping: Array<{ reviewPath: string; originalPath: string; blob: string; sha256: string }> = [];
+	for (const { originalPath, blob } of files.values()) {
+		const bytes = Buffer.from(await executeGit(exec, root, ["cat-file", "blob", blob], signal));
+		if (gitBlobObjectId(blob, bytes) !== blob) {
+			throw new Error(`review preparation cannot preserve staged blob bytes through text output: ${originalPath}`);
+		}
+		const sha256 = createHash("sha256").update(bytes).digest("hex");
+		const copy = join(directory, `${sha256}.source`);
+		writeStagedCopy(copy, bytes);
+		mapping.push({ reviewPath: copy, originalPath, blob, sha256 });
+	}
+	return { paths: mapping.map(({ reviewPath }) => reviewPath), mapping };
+}
+
 function replaceScopeMetadata(text: string, metadata: readonly string[]): string {
 	const lines = text.split("\n");
 	const scopeStart = lines.findIndex((line) => line.replace(/^ {0,3}/, "") === "## Scope");
@@ -287,6 +385,8 @@ function subagentLaunches(input: unknown): Array<Record<string, unknown>> {
 
 function generatedMetadata(result: ReviewPreparationResult): string[] {
 	return [
+		...(result.reviewTarget === undefined ? [] : [`Review target: ${result.reviewTarget}`]),
+		...(result.stagedPathMapping === undefined ? [] : [`Staged path mapping: ${JSON.stringify(result.stagedPathMapping)}`]),
 		`Candidate: ${result.candidate.id}`,
 		`Patch SHA-256: ${result.patchSha256}`,
 		`Patch artifact: ${result.patchArtifact}`,
@@ -301,9 +401,21 @@ export async function prepareReview(
 	sessionDirectory: string,
 	signal?: AbortSignal,
 	reviewRange?: string,
+	reviewTarget?: "staged",
 ): Promise<ReviewPreparationResult> {
-	const current = await captureCandidateWithExec(exec, sessionDirectory, signal, boundary.candidate.repositoryRoot);
-	const diff = await reviewDiffArguments(exec, boundary, current, reviewRange, signal);
+	if (reviewTarget !== undefined && reviewRange !== undefined) {
+		throw new Error("review preparation rejects mixed Review target and Review range");
+	}
+	const current = await captureCandidateWithExec(
+		exec,
+		sessionDirectory,
+		signal,
+		boundary.candidate.repositoryRoot,
+		reviewTarget,
+	);
+	const diff = reviewTarget === "staged"
+		? { args: [`${current.head}^{tree}`, current.tree], description: "staged candidate" }
+		: await reviewDiffArguments(exec, boundary, current, reviewRange, signal);
 	const records = parseNameStatus(await executeGit(
 		exec,
 		current.repositoryRoot,
@@ -316,7 +428,12 @@ export async function prepareReview(
 		}
 		throw new Error(`review preparation found no changes for ${diff.description}`);
 	}
-	const paths = absoluteReviewPaths(current.repositoryRoot, records);
+	const originalPaths = absoluteReviewPaths(current.repositoryRoot, records);
+	if (reviewTarget === "staged") ensureReviewDirectories();
+	const staged = reviewTarget === "staged"
+		? await stagedReviewPaths(exec, current, records, signal)
+		: undefined;
+	const paths = staged?.paths ?? originalPaths;
 	const patch = await executeGit(
 		exec,
 		current.repositoryRoot,
@@ -328,7 +445,8 @@ export async function prepareReview(
 			"--find-renames",
 			...diff.args,
 			"--",
-			...paths.map((path) => literalPathspec(relative(current.repositoryRoot, path))),
+			...(staged === undefined ? paths : originalPaths)
+				.map((path) => literalPathspec(relative(current.repositoryRoot, path))),
 		],
 		signal,
 	);
@@ -338,7 +456,18 @@ export async function prepareReview(
 	ensureReviewDirectories();
 	const patchArtifact = join(REVIEW_DIRECTORY, `${current.id}-${patchSha256}.patch`);
 	writePatch(patchArtifact, patchBytes);
-	return { candidate: current, patchArtifact, patchSha256, reviewPaths: paths, excludedPreDirtyPaths: [] };
+	if (staged) {
+		const after = await captureCandidateWithExec(exec, sessionDirectory, signal, current.repositoryRoot, "staged");
+		if (after.id !== current.id) throw new Error("staged review HEAD or index changed during preparation");
+	}
+	return {
+		candidate: current,
+		patchArtifact,
+		patchSha256,
+		reviewPaths: paths,
+		excludedPreDirtyPaths: [],
+		...(staged === undefined ? {} : { reviewTarget: "staged" as const, stagedPathMapping: staged.mapping }),
+	};
 }
 
 export function addReviewMetadata(task: string, result: ReviewPreparationResult): string {
@@ -382,13 +511,14 @@ export function registerReviewPreparation(pi: ExtensionAPI): void {
 	const prepare = async (
 		ctx: { cwd: string; signal?: AbortSignal },
 		reviewRange: string | undefined,
+		reviewTarget?: "staged",
 	): Promise<ReviewPreparationResult> => {
-		const key = reviewRange ?? "<task-owned>";
+		const key = JSON.stringify([reviewTarget, reviewRange]);
 		const existing = preparationPromises.get(key);
 		if (existing) return existing;
 		const preparation = (async () => {
 			const activeBoundary = await ensureBoundary(ctx);
-			return prepareReview(exec, activeBoundary, ctx.cwd, ctx.signal, reviewRange);
+			return prepareReview(exec, activeBoundary, ctx.cwd, ctx.signal, reviewRange, reviewTarget);
 		})().finally(() => {
 			if (preparationPromises.get(key) === preparation) preparationPromises.delete(key);
 		});
@@ -408,7 +538,10 @@ export function registerReviewPreparation(pi: ExtensionAPI): void {
 		if (reviewerLaunches.length === 0) return;
 		for (const launch of reviewerLaunches) {
 			if (typeof launch.task !== "string") continue;
-			const result = await prepare(ctx, requestedReviewRange(launch.task));
+			const target = requestedReviewTarget(launch.task);
+			const range = requestedReviewRange(launch.task);
+			if (target !== undefined && range !== undefined) throw new Error("review preparation rejects mixed Review target and Review range");
+			const result = await prepare(ctx, range, target);
 			const nextTask = addReviewMetadata(launch.task, result);
 			const validation = validate("brief", nextTask);
 			if (!validation.ok) return { block: true, reason: `Generated code-reviewer brief is invalid:\n${validation.errors.join("\n")}` };
