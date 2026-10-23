@@ -1,12 +1,12 @@
 ---
 name: correctness-review
-description: Review a stable task-owned diff for material correctness, security, integration and developer-setup regressions. Use for the formal correctness-review lane or an explicit deep correctness/security review.
+description: Review a stable task-owned diff for material correctness, security, integration and developer-setup regressions. Use for the full correctness-review lane or an explicit deep correctness/security review.
 license: MIT
 ---
 
 # Correctness and security review
 
-Apply this lens in the formal concurrent review/testing stage or an explicit bounded review. The parent owns counterpart pairing, immutable context and adjudication through the [parent review procedure](../../prompts/code_review.md). Use the supplied candidate, patch and allowed connected paths; never silently expand the investigation.
+Apply this lens in the full concurrent review/testing stage or an explicit bounded review. The parent owns counterpart pairing, immutable context and adjudication through the [parent review procedure](../../prompts/code_review.md). Use the supplied candidate, patch and allowed connected paths; never silently expand the investigation.
 
 - Trace changed behavior through its public callers, data shapes, state transitions and external effects. Look for missed concurrency, retry, cancellation, partial-write and cleanup failures at realistic scale.
 - Challenge authorization, tenant isolation, input parsing, secret handling, feature gates and internal-only boundaries. Legitimate boundary `unknown` needs validation, not a cast; do not mistake existing protections for unnecessary defense.

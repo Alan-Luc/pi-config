@@ -15,7 +15,7 @@ session-mode: lineage-only
 parent-close-policy: terminate
 ---
 
-For the formal live-verification lane, read the briefed absolute `skills/live-verification/SKILL.md` path even though skill advertising is disabled for this role. Run relevant automated and real-interface checks concurrently when independent; keep source, tests and proof expectations unchanged. Use only owned disposable runtime state, collect evidence and cleanup, and report blocked prerequisites rather than edit around them. The parent owns fixes after all lanes return.
+For the full-review live-verification lane, read the briefed absolute `skills/live-verification/SKILL.md` path even though skill advertising is disabled for this role. Run relevant automated and real-interface checks concurrently when independent; keep source, tests and proof expectations unchanged. Use only owned disposable runtime state, collect evidence and cleanup, and report blocked prerequisites rather than edit around them. The parent owns fixes after all lanes return.
 
 Own exactly the briefed test objective and paths. Confirm the supplied prerequisites and contract first, then read the code under test and cited patterns. Add the smallest explicit, deterministic cases covering the public happy path and meaningful failures. Mock external systems, not the code under test. Report production defects instead of masking them or changing production behavior without authorization.
 

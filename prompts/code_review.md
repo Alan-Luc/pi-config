@@ -1,5 +1,5 @@
 ---
-description: Review current changes for material issues
+description: Run a full adversarial review of the complete task-owned diff
 argument-hint: "[slice map]"
 ---
 Act as the tech lead and review only the stable complete task-owned change: `${@:-the current changes}`. A clean review is valid; do not dispatch speculative follow-ups.
@@ -13,9 +13,9 @@ An empty worktree packet does not mean there are no task changes. Omitted conten
 
 For an explicit review of changes that predate the current task, add one matching line to the reviewer brief's Scope: `Review range: HEAD` for current worktree changes, `Review range: <base>..<head>` for a direct committed range, or `Review range: <base>...<head>` for a committed branch compared from its merge base. Omit it for normal task-owned reviews.
 
-## Parallel review/testing stage
+## Full review/testing stage
 
-The formal review/testing stage has four concurrent lanes. This stage does not add a panel to trivial direct work or turn ordinary implementation test runs into a formal review.
+A full review/testing stage is the ticket-close gate, with four concurrent lanes over the complete task-owned candidate, not an unbounded repository audit. Skip it only for very small, low-risk changes with a direct check; small security, persistence or contract changes still require it. Bounded checks and ordinary implementation iterations do not repeatedly invoke the full process.
 
 | Required lane | Owner and output |
 |---|---|
@@ -44,4 +44,4 @@ The parent deduplicates and adjudicates concrete triggering inputs and evidence,
 
 The default-reviewer hook generates candidate/patch metadata. Other persisted reviewer profiles need the same immutable metadata supplied explicitly by the parent; do not assume the hook handles their names. Reconcile generated metadata with the selected range and frozen source. Use a fresh selected reviewer-profile task for each new review; never resume one for a new delta. Solo cannot supply concurrent paired coverage and must disclose that gap.
 
-Reconcile or stop task-owned jobs before final capture. The live lane runs the required broad integration recipe once against the frozen candidate, then recaptures it. Collect exact `verification_evidence` argv/cwd/timeout results alongside the relevant real-interface proof; neither can replace the other. If remediation changes inputs, refresh affected checks rather than reuse stale proof. After the final task commit, inspect the exact pre-task-base-to-final-HEAD patch for unintended changes, do not independently rereview an unchanged patch. Report supported P0/P1/P2 findings or a clean verdict, together with each lane's actual evidence and gaps.
+The live lane runs the required broad integration recipe once against the frozen candidate, then recaptures it. Collect exact `verification_evidence` argv/cwd/timeout results alongside the relevant real-interface proof; neither can replace the other. After the final task commit, inspect the exact pre-task-base-to-final-HEAD patch for unintended changes, do not independently rereview an unchanged patch. Report supported P0/P1/P2 findings or a clean verdict, together with each lane's actual evidence and gaps.

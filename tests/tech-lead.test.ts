@@ -283,7 +283,7 @@ test("global instructions retain Alan-specific conventions", () => {
 		"Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking",
 		"keep dependencies and risky shared writes sequential",
 		"record outcomes after completion",
-		"independently review only material-risk or multi-seam changes",
+		"close non-trivial tickets with full adversarial review",
 		"do not independently rereview an unchanged patch",
 		"Label artifact links",
 		"Quiz Alan only when explicitly asked",
@@ -300,7 +300,7 @@ test("global instructions retain Alan-specific conventions", () => {
 test("common test-first standards reach roles without skill loading", () => {
 	includesAll(globalInstructions, [
 		"Before production behavior edits", "requirement-derived", "intended assertion failure",
-		"red/green/refactor", "Quick implementation", "coordination ceremony",
+		"red/green/refactor", "Quick iterations", "coordination ceremony",
 		"genuinely impractical", "not a size or testing-cost exemption",
 		"internal refactor", "tautological", "same surface", "persisted effects",
 	]);
@@ -342,13 +342,13 @@ it.each(["correctness-review", "structural-review", "deslop"])("the %s skill pre
 	}
 });
 
-test("formal review/testing runs four concurrent lanes with paired review coverage", () => {
-	includesAll(techLead, ["consequential architectural", "prompts/code_review.md", "eight live children", "capacity"]);
+test("full review/testing runs four concurrent lanes with paired review coverage", () => {
+	includesAll(techLead, ["consequential architectural", "prompts/code_review.md", "eight live children", "capacity", "Close non-trivial tickets with full adversarial review", "very small, low-risk"]);
 	includesAll(reviewPrompt, [
 		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
 		"eight live children", "complete pairs", "canonical role", "protected", "missing counterpart", "not votes",
 		"correctness-review", "structural-review", "deslop", "fresh selected reviewer-profile",
-		"four concurrent lanes", "live-verification", "six reviewers", "seven children",
+		"full review/testing stage", "ticket-close gate", "very small, low-risk", "security, persistence or contract", "four concurrent lanes", "live-verification", "six reviewers", "seven children",
 		"one batch", "read-only", "after all four lanes", "Source edits invalidate",
 	]);
 	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
