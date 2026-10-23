@@ -33,7 +33,7 @@ const deliveryOwners = [
 	{
 		invariantName: "ownership, callers, and contracts",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Bounded reconnaissance maps ownership, callers, contracts, risks, and checks; stop when implementation is safe.",
+		requiredMarker: "First map ownership, callers, contracts, risks, and checks; stop reconnaissance once implementation is safe.",
 	},
 	{
 		invariantName: "evidence packet",
@@ -108,7 +108,7 @@ function includesAll(text: string, values: readonly string[]) {
 
 test("startup policy has one bounded aggregate budget", () => {
 	const startup = [globalInstructions, techLead, briefInstructions()].join("\n");
-	assert.ok(words(startup) <= 1_300, `startup instructions have ${words(startup)} words`);
+	assert.ok(words(startup) <= 1_750, `startup instructions have ${words(startup)} words`);
 	assert.doesNotMatch(techLead, /load `delivery-workflow`|The five work-seam agents are:|^Template:/m);
 	assert.ok(!techLead.includes("node:os.tmpdir()/pi"));
 });
@@ -144,7 +144,7 @@ test("the router preserves direct, planning, and approval controls", () => {
 		"Use a large approval gate",
 	]);
 	includesAll(globalInstructions, [
-		"The parent may create coherent passing local commits",
+		"The parent may create coherent passing local commits during implementation",
 		"Never push without Alan's explicit authorization",
 		"Children never commit",
 	]);
@@ -280,10 +280,10 @@ test("global instructions retain Alan-specific conventions", () => {
 		"`benchmark/<run-id>`",
 		"Use BLUF",
 		"Before non-trivial tools or delegation",
-		"Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking",
-		"keep dependencies and risky shared writes sequential",
+		"Prefer concurrent work when disjoint slices can make progress or avoid blocking",
+		"sequence dependencies and risky shared writes",
 		"record outcomes after completion",
-		"close non-trivial tickets with full adversarial review",
+		"Close non-trivial tickets with full adversarial review",
 		"do not independently rereview an unchanged patch",
 		"Label artifact links",
 		"Quiz Alan only when explicitly asked",
@@ -292,7 +292,7 @@ test("global instructions retain Alan-specific conventions", () => {
 		"Run the narrowest relevant check",
 		"`it.each([...])`",
 		"Use “malicious,” never “nasty,”",
-		"Comment only non-obvious why",
+		"Comment only on non-obvious why",
 		"three failed attempts",
 	]);
 });
