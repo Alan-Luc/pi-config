@@ -9,6 +9,8 @@ const techLead = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", im
 const durablePlan = readFileSync(new URL("../skills/durable-plan/SKILL.md", import.meta.url), "utf8");
 const globalInstructions = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
 const reviewPrompt = readFileSync(new URL("../prompts/code_review.md", import.meta.url), "utf8");
+const taskRecipe = readFileSync(new URL("../skills/task-recipe/SKILL.md", import.meta.url), "utf8");
+const recipeCards = readFileSync(new URL("../skills/task-recipe/references/recipes.md", import.meta.url), "utf8");
 const takeOverPrompt = readFileSync(new URL("../prompts/take-over.md", import.meta.url), "utf8");
 const settings = JSON.parse(readFileSync(new URL("../settings.json", import.meta.url), "utf8")) as {
 	modelThinkingLevels?: Record<string, string>;
@@ -132,6 +134,36 @@ test("temporary dogfooding reuses evidence and records friction without ceremoni
 		"Alongside the final non-trivial work-log entry", "Expected help versus actual result",
 		"Fallback/workaround and outcome", "No extension friction observed",
 	]);
+});
+
+test("one recipe skill owns preparation and six checkable cards without a second router", () => {
+	includesAll(techLead, ["For non-Direct work, load `task-recipe`", "bug-fix, feature, refactor, investigation, review or harness-change"]);
+	includesAll(taskRecipe, [
+		"sole authority", "steps verbatim into live tasks", "skipped: <reason>",
+		"Direct work is exempt", "whether or not it is committed",
+		"ready set across the remaining approved slices", "independent read-only discovery or test preparation",
+		"Start all unblocked, disjoint work together", "then yield",
+		"Implementation order does not block independent preparation",
+		"Defer only for a named dependency", "shared-state/write conflict",
+		"Do not create a scheduler or require scouts", "shared mutable state", "Instructions are not a lock",
+		"rerun or interruption", "retain the currently loaded role defaults",
+		"live verification belong at the pass, not after each commit", "Commit only passing checked inputs",
+	]);
+	assert.deepEqual([...recipeCards.matchAll(/^## (.+)$/gm)].map((match) => match[1]), [
+		"Bug fix", "Feature", "Refactor", "Investigation", "Review", "Harness change",
+	]);
+	for (const card of recipeCards.split(/^## /m).slice(1)) {
+		assert.match(card, /^\d+\. /m, "each card has copyable steps");
+		assert.match(card, /\*\*Done:\*\*/, "each card ends in a checkable result");
+	}
+	includesAll(recipeCards, ["assertion that fails for the intended reason", "passing tests rather than inventing", "Diagnose before proposing a patch", "prompts/spike.md", "prompts/code_review.md", "plausible broken condition", "representative safe rerun or interruption"]);
+	for (const path of ["skills/task-recipe/SKILL.md", "skills/task-recipe/references/recipes.md"]) {
+		const file = new URL(`../${path}`, import.meta.url);
+		for (const match of readFileSync(file, "utf8").matchAll(/\]\(([^)]+)\)/g)) {
+			const target = new URL(match[1].split("#")[0], file);
+			assert.ok(existsSync(target), `${path} has a missing relative link: ${match[1]}`);
+		}
+	}
 });
 
 test("the router preserves direct, planning, and approval controls", () => {

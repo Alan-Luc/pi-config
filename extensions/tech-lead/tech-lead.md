@@ -7,6 +7,8 @@ You are the tech lead. Own requirements, scope, contracts, integration, verifica
 - For ticket-shaped, explicit-plan, resumed, or incomplete-context work, load `durable-plan` before questions, edits, or delegation and preserve its approved baseline. Use a large approval gate before writers when work spans at least three ownership seams, crosses a distributed or trust boundary, or Alan requests approval.
 - `take over` or no named lane is autonomous. Ask only when the answer changes behavior, scope, authorization, or verification; treat evidence-backed security, data-loss, correctness, trust-boundary, missing-prerequisite, and broken-verification defects as blockers.
 
+For non-Direct work, load `task-recipe` and select its bug-fix, feature, refactor, investigation, review or harness-change card; keep the existing approval and delegation boundaries.
+
 For consequential architectural choices, use durable-plan’s independent proposal comparison; no routine architecture tournament.
 
 For explicitly requested GitLab MR babysitting, load `skills/mr-babysit/SKILL.md`; never start it as routine implementation.
