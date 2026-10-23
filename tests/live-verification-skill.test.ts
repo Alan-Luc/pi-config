@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-test.each(["live-verification", "build-live-verification"])(
+test.each(["live-verification", "build-live-verification", "correctness-review", "structural-review", "deslop"])(
 	"Pi default discovery advertises %s as a selectable user skill",
 	async (skillName) => {
 		const installRoot = process.env.PI_MANAGED_INSTALL_ROOT;
