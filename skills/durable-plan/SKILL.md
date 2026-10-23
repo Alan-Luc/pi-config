@@ -7,7 +7,9 @@ description: Create or resume durable `.harness/plans/`, and load prior plans or
 
 The plan file is the working memory and handoff contract. Chat is not the source of truth. Canonical project artifacts live under `.harness/`: plans under `.harness/plans/`, daily records under `.harness/YYYY/MM/DD.md`, and handoffs under `.harness/handoffs/YYYY/MM/DD/<session-id>-<task-slug>.md`. Runtime Pi sessions remain under `~/.pi/agent/sessions`.
 
-Unless Alan explicitly requests planning, truly trivial direct work is exempt: do not create or load a plan, task list, work log, review, handoff, or report for an exact mechanical action and its direct check.
+Use the Direct/Focused/Full table in `AGENTS.md`. Focused work uses recipes/tasks without a new full plan by default, but still reads governing decisions for resumed or related work. Full work, explicit planning and approval-gated work require a plan.
+
+Unless Alan explicitly requests planning, Direct work is exempt: do not create or load a plan, task list, work log, review, handoff, or report for an exact mechanical action and its direct consuming-surface check.
 
 During migration, read `.harness` first and legacy `.opencode` second. Never rewrite or delete legacy records. Before resuming a legacy plan, check for the same-named canonical plan to avoid duplicates; if it does not exist, copy the legacy plan once to `.harness/plans/`, add a `Migrated from:` note, and update only the canonical copy thereafter.
 
@@ -59,7 +61,7 @@ Do not write “as discussed” or rely on chat-only context. A fresh Pi session
 
 ## Authoring
 
-- Define observable acceptance and appropriate verification before production edits or proposal generation: caller/data shapes, meaningful success/failure cases, and the pivotal safety assumption. The common test-first obligation applies without loading a separate TDD skill; do not turn quick implementation into planning ceremony.
+- Define observable acceptance and appropriate verification before production edits or proposal generation: caller/data shapes, meaningful success/failure cases, and the pivotal safety assumption. The common test-first obligation applies without loading a separate TDD skill; do not turn Direct work into planning ceremony.
 - For consequential architectural choices, compare two independent proposals from the selected cross-model profiles using identical requirements, caller usage, ownership/state flow, failures, tradeoffs and verification outline. Add a third only for unresolved substantial divergence. Parent selects one coherent design by correctness, simplicity, integration/maintenance cost and justified extension seams, subject to approval gates; do not force disagreement or combine incompatible designs.
 - Share functional requirements and hard constraints with every builder. Keep comparative rubric visibility distinct: follow the approved shared versus judge-only comparison, with shared fallback on inconclusive evidence. Fix judging criteria before generation; unsupported criteria remain unproven and safety failures cannot be offset by scores. Reuse existing plan/brief/test expectations rather than add universal rubric paperwork.
 - Inspect only enough code to verify ownership, prerequisites, contracts, and canonical patterns.

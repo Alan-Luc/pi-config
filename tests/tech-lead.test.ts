@@ -95,7 +95,7 @@ const deliveryOwners = [
 	{
 		invariantName: "finish records",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Record each completed non-trivial implementation, review, or configuration slice in one append-only daily work-log entry.",
+		requiredMarker: "Record each completed implementation, review, or configuration slice in one append-only daily work-log entry.",
 	},
 	{
 		invariantName: "pre-dispatch ready set",
@@ -168,7 +168,7 @@ test("one recipe skill owns preparation and six checkable cards without a second
 
 test("the router preserves direct, planning, and approval controls", () => {
 	includesAll(techLead, [
-		"Direct is default",
+		"Direct/Focused/Full table in `AGENTS.md`",
 		"`plan with me`",
 		"`brief plan`",
 		"`take over`",
@@ -188,7 +188,9 @@ test("the router preserves lifecycle ownership without leaking delegation manual
 		"Delegate only across a real ownership or expertise seam",
 		"use its tool-owned delegation guidance and validated brief contract",
 	]);
-	includesAll(globalInstructions, ["Truly trivial direct work", "non-trivial"]);
+	includesAll(globalInstructions, ["| Direct |", "| Focused |", "| Full |", "no behavior change or material trust", "then the correctness pair and live verification", "explicit approval outrank size or defaults", "Direct is a tier", "never weaker rigor", "Explicit planning always writes a plan"]);
+	for (const consumer of [techLead, reviewPrompt, durablePlan]) assert.doesNotMatch(consumer, /^\| (Direct|Full) \|/m, "work-tier definitions stay in AGENTS, separate from reviewer depth profiles");
+	for (const owner of [globalInstructions, techLead, reviewPrompt, durablePlan]) assert.doesNotMatch(owner, /truly trivial|quick iterations|very small, low-risk/i);
 	assert.doesNotMatch(techLead, /Apply Ponytail|Truly trivial direct work|A plan never authorizes push|The parent may create coherent passing local commits/);
 	assert.doesNotMatch(techLead, /Template:|The five work-seam agents are:|PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN|ready set|worker result/);
 	assert.doesNotMatch(takeOverPrompt, /roster|Template:|PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN/);
@@ -316,7 +318,7 @@ test("global instructions retain Alan-specific conventions", () => {
 		"Prefer concurrent work when disjoint slices can make progress or avoid blocking",
 		"sequence dependencies and risky shared writes",
 		"record outcomes after completion",
-		"Close non-trivial tickets with full adversarial review",
+		"Focused and Full work close with the required adversarial pass",
 		"do not independently rereview an unchanged patch",
 		"Label artifact links",
 		"Quiz Alan only when explicitly asked",
@@ -333,7 +335,7 @@ test("global instructions retain Alan-specific conventions", () => {
 test("common test-first standards reach roles without skill loading", () => {
 	includesAll(globalInstructions, [
 		"Before production behavior edits", "requirement-derived", "intended assertion failure",
-		"red/green/refactor", "Quick iterations", "coordination ceremony",
+		"red/green/refactor", "Mechanical/docs edits use direct checks", "characterize existing behavior with passing tests",
 		"genuinely impractical", "not a size or testing-cost exemption",
 		"internal refactor", "tautological", "same surface", "persisted effects",
 	]);
@@ -346,7 +348,7 @@ test("common test-first standards reach roles without skill loading", () => {
 	includesAll(agents["test-automation-engineer"], ["requirement-derived", "internal refactor", "tautological"]);
 	includesAll(agents["code-explorer"], ["observable contracts", "test seams", "runtime prerequisites"]);
 	includesAll(agents["code-reviewer"], ["test value", "intended red", "real-surface"]);
-	includesAll(durablePlan, ["observable acceptance", "caller", "independent proposals", "shared", "judge-only"]);
+	includesAll(durablePlan, ["observable acceptance", "caller", "independent proposals", "shared", "judge-only", "Direct work is exempt", "direct consuming-surface check"]);
 });
 
 test("solo runtime discloses unavailable cross-model evidence", async () => {
@@ -376,12 +378,12 @@ it.each(["correctness-review", "structural-review", "deslop"])("the %s skill pre
 });
 
 test("full review/testing runs four concurrent lanes with paired review coverage", () => {
-	includesAll(techLead, ["consequential architectural", "prompts/code_review.md", "eight live children", "capacity", "Close non-trivial tickets with full adversarial review", "very small, low-risk"]);
+	includesAll(techLead, ["consequential architectural", "prompts/code_review.md", "eight live children", "capacity", "Classify work once using the Direct/Focused/Full table", "Focused and Full work close with the required adversarial pass"]);
 	includesAll(reviewPrompt, [
 		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
 		"eight live children", "complete pairs", "canonical role", "protected", "missing counterpart", "not votes",
 		"correctness-review", "structural-review", "deslop", "fresh selected reviewer-profile",
-		"full review/testing stage", "ticket-close gate", "very small, low-risk", "security, persistence or contract", "four concurrent lanes", "live-verification", "six reviewers", "seven children",
+		"Focused and Full work use this ticket-close review/testing stage", "ticket-close", "Focused and Full work", "Direct work uses its consuming-surface check", "Risk can require Full treatment regardless of size", "All four lanes are required at this stage", "live-verification", "six reviewers", "seven children",
 		"one batch", "read-only", "after all four lanes", "Source edits invalidate",
 	]);
 	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");

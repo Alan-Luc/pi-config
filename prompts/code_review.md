@@ -15,7 +15,7 @@ For an explicit review of changes that predate the current task, add one matchin
 
 ## Full review/testing stage
 
-A full review/testing stage is the ticket-close gate, with four concurrent lanes over the complete task-owned candidate, not an unbounded repository audit. Skip it only for very small, low-risk changes with a direct check; small security, persistence or contract changes still require it. Bounded checks and ordinary implementation iterations do not repeatedly invoke the full process.
+Focused and Full work use this ticket-close review/testing stage over the complete task-owned candidate, not an unbounded repository audit. Direct work uses its consuming-surface check instead. Risk can require Full treatment regardless of size. Bounded checks and implementation iterations do not repeatedly invoke the full process.
 
 | Required lane | Owner and output |
 |---|---|
