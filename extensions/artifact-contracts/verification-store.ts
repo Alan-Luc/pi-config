@@ -7,6 +7,7 @@ export type CandidateIdentity = Readonly<{
 	head: string | null;
 	tree: string;
 	kind: "clean" | "dirty";
+	source?: "staged";
 }>;
 
 export type VerificationEvidence = Readonly<{
@@ -43,9 +44,11 @@ function commandKey(repositoryRoot: string, command: string, cwd: string): strin
 }
 
 export function createCandidateIdentity(input: CandidateInput): CandidateIdentity {
+	const identityFields = [input.repositoryRoot, input.head, input.tree, input.kind];
+	if (input.source !== undefined) identityFields.push(input.source);
 	return Object.freeze({
 		...input,
-		id: `candidate_${hash(JSON.stringify([input.repositoryRoot, input.head, input.tree, input.kind]))}`,
+		id: `candidate_${hash(JSON.stringify(identityFields))}`,
 	});
 }
 

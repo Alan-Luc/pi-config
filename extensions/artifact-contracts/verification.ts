@@ -52,6 +52,7 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 			properties: {
 				operation: { const: "capture" },
 				repositoryRoot: { type: "string", minLength: 1 },
+				source: { const: "staged" },
 			},
 			required: ["operation"],
 			additionalProperties: false,
@@ -92,7 +93,7 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 	],
 } as const;
 export type VerificationEvidenceInput =
-	| { operation: "capture"; repositoryRoot?: string }
+	| { operation: "capture"; repositoryRoot?: string; source?: "staged" }
 	| { operation: "run"; repositoryRoot?: string; argv: string[]; cwd: string; timeout: number }
 	| { operation: "start"; repositoryRoot?: string; argv: string[]; cwd: string; timeout: number }
 	| { operation: "collect"; taskId: string };
@@ -105,6 +106,7 @@ const candidateOutputSchema = {
 		head: { type: ["string", "null"] },
 		tree: { type: "string" },
 		kind: { type: "string", enum: ["clean", "dirty"] },
+		source: { const: "staged" },
 	},
 	required: ["id", "repositoryRoot", "head", "tree", "kind"],
 	additionalProperties: false,
@@ -534,6 +536,7 @@ async function snapshotCandidate(
 	run: CandidateCommand,
 	repository: Repository,
 	signal: AbortSignal | undefined,
+	source?: "staged",
 ): Promise<CandidateIdentity> {
 	let headResult: BashResult;
 	try {
@@ -552,15 +555,17 @@ async function snapshotCandidate(
 	const temporaryIndex = join(temporaryDirectory, "index");
 	try {
 		if (existsSync(repository.indexPath)) copyFileSync(repository.indexPath, temporaryIndex);
-		const addResult = await run(
-			repository.root,
-			["env", `GIT_INDEX_FILE=${temporaryIndex}`, "git", "add", "-A"],
-			CANDIDATE_TIMEOUT_SECONDS,
-			signal,
-		);
-		if (addResult.exitCode !== 0) {
-			const output = boundedOutput(addResult.output).trim();
-			throw new Error(`temporary Git index staging failed with exit ${addResult.exitCode}${output ? `: ${output}` : ""}`);
+		if (source === undefined) {
+			const addResult = await run(
+				repository.root,
+				["env", `GIT_INDEX_FILE=${temporaryIndex}`, "git", "add", "-A"],
+				CANDIDATE_TIMEOUT_SECONDS,
+				signal,
+			);
+			if (addResult.exitCode !== 0) {
+				const output = boundedOutput(addResult.output).trim();
+				throw new Error(`temporary Git index staging failed with exit ${addResult.exitCode}${output ? `: ${output}` : ""}`);
+			}
 		}
 		const treeResult = await run(
 			repository.root,
@@ -582,7 +587,8 @@ async function snapshotCandidate(
 			head,
 			tree,
 			kind: tree === headTree ? "clean" : "dirty",
-			});
+			...(source === undefined ? {} : { source }),
+		});
 	} finally {
 		rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
@@ -685,17 +691,19 @@ async function captureCandidateWithRunner(
 	sessionDirectory: string,
 	signal: AbortSignal | undefined,
 	repositoryRoot?: string,
+	source?: "staged",
 ): Promise<CandidateIdentity> {
 	const repository = await discoverRepository(run, sessionDirectory, signal, repositoryRoot);
-	return snapshotCandidate(run, repository, signal);
+	return snapshotCandidate(run, repository, signal, source);
 }
 
 export async function captureCandidate(
 	ctx: VerificationToolContext,
 	signal?: AbortSignal,
 	repositoryRoot?: string,
+	source?: "staged",
 ): Promise<CandidateIdentity> {
-	return captureCandidateWithRunner(nestedCandidateCommand(ctx), ctx.cwd, signal, repositoryRoot);
+	return captureCandidateWithRunner(nestedCandidateCommand(ctx), ctx.cwd, signal, repositoryRoot, source);
 }
 
 export async function captureCandidateWithExec(
@@ -703,8 +711,9 @@ export async function captureCandidateWithExec(
 	sessionDirectory: string,
 	signal?: AbortSignal,
 	repositoryRoot?: string,
+	source?: "staged",
 ): Promise<CandidateIdentity> {
-	return captureCandidateWithRunner(directCandidateCommand(exec), sessionDirectory, signal, repositoryRoot);
+	return captureCandidateWithRunner(directCandidateCommand(exec), sessionDirectory, signal, repositoryRoot, source);
 }
 
 export async function executeVerification(
@@ -873,7 +882,7 @@ export async function executeVerificationEvidence(
 	events?: EventBus,
 ): Promise<AgentToolResult<VerificationEvidenceResult>> {
 	if (params.operation === "capture") {
-		const result: CandidateCaptureResult = { operation: "capture", candidate: await captureCandidate(ctx, signal, params.repositoryRoot) };
+		const result: CandidateCaptureResult = { operation: "capture", candidate: await captureCandidate(ctx, signal, params.repositoryRoot, params.source) };
 		return { content: [{ type: "text", text: contentFor(result) }], details: result, structuredContent: result };
 	}
 	if (params.operation === "start") {

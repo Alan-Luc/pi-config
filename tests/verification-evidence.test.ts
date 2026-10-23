@@ -408,6 +408,35 @@ test("captures clean, staged, unstaged, untracked, deleted, and renamed candidat
 	}
 });
 
+test("staged capture uses the real index and preserves unstaged and untracked inputs", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, "tracked.txt"), "staged source\n");
+	await git(directory, "add", "tracked.txt");
+	const indexTree = await git(directory, "write-tree");
+	writeFileSync(join(directory, "tracked.txt"), "unstaged repair\n");
+	writeFileSync(join(directory, "untracked.txt"), "not staged\n");
+	const before = await repositorySnapshot(directory);
+	const index = readFileSync(join(directory, ".git", "index"));
+	const request = { operation: "capture" as const, source: "staged" as const };
+	const response = await executeVerificationEvidence("staged-capture", request, undefined, makeContext(directory));
+	const result = response.details;
+	if (result.operation !== "capture") throw new Error("expected a candidate capture");
+	assert.equal(result.candidate.tree, indexTree, "unstaged repair must not become the staged source");
+	assert.ok("source" in result.candidate);
+	assert.equal(result.candidate.source, "staged");
+	assert.equal(await git(directory, "show", `${result.candidate.tree}:tracked.txt`), "staged source");
+	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
+	assert.equal(readFileSync(join(directory, "tracked.txt"), "utf8"), "unstaged repair\n");
+	assert.equal(readFileSync(join(directory, "untracked.txt"), "utf8"), "not staged\n");
+	assert.deepEqual(await repositorySnapshot(directory), before);
+});
+
+test("staged provenance distinguishes otherwise identical candidate inputs", () => {
+	const fields = { repositoryRoot: "/repo", head: "a".repeat(40), tree: "b".repeat(40), kind: "dirty" as const };
+	const staged = { ...fields, source: "staged" as const };
+	assert.notEqual(createCandidateIdentity(staged).id, createCandidateIdentity(fields).id);
+});
+
 test("candidate capture preserves HEAD, branch, real index, status, stash, and files", async () => {
 	const directory = await newRepository();
 	const index = readFileSync(join(directory, ".git", "index"));
