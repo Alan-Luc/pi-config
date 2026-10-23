@@ -4,6 +4,7 @@ import { it, test } from "bun:test";
 import registerTechLead from "../extensions/tech-lead/index.ts";
 import { briefInstructions } from "../extensions/artifact-contracts/briefs.ts";
 import { getEffectiveAgentDefinitions } from "../git/github.com/Alan-Luc/pi-subagents/src/agents/definitions.ts";
+import { resolveSubagentTimeoutState } from "../git/github.com/Alan-Luc/pi-subagents/src/launch/policy.ts";
 
 const techLead = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
 const durablePlan = readFileSync(new URL("../skills/durable-plan/SKILL.md", import.meta.url), "utf8");
@@ -226,6 +227,7 @@ test("the roster includes the canonical live verifier and explicit MR observer w
 	assert.deepEqual(Object.keys(agents).sort(), [
 		"code-explorer",
 		"code-reviewer",
+		"code-reviewer-haiku",
 		"code-reviewer-opus",
 		"code-reviewer-sol",
 		"code-reviewer-sonnet",
@@ -269,6 +271,7 @@ it.each([
 	{ name: "test-automation-engineer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "test-automation-engineer" },
 	{ name: "live-verifier", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "live-verifier" },
 	{ name: "code-reviewer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "code-reviewer" },
+	{ name: "code-reviewer-haiku", model: "anthropic/claude-haiku-5-5", thinking: "low", canonical: "code-reviewer" },
 	{ name: "code-reviewer-sonnet", model: "anthropic/claude-sonnet-5-5", thinking: "high", canonical: "code-reviewer" },
 	{ name: "code-reviewer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "code-reviewer" },
 	{ name: "code-reviewer-opus", model: "anthropic/claude-opus-5-5", thinking: "medium", canonical: "code-reviewer" },
@@ -288,6 +291,12 @@ it.each([
 		assert.deepEqual(profile.thinkingOverrides, name === "test-automation-engineer" ? ["off", "low", "medium", "high"] : undefined);
 		assert.equal(profile.tools, owner.tools);
 		assert.equal(profile.skills, owner.skills);
+		if (name === "code-reviewer-haiku") {
+			assert.equal(profile.timeout, 30);
+			assert.equal(profile.timeoutWarnThreshold, "false");
+			assert.equal(profile.onTimeout, "block-resume");
+			assert.deepEqual(resolveSubagentTimeoutState(profile), { timeoutBudget: { timeoutSeconds: 30 }, timeoutBlocksResume: true });
+		}
 		if (name === "live-verifier") {
 			assert.equal(profile.tools, "read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill");
 			assert.equal(profile.skills, "none");

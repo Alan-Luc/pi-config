@@ -117,7 +117,7 @@ test("requires bounded existing review artifacts for single and child launches",
 	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { children: [{ agent: "code-reviewer", task: `${metadata}\nPatch artifact: ${outside}\nReview paths: /tmp/project/src/example.ts` }] } }, { cwd: "/tmp/project" })).rejects.toThrow("lexically contained");
 });
 
-test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus"] as const)("enforces bounded metadata for registered reviewer profile %s", async (agent) => {
+test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-haiku"] as const)("enforces bounded metadata for registered reviewer profile %s", async (agent) => {
 	expect(AGENT_OUTPUT[agent]).toBe("review");
 	const path = await artifact();
 	const metadata = `Candidate: candidate_${"a".repeat(64)}\nPatch SHA-256: ${createHash("sha256").update("diff\n").digest("hex")}\nExcluded pre-dirty paths: []`;

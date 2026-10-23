@@ -149,7 +149,7 @@ function preparationMetadata(): ReviewPreparationResult {
 	};
 }
 
-test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus"] as const)("prepares registered reviewer profile %s", async (agent) => {
+test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-haiku"] as const)("prepares registered reviewer profile %s", async (agent) => {
 	assert.equal(AGENT_OUTPUT[agent], "review");
 	const root = await repository();
 	const harness = toolCallHandler(root);

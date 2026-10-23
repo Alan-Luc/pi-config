@@ -120,7 +120,7 @@ test("selects schemas and does nothing outside children or for null schemas", ()
 	assert.deepEqual(hooks({}), {});
 });
 
-it.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus"])("selects the same review contract for counterpart %s", (agent) => {
+it.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-haiku"])("selects the same review contract for counterpart %s", (agent) => {
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: agent }), "review");
 });
 

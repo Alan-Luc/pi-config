@@ -61,7 +61,7 @@ const definitions = new Map(getEffectiveAgentDefinitions().map((definition) => [
 
 it.each([
 	"implementation-engineer", "implementation-engineer-sol", "implementation-engineer-opus",
-	"test-automation-engineer", "live-verifier", "code-reviewer", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-sonnet",
+	"test-automation-engineer", "live-verifier", "code-reviewer", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-sonnet", "code-reviewer-haiku",
 ])("%s disables MCP with the native flag", (role) => {
 	expect(definitions.get(role)?.flags).toBe("--no-mcp");
 	const denyEnv = definitions.get(role)?.denyEnv;

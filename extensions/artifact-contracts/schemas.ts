@@ -192,6 +192,7 @@ export const PROTECTED: readonly { readonly path: RegExp; readonly reason: strin
 export const AGENT_OUTPUT: Readonly<Record<string, SchemaId | null>> = {
 	"code-explorer": "explorer",
 	"code-reviewer": "review",
+	"code-reviewer-haiku": "review",
 	"code-reviewer-sonnet": "review",
 	"code-reviewer-sol": "review",
 	"code-reviewer-opus": "review",
