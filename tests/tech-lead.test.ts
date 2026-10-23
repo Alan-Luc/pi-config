@@ -264,6 +264,7 @@ it.each([
 		assert.equal(profile.model, model);
 		assert.equal(profile.thinking, thinking);
 		assert.equal(profile.allowModelOverride, false);
+		assert.deepEqual(profile.thinkingOverrides, name === "test-automation-engineer" ? ["off", "low", "medium", "high"] : undefined);
 		assert.equal(profile.tools, owner.tools);
 		assert.equal(profile.skills, owner.skills);
 		assert.notEqual(profile.noContextFiles, true);
