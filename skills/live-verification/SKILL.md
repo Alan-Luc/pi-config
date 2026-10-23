@@ -32,6 +32,11 @@ A generic smoke pass does not verify an unrelated change. For mechanical or non-
    - **API/events/services:** send real requests/events and inspect responses, state transitions, tool calls or terminal outcomes. Silence/no-answer can be correct without user messages.
    - **CLI/configuration:** invoke the real consuming command; inspect exit status, output, resulting files or effective loaded configuration.
 5. Inspect what actually happened. Correlate request/session IDs with relevant logs or traces; use debugger/network/profiling evidence only when the question needs it. Synthetic inputs and mocked external boundaries must be identified, never presented as real delivery or full integration.
+6. Execute the documented startup, readiness, action, effect and cleanup procedure. Confirm needed evidence artifacts remain readable after teardown; unexecuted instructions remain unverified.
+
+After an unexpected action failure, preserve the failure and evidence, then recheck instance/build/auth/readiness. Distinguish a healthy process from wedged application state; reset only owned disposable state if needed. Do not retry until green. If reusable verification tooling is missing, report the blocker and route authorized creation to [build-live-verification](../build-live-verification/SKILL.md); the observer does not author tooling.
+
+For dry-run, read-only, cancellation and no-publication promises, inspect the relevant side effects directly: compare relevant files, requests, processes or Git refs before and after. A mode label or zero exit status alone does not prove the negative promise.
 
 ## Bind and present evidence
 

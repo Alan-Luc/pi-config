@@ -20,7 +20,7 @@ Focused and Full work use this ticket-close review/testing stage over the comple
 | Required lane | Owner and output |
 |---|---|
 | `thermonuclear-correctness-review` | One counterpart pair: correctness, security, integration and useful test/evidence findings. |
-| `live-verification` | `test-automation-engineer`: relevant automated checks plus adversarial real-interface actions and observed effects. |
+| `live-verification` | `live-verifier`: adversarial real-interface actions and observed effects. Automated checks remain in the focused-check recipe and are run alongside live checks when independent. |
 | `thermonuclear-structural-review` (selected by risk) | One counterpart pair for new ownership/public API/schema/state shapes, multi-seam design, significant complexity, Full tier or uncertainty. |
 | `deslop` (selected by risk) | One counterpart pair for Full tier, cumulative/cross-slice pattern drift or incomplete early coverage. |
 
@@ -33,7 +33,7 @@ Before dispatch, derive and record the risk/coverage map, exact candidate and pr
 
 Use exact persisted model/effort, not inferred overrides or substitutions. Start a fresh selected reviewer-profile task for each review; never resume one for a new delta. At most eight live children total, including other work; reserve room for complete pairs and the live worker. The complete topology is 3 children (correctness + live), 5 (plus either optional pair) or 7 (both optional pairs). Launch every selected ready lane together; every selected pair must be complete and every selected result must join. Explicit `/eviscerate-diff` is an independent reviewer swarm, never parent-only self-review. Solo mode, missing profiles/results or unavailable live prerequisites leave coverage incomplete; report the gap rather than relabeling direct review as a swarm.
 
-Within each review pair provide identical briefs: intent, lens, candidate/base/head, patch/hash, exact allowed source/dependency paths, caller/test contracts, supplied evidence and done criteria. Include the absolute canonical `agents/code-reviewer.md` path and the selected lane skill's absolute path in Read first; model-only variants share that body. The live worker receives its canonical role, `skills/live-verification/SKILL.md`, exact checks, expected actions/effects and permitted runtime/state envelope. It may reuse `build-live-verification` only where reusable tooling creation is separately authorized.
+Within each review pair provide identical briefs: intent, lens, candidate/base/head, patch/hash, exact allowed source/dependency paths, caller/test contracts, supplied evidence and done criteria. Include the absolute canonical `agents/code-reviewer.md` path and the selected lane skill's absolute path in Read first; model-only variants share that body. The live worker receives its canonical `agents/live-verifier.md` role, `skills/live-verification/SKILL.md`, exact checks, expected actions/effects and permitted runtime/state envelope. If reusable verification tooling is missing, report that blocker and route authorized tooling creation to `build-live-verification`; the observer does not author tooling.
 
 The shared reviewer registry must drive metadata preparation and artifact/hash/path checks for every reviewer profile. All counterparts receive the same generated immutable metadata; reconcile it with the selected range and frozen source.
 

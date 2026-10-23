@@ -115,6 +115,7 @@ test("selects schemas and does nothing outside children or for null schemas", ()
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-explorer" }), "explorer");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-reviewer" }), "review");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "implementation-engineer" }), "worker");
+	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "live-verifier" }), "worker");
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "other" }), "worker");
 	assert.deepEqual(hooks({}), {});
 });

@@ -4,6 +4,19 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+test("live verification owns bounded failure rechecks, negative-promise proof, and teardown evidence", async () => {
+	const skill = await readFile(resolve(import.meta.dir, "../skills/live-verification/SKILL.md"), "utf8");
+	for (const marker of [
+		"After an unexpected action failure", "recheck instance/build/auth/readiness",
+		"healthy process", "wedged application", "reset only owned disposable state",
+		"preserve the failure", "Do not retry until green",
+		"dry-run", "read-only", "cancellation", "no-publication",
+		"compare relevant files, requests, processes or Git refs before and after",
+		"Execute the documented startup, readiness, action, effect and cleanup procedure.",
+		"artifacts remain readable after teardown",
+	]) assert.ok(skill.includes(marker), marker);
+});
+
 test.each(["live-verification", "build-live-verification", "thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "task-recipe"])(
 	"Pi default discovery advertises %s as a selectable user skill",
 	async (skillName) => {

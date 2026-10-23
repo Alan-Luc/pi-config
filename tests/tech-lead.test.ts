@@ -222,7 +222,7 @@ it.each(deliveryOwners)("delivery invariant: $invariantName", ({ canonicalOwnerP
 	assert.ok(owner.includes(requiredMarker), `${canonicalOwnerPath} is missing ${requiredMarker}`);
 });
 
-test("the roster keeps four role owners and the explicit MR observer with exact model profiles", () => {
+test("the roster includes the canonical live verifier and explicit MR observer with exact model profiles", () => {
 	assert.deepEqual(Object.keys(agents).sort(), [
 		"code-explorer",
 		"code-reviewer",
@@ -232,6 +232,7 @@ test("the roster keeps four role owners and the explicit MR observer with exact 
 		"implementation-engineer",
 		"implementation-engineer-opus",
 		"implementation-engineer-sol",
+		"live-verifier",
 		"mr-babysitter",
 		"test-automation-engineer",
 	]);
@@ -266,6 +267,7 @@ it.each([
 	{ name: "mr-babysitter", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "mr-babysitter" },
 	{ name: "implementation-engineer", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "implementation-engineer" },
 	{ name: "test-automation-engineer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "test-automation-engineer" },
+	{ name: "live-verifier", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "live-verifier" },
 	{ name: "code-reviewer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "code-reviewer" },
 	{ name: "code-reviewer-sonnet", model: "anthropic/claude-sonnet-5-5", thinking: "high", canonical: "code-reviewer" },
 	{ name: "code-reviewer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "code-reviewer" },
@@ -286,6 +288,10 @@ it.each([
 		assert.deepEqual(profile.thinkingOverrides, name === "test-automation-engineer" ? ["off", "low", "medium", "high"] : undefined);
 		assert.equal(profile.tools, owner.tools);
 		assert.equal(profile.skills, owner.skills);
+		if (name === "live-verifier") {
+			assert.equal(profile.tools, "read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill");
+			assert.equal(profile.skills, "none");
+		}
 		assert.notEqual(profile.noContextFiles, true);
 		assert.equal(profile.parentClosePolicy, "terminate");
 		assert.equal(profile.spawning, false);
@@ -296,6 +302,23 @@ it.each([
 	}
 });
 
+test("live verifier is a distinct fixed-low read-only role and test writing stays with its owner", () => {
+	const verifier = agents["live-verifier"];
+	assert.match(verifier, /^model: openai-codex\/gpt-6-luna$/m);
+	assert.match(verifier, /^thinking: low$/m);
+	assert.match(verifier, /^allow-model-override: false$/m);
+	assert.match(verifier, /^tools: read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill$/m);
+	assert.match(verifier, /^flags: --no-mcp$/m);
+	assert.match(verifier, /^deny-env: GITLAB_PERSONAL_ACCESS_TOKEN$/m);
+	assert.match(verifier, /^skills: none$/m);
+	assert.match(verifier, /skills\/live-verification\/SKILL\.md/);
+	assert.doesNotMatch(verifier, /(?:^|,)\s*(?:edit|write|subagent|TaskCreate|TaskUpdate)(?:,|$)/m);
+	assert.doesNotMatch(verifier, /^thinking-overrides:/m);
+	assert.match(agents["test-automation-engineer"], /^thinking: high$/m);
+	assert.match(agents["test-automation-engineer"], /Add the smallest explicit, deterministic cases/);
+	assert.doesNotMatch(agents["test-automation-engineer"], /For the full-review live-verification lane/);
+});
+
 test("implementation and review roles preserve material behavior", () => {
 	includesAll(globalInstructions, ["trust-boundary validation", "accessibility", "strict types"]);
 	includesAll(agents["implementation-engineer"], ["focused happy and meaningful failure-path tests", "verification_evidence"]);
@@ -304,6 +327,8 @@ test("implementation and review roles preserve material behavior", () => {
 	assert.ok(reviewPrompt.includes("`Review range: HEAD` for current worktree changes"));
 	assert.ok(reviewPrompt.includes("`Review range: <base>...<head>` for a committed branch"));
 	assert.ok(reviewPrompt.includes("review remediation deltas plus affected contracts, and repeat autonomously"));
+	assert.ok(reviewPrompt.includes("agents/live-verifier.md"));
+	assert.ok(reviewPrompt.includes("route authorized tooling creation to `build-live-verification`"));
 	assert.ok(reviewPrompt.includes("Stop only when the final candidate has complete selected review, integration and live clearance"));
 	assert.ok(reviewPrompt.includes("do not independently rereview an unchanged patch"));
 });
@@ -399,7 +424,7 @@ test("full review/testing selects complete lanes and hardens autonomously to clo
 	includesAll(techLead, ["consequential architectural", "prompts/eviscerate-diff.md", "eight live children", "capacity", "Classify work once using the Direct/Focused/Full table", "Focused and Full work close with the required adversarial pass"]);
 	includesAll(reviewPrompt, [
 		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
-		"eight live children", "complete pairs", "canonical role", "protected", "missing counterpart", "not votes",
+		"eight live children", "complete pairs", "canonical `agents/live-verifier.md` role", "protected", "missing counterpart", "not votes",
 		"thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "fresh selected reviewer-profile",
 		"Focused and Full work use this ticket-close review/testing stage", "ticket-close", "Focused and Full work", "Direct work uses its consuming-surface check", "Risk can require Full treatment regardless of size", "Record a concrete reason for each skipped optional lane", "live-verification", "3 children", "5 (plus either optional pair)", "7 (both optional pairs)",
 		"Launch every selected ready lane together", "read-only", "Join all selected results", "Source edits invalidate", "exact-trigger failing regression", "repeat autonomously", "fixed or explicitly dismissed", "requires input", "The shared reviewer registry must drive metadata preparation and artifact/hash/path checks for every reviewer profile", "same generated immutable metadata", "Explicit `/eviscerate-diff` is an independent reviewer swarm", "Solo mode", "complete selected review, integration and live clearance", "selected and skipped lanes with reasons",
