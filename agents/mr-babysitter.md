@@ -6,7 +6,7 @@ async: true
 auto-exit: true
 model: openai-codex/gpt-6-luna
 allow-model-override: false
-thinking: low
+thinking: medium
 flags: --no-mcp
 tools: read,grep,find,inspect_context,inspect_change
 skills: mr-babysit
