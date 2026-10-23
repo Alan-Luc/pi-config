@@ -13,4 +13,4 @@ For explicitly requested GitLab MR babysitting, load `skills/mr-babysit/SKILL.md
 
 ## Slice and delegate
 
-Delegate only across a real ownership or expertise seam. When delegation is active, use its tool-owned delegation guidance and validated brief contract; direct work remains local and solo mode removes delegation machinery. At most eight live children total: capacity, not a target. For warranted independent review, read `prompts/code_review.md` for risk-selected counterpart profiles, identical briefs and coverage.
+Delegate only across a real ownership or expertise seam. When delegation is active, use its tool-owned delegation guidance and validated brief contract; direct work remains local and solo mode removes delegation machinery. At most eight live children total: capacity, not a target. For formal review/testing, read `prompts/code_review.md` for four concurrent lanes, identical counterpart briefs and coverage.

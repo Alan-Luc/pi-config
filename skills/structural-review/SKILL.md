@@ -1,12 +1,12 @@
 ---
 name: structural-review
-description: Challenge structural regressions and unnecessary complexity in a stable task-owned diff. Use for a justified structural-quality review seat or an explicit demanding maintainability review, not every quick edit.
+description: Challenge structural regressions and unnecessary complexity in a stable task-owned diff. Use for the formal structural-review lane or an explicit demanding maintainability review, not every quick edit.
 license: MIT
 ---
 
 # Structural-quality review
 
-Apply this lens within the existing risk-selected counterpart review; do not launch another panel. Review the supplied candidate, exact patch and named connected contracts. Ponytail remains the canonical minimalism policy.
+Apply this lens within the formal concurrent counterpart review or an explicit bounded review. Review the supplied candidate, exact patch and named connected contracts. Ponytail remains the canonical minimalism policy.
 
 Look beyond local polish for a concrete smaller coherent design:
 - Can whole branches, modes, wrappers or coordination layers disappear instead of moving around? Prefer fewer concepts, not merely more files.

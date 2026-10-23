@@ -68,7 +68,7 @@ const deliveryOwners = [
 	{
 		invariantName: "broad integration and candidate recapture",
 		canonicalOwnerPath: "prompts/code_review.md",
-		requiredMarker: "Run the required broad integration recipe once against the accepted candidate, then recapture the candidate.",
+		requiredMarker: "The live lane runs the required broad integration recipe once against the frozen candidate, then recaptures it.",
 	},
 	{
 		invariantName: "background jobs",
@@ -342,15 +342,17 @@ it.each(["correctness-review", "structural-review", "deslop"])("the %s skill pre
 	}
 });
 
-test("review routing selects risk before capacity and keeps pair coverage honest", () => {
+test("formal review/testing runs four concurrent lanes with paired review coverage", () => {
 	includesAll(techLead, ["consequential architectural", "prompts/code_review.md", "eight live children", "capacity"]);
 	includesAll(reviewPrompt, [
 		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
 		"eight live children", "complete pairs", "canonical role", "protected", "missing counterpart", "not votes",
 		"correctness-review", "structural-review", "deslop", "fresh selected reviewer-profile",
+		"four concurrent lanes", "live-verification", "six reviewers", "seven children",
+		"one batch", "read-only", "after all four lanes", "Source edits invalidate",
 	]);
 	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
-	includesAll(cleanup, ["Ponytail", "trust-boundary", "data-loss", "unchanged behavior", "not a mandatory extra"]);
+	includesAll(cleanup, ["Ponytail", "trust-boundary", "data-loss", "unchanged behavior", "read-only", "parent"]);
 });
 
 test("main sessions append the router while children do not", () => {
