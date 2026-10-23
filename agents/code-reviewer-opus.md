@@ -6,7 +6,7 @@ async: true
 auto-exit: true
 model: anthropic/claude-opus-5-5
 allow-model-override: false
-thinking: high
+thinking: medium
 tools: read,grep,find,inspect_context,inspect_change
 flags: --no-mcp
 deny-env: GITLAB_PERSONAL_ACCESS_TOKEN
