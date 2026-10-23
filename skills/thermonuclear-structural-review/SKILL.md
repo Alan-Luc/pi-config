@@ -1,5 +1,5 @@
 ---
-name: structural-review
+name: thermonuclear-structural-review
 description: Challenge structural regressions and unnecessary complexity in a stable task-owned diff. Use for the full structural-review lane or an explicit demanding maintainability review, not every quick edit.
 license: MIT
 ---
@@ -14,7 +14,7 @@ Look beyond local polish for a concrete smaller coherent design:
 - Does logic live with its owner, using existing local helpers and caller contracts rather than leaking feature details into shared infrastructure?
 - Are abstractions, casts, optionality and extension seams justified by actual callers? Preserve legitimate boundary unknown and useful validation; do not propose casts or speculative infrastructure.
 - Can independent work run together without shared-write hazards? Can related updates become atomic without inventing a framework?
-- Has the patch made a cohesive flow materially harder to understand or maintain? File growth is evidence to inspect, never an arbitrary line-count blocker or automatic extraction mandate.
+- Has the patch made a cohesive flow materially harder to understand or maintain? Can a reader locate each value's source and writers through indirection and hidden state? File growth is evidence to inspect, never an arbitrary line-count blocker or automatic extraction mandate.
 
 For a structural finding, show the changed source, concrete maintenance/correctness cost, a smaller behavior-preserving alternative and why its benefit earns the change. Clear material structural regressions can block under the canonical role's P1 bar. Cosmetic preferences, hypothetical elegance and unrelated rewrites cannot. Preserve trust-boundary validation, error handling, accessibility, cancellation and cleanup.
 

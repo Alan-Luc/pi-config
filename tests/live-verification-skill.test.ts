@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-test.each(["live-verification", "build-live-verification", "correctness-review", "structural-review", "deslop", "task-recipe"])(
+test.each(["live-verification", "build-live-verification", "thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "task-recipe"])(
 	"Pi default discovery advertises %s as a selectable user skill",
 	async (skillName) => {
 		const installRoot = process.env.PI_MANAGED_INSTALL_ROOT;
@@ -22,11 +22,21 @@ test.each(["live-verification", "build-live-verification", "correctness-review",
 				settingsManager: SettingsManager.inMemory({}, { projectTrusted: false }),
 				noExtensions: true,
 				noContextFiles: true,
-				noPromptTemplates: true,
+				noPromptTemplates: skillName !== "task-recipe",
 				noThemes: true,
 			});
 			await loader.reload();
 			const result = loader.getSkills();
+			if (skillName === "task-recipe") {
+				assert.equal(result.skills.some((skill) => skill.name === "correctness-review" || skill.name === "structural-review"), false, "old lens aliases are absent");
+				const { prompts, diagnostics } = loader.getPrompts();
+				const renamed = prompts.filter((prompt) => prompt.name === "eviscerate-diff");
+				assert.equal(renamed.length, 1, "discover exactly one composite command");
+				const promptPath = join(agentDir, "prompts", "eviscerate-diff.md");
+				assert.equal(renamed[0].filePath, promptPath);
+				assert.equal(prompts.some((prompt) => prompt.name === "code_review"), false, "old composite alias is absent");
+				assert.deepEqual(diagnostics.filter((diagnostic) => diagnostic.path === promptPath), []);
+			}
 			const matches = result.skills.filter((skill) => skill.name === skillName);
 			assert.equal(matches.length, 1, `discover exactly one ${skillName} skill without explicit skill paths`);
 			const skill = matches[0];

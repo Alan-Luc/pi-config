@@ -8,7 +8,7 @@ license: MIT
 
 Use the exact complete task-owned candidate diff, including committed slices and new files; never assume main or include unrelated pre-existing changes. This is a focused application of Ponytail, not a new orchestration layer or quick-task step. Do not guess AI authorship.
 
-During the full concurrent review/testing stage, stay read-only: propose concrete simplifications without editing source, tests or proof inputs. The parent adjudicates and applies fixes after all four lanes return, then refreshes affected evidence. Outside that stage, explicitly authorized cleanup may edit the bounded diff under the normal checks.
+During the full concurrent review/testing stage, stay read-only: propose concrete simplifications without editing source, tests or proof inputs. The parent adjudicates and applies fixes after all selected lanes return, then refreshes affected evidence for each remediation round until clear or input is needed. Outside that stage, explicitly authorized cleanup may edit the bounded diff under the normal checks.
 
 Inspect excess comments, unjustified casts, needless nesting/wrappers and inconsistent local patterns. Remove a guard/catch only after establishing its redundancy, unreachability or trusted precondition. An unusual check is not proof of redundancy.
 

@@ -33,7 +33,7 @@ Copy the selected card's steps verbatim into live tasks for non-Direct work. Pre
 ## Review
 
 1. Freeze the exact candidate and identify task-owned scope, callers, contracts, and available evidence.
-2. Follow [the full adversarial review procedure](../../../prompts/code_review.md), including its required lanes, candidate freshness, and remediation rules; do not substitute a partial review or claim unsupported renamed entrypoints.
+2. Follow [the full adversarial review procedure](../../../prompts/eviscerate-diff.md), including risk-selected complete lanes, candidate freshness, and autonomous remediation through clean/input-needed closure; do not substitute a partial review.
 3. **Done:** every required lane and check has a result, findings are fixed or dismissed with evidence and reason, and required proof covers the final candidate. Report any blocker or coverage gap.
 
 ## Harness change

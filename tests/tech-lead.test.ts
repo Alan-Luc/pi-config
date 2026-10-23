@@ -8,7 +8,7 @@ import { getEffectiveAgentDefinitions } from "../git/github.com/Alan-Luc/pi-suba
 const techLead = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
 const durablePlan = readFileSync(new URL("../skills/durable-plan/SKILL.md", import.meta.url), "utf8");
 const globalInstructions = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
-const reviewPrompt = readFileSync(new URL("../prompts/code_review.md", import.meta.url), "utf8");
+const reviewPrompt = readFileSync(new URL("../prompts/eviscerate-diff.md", import.meta.url), "utf8");
 const taskRecipe = readFileSync(new URL("../skills/task-recipe/SKILL.md", import.meta.url), "utf8");
 const recipeCards = readFileSync(new URL("../skills/task-recipe/references/recipes.md", import.meta.url), "utf8");
 const takeOverPrompt = readFileSync(new URL("../prompts/take-over.md", import.meta.url), "utf8");
@@ -64,17 +64,17 @@ const deliveryOwners = [
 	},
 	{
 		invariantName: "material remediation",
-		canonicalOwnerPath: "prompts/code_review.md",
-		requiredMarker: "If material fixes occur, rerun affected focused checks and start one remediation review",
+		canonicalOwnerPath: "prompts/eviscerate-diff.md",
+		requiredMarker: "Rerun affected checks and refresh affected lane pairs and live proof on the new candidate."
 	},
 	{
 		invariantName: "broad integration and candidate recapture",
-		canonicalOwnerPath: "prompts/code_review.md",
+		canonicalOwnerPath: "prompts/eviscerate-diff.md",
 		requiredMarker: "The live lane runs the required broad integration recipe once against the frozen candidate, then recaptures it.",
 	},
 	{
 		invariantName: "background jobs",
-		canonicalOwnerPath: "prompts/code_review.md",
+		canonicalOwnerPath: "prompts/eviscerate-diff.md",
 		requiredMarker: "Before freezing the candidate, reconcile or kill every task-owned background job.",
 	},
 	{
@@ -137,7 +137,7 @@ test("temporary dogfooding reuses evidence and records friction without ceremoni
 });
 
 test("one recipe skill owns preparation and six checkable cards without a second router", () => {
-	includesAll(techLead, ["For non-Direct work, load `task-recipe`", "bug-fix, feature, refactor, investigation, review or harness-change"]);
+	includesAll(techLead, ["For non-Direct work, load `task-recipe`", "bug-fix, feature, refactor, investigation, review or harness-change", "Side questions do not pause approved work", "unless Alan stops or a real gate blocks"]);
 	includesAll(taskRecipe, [
 		"sole authority", "steps verbatim into live tasks", "skipped: <reason>",
 		"Direct work is exempt", "whether or not it is committed",
@@ -147,6 +147,10 @@ test("one recipe skill owns preparation and six checkable cards without a second
 		"Defer only for a named dependency", "shared-state/write conflict",
 		"Do not create a scheduler or require scouts", "shared mutable state", "Instructions are not a lock",
 		"rerun or interruption", "retain the currently loaded role defaults",
+		"After answering a steering or status question", "reconcile live tasks and pending child/check results",
+		"next unblocked approved action in the same turn", "Do not wait for another continue instruction",
+		"Yield only for an active async result", "explicit stop", "not task completion",
+		"Questions do not cancel independent work", "planning/read-only and approval boundaries still apply",
 		"live verification belong at the pass, not after each commit", "Commit only passing checked inputs",
 	]);
 	assert.deepEqual([...recipeCards.matchAll(/^## (.+)$/gm)].map((match) => match[1]), [
@@ -156,7 +160,7 @@ test("one recipe skill owns preparation and six checkable cards without a second
 		assert.match(card, /^\d+\. /m, "each card has copyable steps");
 		assert.match(card, /\*\*Done:\*\*/, "each card ends in a checkable result");
 	}
-	includesAll(recipeCards, ["assertion that fails for the intended reason", "passing tests rather than inventing", "Diagnose before proposing a patch", "prompts/spike.md", "prompts/code_review.md", "plausible broken condition", "representative safe rerun or interruption"]);
+	includesAll(recipeCards, ["assertion that fails for the intended reason", "passing tests rather than inventing", "Diagnose before proposing a patch", "prompts/spike.md", "prompts/eviscerate-diff.md", "plausible broken condition", "representative safe rerun or interruption"]);
 	for (const path of ["skills/task-recipe/SKILL.md", "skills/task-recipe/references/recipes.md"]) {
 		const file = new URL(`../${path}`, import.meta.url);
 		for (const match of readFileSync(file, "utf8").matchAll(/\]\(([^)]+)\)/g)) {
@@ -286,7 +290,8 @@ test("implementation and review roles preserve material behavior", () => {
 	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-6-luna$/m);
 	assert.ok(reviewPrompt.includes("`Review range: HEAD` for current worktree changes"));
 	assert.ok(reviewPrompt.includes("`Review range: <base>...<head>` for a committed branch"));
-	assert.ok(reviewPrompt.includes("one remediation review covering only the remediation delta and affected contracts"));
+	assert.ok(reviewPrompt.includes("review remediation deltas plus affected contracts, and repeat autonomously"));
+	assert.ok(reviewPrompt.includes("Stop only when the final candidate has complete selected review, integration and live clearance"));
 	assert.ok(reviewPrompt.includes("do not independently rereview an unchanged patch"));
 });
 
@@ -362,7 +367,7 @@ test("solo runtime discloses unavailable cross-model evidence", async () => {
 	assert.equal(session.prompt(), techLead);
 });
 
-it.each(["correctness-review", "structural-review", "deslop"])("the %s skill preserves selective routing and source provenance", (name) => {
+it.each(["thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop"])("the %s skill preserves selective routing and source provenance", (name) => {
 	const directory = new URL(`../skills/${name}/`, import.meta.url);
 	const skill = readFileSync(new URL("SKILL.md", directory), "utf8");
 	assert.ok(skill.includes(`name: ${name}`));
@@ -377,14 +382,14 @@ it.each(["correctness-review", "structural-review", "deslop"])("the %s skill pre
 	}
 });
 
-test("full review/testing runs four concurrent lanes with paired review coverage", () => {
-	includesAll(techLead, ["consequential architectural", "prompts/code_review.md", "eight live children", "capacity", "Classify work once using the Direct/Focused/Full table", "Focused and Full work close with the required adversarial pass"]);
+test("full review/testing selects complete lanes and hardens autonomously to closure", () => {
+	includesAll(techLead, ["consequential architectural", "prompts/eviscerate-diff.md", "eight live children", "capacity", "Classify work once using the Direct/Focused/Full table", "Focused and Full work close with the required adversarial pass"]);
 	includesAll(reviewPrompt, [
 		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
 		"eight live children", "complete pairs", "canonical role", "protected", "missing counterpart", "not votes",
-		"correctness-review", "structural-review", "deslop", "fresh selected reviewer-profile",
-		"Focused and Full work use this ticket-close review/testing stage", "ticket-close", "Focused and Full work", "Direct work uses its consuming-surface check", "Risk can require Full treatment regardless of size", "All four lanes are required at this stage", "live-verification", "six reviewers", "seven children",
-		"one batch", "read-only", "after all four lanes", "Source edits invalidate",
+		"thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "fresh selected reviewer-profile",
+		"Focused and Full work use this ticket-close review/testing stage", "ticket-close", "Focused and Full work", "Direct work uses its consuming-surface check", "Risk can require Full treatment regardless of size", "Record a concrete reason for each skipped optional lane", "live-verification", "3 children", "5 (plus either optional pair)", "7 (both optional pairs)",
+		"Launch every selected ready lane together", "read-only", "Join all selected results", "Source edits invalidate", "exact-trigger failing regression", "repeat autonomously", "fixed or explicitly dismissed", "requires input", "The shared reviewer registry must drive metadata preparation and artifact/hash/path checks for every reviewer profile", "same generated immutable metadata", "Explicit `/eviscerate-diff` is an independent reviewer swarm", "Solo mode", "complete selected review, integration and live clearance", "selected and skipped lanes with reasons",
 	]);
 	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
 	includesAll(cleanup, ["Ponytail", "trust-boundary", "data-loss", "unchanged behavior", "read-only", "parent"]);
