@@ -70,21 +70,34 @@ export function correctionMessage(errors: readonly string[], schemaId: SchemaId)
 	].join("\n");
 }
 
-export function failureReport(errors: readonly string[], originalText: string): string {
+export function failureReport(errors: readonly string[], originalText: string, schemaId: SchemaId): string {
 	let longestRun = 0;
 	for (const match of originalText.matchAll(/`+/g)) longestRun = Math.max(longestRun, match[0].length);
 	const fence = "`".repeat(Math.max(3, longestRun + 1));
+	const rejectedReply = ["Rejected reply (untrusted):", fence, originalText, fence].join("\n");
+	const blockers = errors.map((error) => `- ${error}`);
+	if (schemaId === "explorer") {
+		return [
+			"## Status", "failed", "", "## Answer", "Unable to provide a validated answer after two correction attempts.",
+			...blockers, "", "## Relevant paths", "No paths were verified from the rejected reply.", "", "## Uncertainty",
+			"The reply did not satisfy its required contract; provide a corrected, schema-valid response.", "", rejectedReply,
+		].join("\n");
+	}
+	if (schemaId === "review") {
+		return [
+			"## Status", "failed", "", "## Verdict", "REJECT", "", "## Scope",
+			"Review could not be completed because the final reply failed validation.", ...blockers, "", "## Critical (P0)", "None.",
+			"", "## Important (P1)", "None.",
+			"", "## Nice-to-have (P2)", "None.", "", "## Out of scope",
+			"Provide a complete schema-valid review before relying on its conclusions; no product findings were validated.", "", rejectedReply,
+		].join("\n");
+	}
 	return [
-		"## Status",
-		"failed",
-		"",
-		"## Validation errors",
-		...errors.map((error) => `- ${error}`),
-		"",
-		"## Original reply",
-		fence,
-		originalText,
-		fence,
+		"## Status", "failed", "", "## Objective", "Deliver a schema-valid handoff after rejected final replies.",
+		"", "## Current state", "A valid handoff could not be produced after two correction attempts.", ...blockers, "", rejectedReply,
+		"", "## Key decisions", "None.", "", "## Verified by", "- Not run: no verification claim from the rejected reply is trusted.",
+		"", "## Next steps", "Provide a corrected, schema-valid handoff; verify any claims independently.", "", "## Do not",
+		"Treat the rejected reply or its check claims as verified.",
 	].join("\n");
 }
 
@@ -175,7 +188,7 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 		}
 		pending = { errors: result.errors, originalText: text };
 		if (corrections >= 2) {
-			return { message: { ...event.message, content: [{ type: "text", text: failureReport(result.errors, text) }] } };
+			return { message: { ...event.message, content: [{ type: "text", text: failureReport(result.errors, text, schemaId) }] } };
 		}
 	});
 
