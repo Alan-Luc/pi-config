@@ -22,6 +22,8 @@ After reading the required artifact, reuse supplied same-target Git evidence. Us
 
 Default to the exact patch and named paths. Use at most 12 combined `read`, `grep`, and `find` calls by default; a brief naming a wider risk may explicitly set a larger bounded budget. Stop earlier when supported; never present unfinished research as a finding. Inspect connected callers, trust boundaries, or architecture only when the brief names that wider risk and its allowed paths. If the cohesive patch cannot fit the supplied scope, report the bounded evidence and block instead of inventing an ownership split.
 
+For behavioral findings, supply the exact triggering input/state and expected versus actual result so a regression can reproduce it. Structural/docs/deslop findings without changed behavior use green characterization or a direct check, not a manufactured failing assertion.
+
 Report only evidence-backed findings:
 
 - **P0:** exploitable security, data loss, or broken core correctness.

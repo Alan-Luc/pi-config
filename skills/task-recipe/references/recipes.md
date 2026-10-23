@@ -5,7 +5,7 @@ Copy the selected card's steps verbatim into live tasks for non-Direct work. Pre
 ## Bug fix
 
 1. Identify the observable failure, affected callers, and expected behavior; establish the exact trigger and a meaningful failure-path case.
-2. Reproduce the defect with an assertion that fails for the intended reason; then fix the shared root cause and retain the regression.
+2. Reproduce the defect with an assertion that fails for the intended reason; for an accepted behavioral review finding, use the reviewer's exact triggering input/state before its fix. Then fix the shared root cause and retain the regression. Structural/docs/deslop findings without changed behavior use green characterization or a direct check, not a manufactured red.
 3. Run focused checks while iterating; at the pass, verify the changed behavior and relevant failure cases on its real surface.
 4. **Done:** the regression fails on the original defect, passes with the fix, relevant checks pass, and no affected caller is left incompatible.
 
@@ -34,7 +34,7 @@ Copy the selected card's steps verbatim into live tasks for non-Direct work. Pre
 
 1. Freeze the exact candidate and identify task-owned scope, callers, contracts, and available evidence.
 2. Follow [the full adversarial review procedure](../../../prompts/eviscerate-diff.md), including risk-selected complete lanes, candidate freshness, and autonomous remediation through clean/input-needed closure; do not substitute a partial review.
-3. **Done:** every required lane and check has a result, findings are fixed or dismissed with evidence and reason, and required proof covers the final candidate. Report any blocker or coverage gap.
+3. **Done:** every required lane and check has a result, findings are fixed or dismissed with evidence and reason in the pass summary, and required proof covers the final candidate. Report any blocker or coverage gap.
 
 ## Harness change
 

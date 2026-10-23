@@ -420,6 +420,21 @@ it.each(["thermonuclear-correctness-review", "thermonuclear-structural-review", 
 	}
 });
 
+it.each([
+	{ owner: "parent pass", text: reviewPrompt },
+	{ owner: "reviewer", text: agents["code-reviewer"] },
+	{ owner: "builder", text: agents["implementation-engineer"] },
+	{ owner: "recipe", text: recipeCards },
+])("review hardening preserves exact triggers and nonbehavior exceptions in $owner", ({ text }) => {
+	includesAll(text, ["exact triggering input/state", "before", "direct check"]);
+	assert.match(text, /(?:green|passing) characterization/);
+});
+
+test("dismissed material findings keep evidence-based reasons in the pass summary", () => {
+	includesAll(reviewPrompt, ["dismissed material findings", "evidence-based reasons", "pass summary, not a separate artifact"]);
+	assert.ok(recipeCards.includes("dismissed with evidence and reason in the pass summary"));
+});
+
 test("full review/testing selects complete lanes and hardens autonomously to closure", () => {
 	includesAll(techLead, ["consequential architectural", "prompts/eviscerate-diff.md", "eight live children", "capacity", "Classify work once using the Direct/Focused/Full table", "Focused and Full work close with the required adversarial pass"]);
 	includesAll(reviewPrompt, [
