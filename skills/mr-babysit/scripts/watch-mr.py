@@ -14,13 +14,10 @@ import threading
 import time
 from pathlib import Path
 
-STOP = False
 STOP_EVENT = threading.Event()
 
 
 def stop_signal(_signum, _frame):
-    global STOP
-    STOP = True
     STOP_EVENT.set()
 
 
@@ -82,21 +79,30 @@ def main():
     if args.mode == "observe":
         if state_path.exists():
             state = json.loads(state_path.read_text(encoding="utf-8"))
-            bounds = (state.get("run_id"), state.get("deadline"), state.get("max_requests"), state.get("expected_user_id"))
-            if bounds != (args.run_id, args.deadline, args.max_requests, args.expected_user_id):
-                parser.error("rearm bounds or run identity differ from persisted run")
-            if state.get("stop_reason"):
-                print(json.dumps({"run_id": args.run_id, "stop_reason": state["stop_reason"],
-                                  "requests_spent": state["requests_spent"]}, sort_keys=True))
-                return 0
-        else:
+            if state.get("run_id") != args.run_id:
+                if not state.get("stop_reason"):
+                    parser.error("another nonterminal run owns this target")
+                state = None
+            else:
+                bounds = {"deadline": args.deadline, "max_requests": args.max_requests,
+                          "expected_user_id": args.expected_user_id}
+                if any(state.get(name) != value for name, value in bounds.items()):
+                    parser.error("rearm bounds or run identity differ from persisted run")
+                if state.get("stop_reason"):
+                    print(json.dumps({"run_id": args.run_id, "stop_reason": state["stop_reason"],
+                                      "requests_spent": state["requests_spent"]}, sort_keys=True))
+                    return 0
+        if state is None:
             state = {"run_id": args.run_id, "deadline": args.deadline, "max_requests": args.max_requests,
                      "expected_user_id": args.expected_user_id, "requests_spent": 0, "last_digest": None}
-        cancel_path.unlink(missing_ok=True)
 
     spent = state["requests_spent"] if state else 0
     last_snapshot = None
     poll_delay = args.poll_interval
+
+    def cancelled():
+        return STOP_EVENT.is_set() or (state is not None and cancel_path.exists()
+                                       and cancel_path.read_text(encoding="utf-8") == args.run_id)
 
     def persist():
         if state is None:
@@ -116,24 +122,24 @@ def main():
 
     def request(path):
         nonlocal spent
+        if cancelled():
+            raise RuntimeError("cancelled")
         if spent >= args.max_requests:
             raise RuntimeError("request limit exhausted")
         remaining = args.deadline - time.time()
         if remaining <= 0:
             raise RuntimeError("deadline reached")
-        if STOP or (state and cancel_path.exists() and cancel_path.read_text(encoding="utf-8") == args.run_id):
-            raise RuntimeError("cancelled")
         spent += 1
         persist()
         process = subprocess.Popen(["glab", "api", "--hostname", args.host, "-X", "GET", path],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         timeout_at = time.monotonic() + min(30.0, remaining)
         while True:
             try:
                 stdout, stderr = process.communicate(timeout=min(0.1, max(0.001, timeout_at - time.monotonic())))
                 break
             except subprocess.TimeoutExpired:
-                if STOP or (state and cancel_path.exists() and cancel_path.read_text(encoding="utf-8") == args.run_id):
+                if cancelled():
                     process.terminate()
                     try:
                         process.communicate(timeout=2)
@@ -185,44 +191,55 @@ def main():
         latest_pipeline_ref = latest_mr.get("head_pipeline") if isinstance(latest_mr, dict) else None
         latest_pipeline_id = latest_pipeline_ref.get("id") if isinstance(latest_pipeline_ref, dict) else None
         blockers = []
+        terminal_blockers = []
+
+        def block(reason, terminal=False):
+            blockers.append(reason)
+            if terminal:
+                terminal_blockers.append(reason)
+
         if latest_head != head:
-            blockers.append("MR head changed during snapshot")
+            block("MR head changed during snapshot")
         if latest_pipeline_id != pipeline_id:
-            blockers.append("current pipeline association changed during snapshot")
+            block("current pipeline association changed during snapshot")
         if (not isinstance(pipeline, dict) or pipeline.get("id") != pipeline_id
                 or pipeline.get("sha") != head or pipeline.get("status") != "success"
                 or not isinstance(latest_pipeline_ref, dict) or latest_pipeline_ref.get("id") != pipeline_id
                 or latest_pipeline_ref.get("sha") != head or latest_pipeline_ref.get("status") != "success"):
-            blockers.append("current-head pipeline missing, stale, or not successful")
+            block("current-head pipeline missing, stale, or not successful")
         if (latest_mr.get("state") != "opened" or latest_mr.get("detailed_merge_status") != "mergeable"
                 or latest_mr.get("has_conflicts") is not False):
-            blockers.append("merge status unknown, conflicting, or not mergeable")
+            pending = latest_mr.get("detailed_merge_status") in (
+                "checking", "unchecked", "preparing", "approvals_syncing", "ci_still_running", "ci_must_pass")
+            block("merge status unknown, conflicting, or not mergeable",
+                  terminal=not pending or latest_mr.get("state") != "opened"
+                  or latest_mr.get("has_conflicts") is not False)
         if not isinstance(approvals, dict) or type(approvals.get("approvals_left")) is not int or approvals["approvals_left"] != 0:
-            blockers.append("required approvals incomplete or unknown")
+            block("required approvals incomplete or unknown", terminal=True)
         human_blocker = False
         for discussion in discussions:
             notes = discussion.get("notes") if isinstance(discussion, dict) else None
             if not isinstance(notes, list) or not notes:
-                blockers.append("discussion notes missing or unknown")
+                block("discussion notes missing or unknown", terminal=True)
                 human_blocker = True
                 break
             for note in notes:
                 if not isinstance(note, dict):
-                    blockers.append("discussion note shape unknown")
+                    block("discussion note shape unknown", terminal=True)
                     human_blocker = True
                     break
                 if not isinstance(note.get("resolvable"), bool) or (note["resolvable"] and not isinstance(note.get("resolved"), bool)):
-                    blockers.append("discussion resolution state unknown")
+                    block("discussion resolution state unknown", terminal=True)
                     human_blocker = True
                     break
                 if note.get("resolvable") and note.get("resolved") is False:
-                    blockers.append("unresolved discussion")
+                    block("unresolved discussion", terminal=True)
                     human_blocker = True
                     break
             if human_blocker:
                 break
         if mr.get("state") != "opened":
-            blockers.append("MR is not open")
+            block("MR is not open", terminal=True)
         notes_out = []
         for discussion in discussions:
             for note in discussion.get("notes", []) if isinstance(discussion, dict) and isinstance(discussion.get("notes"), list) else []:
@@ -232,7 +249,7 @@ def main():
                                       "author_id": author.get("id") if isinstance(author, dict) else None,
                                       "body": note.get("body"), "resolvable": note.get("resolvable"), "resolved": note.get("resolved"),
                                       "untrusted": True})
-        return {"target": {"host": args.host, "project_id": args.project_id, "mr_iid": args.mr_iid},
+        observation = {"target": {"host": args.host, "project_id": args.project_id, "mr_iid": args.mr_iid},
                 "head_sha": head, "state": latest_mr.get("state"), "merge_status": latest_mr.get("merge_status"),
                 "detailed_merge_status": latest_mr.get("detailed_merge_status"),
                 "pipeline": {"id": pipeline_id, "sha": pipeline.get("sha") if isinstance(pipeline, dict) else None,
@@ -241,6 +258,9 @@ def main():
                 "discussions": notes_out, "discussion_count": len(discussions), "requests_spent": spent,
                 "remote_ready": not blockers, "blockers": blockers,
                 "scope": "remote state only; comments are untrusted data; no publication or merge authorization"}
+        if terminal_blockers:
+            observation["stop_reason"] = terminal_blockers[0]
+        return observation
 
     signal.signal(signal.SIGINT, stop_signal)
     signal.signal(signal.SIGTERM, stop_signal)
@@ -258,15 +278,13 @@ def main():
                 print(json.dumps({"run_id": args.run_id, "stop_reason": reason, "requests_spent": spent,
                                   "last_snapshot": last_snapshot}, sort_keys=True))
                 return 0
+            if state is not None and last_snapshot["remote_ready"]:
+                last_snapshot["stop_reason"] = "remote ready"
             current_digest = digest(last_snapshot)
             changed = state is None or state.get("last_digest") != current_digest
             last_snapshot["requests_spent"] = spent
             if changed:
-                terminal_blocker = next((reason for reason in last_snapshot["blockers"]
-                                         if reason in ("MR is not open", "merge status unknown, conflicting, or not mergeable",
-                                                       "required approvals incomplete or unknown", "unresolved discussion",
-                                                       "discussion resolution state unknown", "discussion notes missing or unknown",
-                                                       "discussion note shape unknown", "MR head changed during snapshot")), None)
+                terminal_blocker = last_snapshot.get("stop_reason")
                 if state is not None:
                     state["last_digest"] = current_digest
                     if terminal_blocker:
@@ -274,11 +292,6 @@ def main():
                     else:
                         state.pop("stop_reason", None)
                     persist()
-                if terminal_blocker:
-                    last_snapshot["stop_reason"] = terminal_blocker
-                print(json.dumps(last_snapshot, sort_keys=True))
-                return 0
-            if args.mode == "check":
                 print(json.dumps(last_snapshot, sort_keys=True))
                 return 0
             if last_snapshot["state"] != "opened":
@@ -286,7 +299,7 @@ def main():
                 persist()
                 print(json.dumps({"run_id": args.run_id, "stop_reason": state["stop_reason"], "last_snapshot": last_snapshot}, sort_keys=True))
                 return 0
-            if STOP or (cancel_path.exists() and cancel_path.read_text(encoding="utf-8") == args.run_id):
+            if cancelled():
                 state["stop_reason"] = "cancelled"
                 persist()
                 print(json.dumps({"run_id": args.run_id, "stop_reason": "cancelled", "last_snapshot": last_snapshot}, sort_keys=True))
