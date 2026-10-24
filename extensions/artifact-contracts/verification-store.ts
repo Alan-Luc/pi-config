@@ -37,7 +37,7 @@ const latestAttemptByCommand = new Map<string, VerificationAttempt>();
 let currentGeneration = 0;
 let latestInvalidationReason = "tool activity after verification";
 
-function hash(value: string): string {
+function hash(value: string | Uint8Array): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 

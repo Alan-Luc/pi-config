@@ -986,8 +986,9 @@ async function executeVerificationCollect(
 		const candidateError = await candidateInvalidReason(ctx, started.candidate, signal, started.stagedSnapshot);
 		const candidateUnchanged = candidateError === undefined;
 		if (candidateError !== undefined) invalidateVerificationEvidence(candidateError);
-		const hasNumericExit = typeof terminal.exitCode === "number" && Number.isInteger(terminal.exitCode);
-		const exitCode = hasNumericExit ? terminal.exitCode : -1;
+		const terminalExitCode = terminal.exitCode;
+		const hasNumericExit = typeof terminalExitCode === "number" && Number.isInteger(terminalExitCode);
+		const exitCode = hasNumericExit ? terminalExitCode : -1;
 		const valid = candidateUnchanged && hasNumericExit;
 		const invalidReason = candidateUnchanged
 			? (hasNumericExit ? undefined : `background verification task ${terminal.status} did not report a numeric exit code`)

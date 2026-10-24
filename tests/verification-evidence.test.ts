@@ -1193,6 +1193,8 @@ function verificationExitHooks(events: EventBus): Record<string, (event: never) 
 	try {
 		registerHandoffHooks({
 			events,
+			registerTool: () => undefined,
+			getActiveTools: () => [],
 			on(name: string, handler: (event: never) => unknown) { registered[name] = handler; },
 		} as never);
 	} finally {
