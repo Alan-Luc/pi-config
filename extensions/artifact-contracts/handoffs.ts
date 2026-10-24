@@ -7,6 +7,7 @@ import { sectionBody, validate } from "./validate.ts";
 import { clearVerificationEvidence, invalidateVerificationEvidence, verificationClaimErrors } from "./verification-store.ts";
 
 const CORRECTION_TYPE = "artifact-contract-correction";
+const MAX_CORRECTIONS = 3;
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type PendingReply = { errors: string[]; originalText: string };
@@ -39,7 +40,17 @@ export function verifiedByErrors(text: string): string[] {
 	return body.split("\n").flatMap((line) => {
 		const item = line.match(/^ {0,3}- `([^`]+)` (?:→|->) exit (\d+) \[evidence: (verify_[0-9a-f]{64})\]/);
 		if (!item) return [];
-		return verificationClaimErrors({ command: item[1], exitCode: Number(item[2]), evidenceId: item[3] });
+		let command = item[1];
+		if (command.startsWith("command-json: ")) {
+			try {
+				const decoded: unknown = JSON.parse(command.slice("command-json: ".length));
+				if (typeof decoded !== "string") return [`Verified by: invalid encoded command for evidence ${item[3]}`];
+				command = decoded;
+			} catch {
+				return [`Verified by: invalid encoded command for evidence ${item[3]}`];
+			}
+		}
+		return verificationClaimErrors({ command, exitCode: Number(item[2]), evidenceId: item[3] });
 	});
 }
 
@@ -54,6 +65,10 @@ export function replyInstructions(schemaId: SchemaId): string {
 	return [
 		"Your final reply must validate against this exact artifact contract.",
 		"Fill the template below; do not add, remove, or reorder its sections.",
+		...(SCHEMAS[schemaId].sections.some((section) => section.heading === "Verified by") ? [
+			"Use current native evidence.verifiedBy items verbatim under Verified by; do not reconstruct commands or shorten their quoting.",
+			"Finish raw Bash/cleanup before final verification. Even read-only Bash invalidates earlier receipts; use read/grep/find for inspection afterward.",
+		] : []),
 		"Template:",
 		renderTemplate(schemaId),
 	].join("\n");
@@ -65,6 +80,12 @@ export function correctionMessage(errors: readonly string[], schemaId: SchemaId)
 		"Fix every validation error and reply again using this exact template.",
 		"Validation errors:",
 		...errors.map((error) => `- ${error}`),
+		...(errors.some((error) => error.startsWith("Verified by:")) ? [
+			"Verification recovery:",
+			"Copy evidence.verifiedBy unchanged from current native receipts; never reconstruct the command.",
+			"Formatting cannot refresh stale evidence. Finish raw Bash/cleanup before obtaining fresh verification, then avoid further raw Bash.",
+			"Move stale/unreportable observations to Current state. If fresh proof is unavailable, report blocked or failed with a Not run reason under Verified by rather than reuse the old claim.",
+		] : []),
 		"Template:",
 		renderTemplate(schemaId),
 	].join("\n");
@@ -78,7 +99,7 @@ export function failureReport(errors: readonly string[], originalText: string, s
 	const blockers = errors.map((error) => `- ${error}`);
 	if (schemaId === "explorer") {
 		return [
-			"## Status", "failed", "", "## Answer", "Unable to provide a validated answer after two correction attempts.",
+			"## Status", "failed", "", "## Answer", `Unable to provide a validated answer after ${MAX_CORRECTIONS} correction attempts.`,
 			...blockers, "", "## Relevant paths", "No paths were verified from the rejected reply.", "", "## Uncertainty",
 			"The reply did not satisfy its required contract; provide a corrected, schema-valid response.", "", rejectedReply,
 		].join("\n");
@@ -86,7 +107,7 @@ export function failureReport(errors: readonly string[], originalText: string, s
 	if (schemaId === "review") {
 		return [
 			"## Status", "failed", "", "## Verdict", "REJECT", "", "## Scope",
-			"Review could not be completed because the final reply failed validation.", ...blockers, "", "## Critical (P0)", "None.",
+			`Review could not be completed because the final reply failed validation after ${MAX_CORRECTIONS} correction attempts.`, ...blockers, "", "## Critical (P0)", "None.",
 			"", "## Important (P1)", "None.",
 			"", "## Nice-to-have (P2)", "None.", "", "## Out of scope",
 			"Provide a complete schema-valid review before relying on its conclusions; no product findings were validated.", "", rejectedReply,
@@ -94,7 +115,7 @@ export function failureReport(errors: readonly string[], originalText: string, s
 	}
 	return [
 		"## Status", "failed", "", "## Objective", "Deliver a schema-valid handoff after rejected final replies.",
-		"", "## Current state", "A valid handoff could not be produced after two correction attempts.", ...blockers, "", rejectedReply,
+		"", "## Current state", `A valid handoff could not be produced after ${MAX_CORRECTIONS} correction attempts.`, ...blockers, "", rejectedReply,
 		"", "## Key decisions", "None.", "", "## Verified by", "- Not run: no verification claim from the rejected reply is trusted.",
 		"", "## Next steps", "Provide a corrected, schema-valid handoff; verify any claims independently.", "", "## Do not",
 		"Treat the rejected reply or its check claims as verified.",
@@ -187,13 +208,13 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 			return;
 		}
 		pending = { errors: result.errors, originalText: text };
-		if (corrections >= 2) {
+		if (corrections >= MAX_CORRECTIONS) {
 			return { message: { ...event.message, content: [{ type: "text", text: failureReport(result.errors, text, schemaId) }] } };
 		}
 	});
 
 	pi.on("turn_end", () => {
-		if (!pending || corrections >= 2) return;
+		if (!pending || corrections >= MAX_CORRECTIONS) return;
 		const message = correctionMessage(pending.errors, schemaId);
 		corrections++;
 		pending = undefined;

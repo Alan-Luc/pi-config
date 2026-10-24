@@ -69,6 +69,15 @@ function record(
 afterEach(() => clearVerificationEvidence());
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
+test("registered verification tool exposes typed parameters to schema renderers", () => {
+	let tool: { parameters: { type?: string; properties?: Record<string, { type?: string }> } } | undefined;
+	registerVerificationEvidence({ registerTool: (definition: NonNullable<typeof tool>) => { tool = definition; } } as never);
+	assert.equal(tool?.parameters.type, "object");
+	assert.equal(tool?.parameters.properties?.argv.type, "array");
+	assert.equal(tool?.parameters.properties?.timeout.type, "number");
+	assert.equal(tool?.parameters.properties?.operation.type, "string");
+});
+
 test("candidate and evidence IDs are deterministic content hashes", () => {
 	assert.match(candidate.id, /^candidate_[0-9a-f]{64}$/);
 	assert.equal(
@@ -151,6 +160,7 @@ test("tool completion before recording invalidates an overlapping verification a
 
 test("invalid, missing, and tampered evidence fails closed", () => {
 	const invalid = record("'bun' 'test' 'invalid'", 0, false);
+	assert.equal(invalid.verifiedBy, undefined, "invalid receipts do not supply a reportable item");
 	assert.match(verificationClaimErrors({ evidenceId: invalid.id, command: invalid.command, exitCode: 0 })[0], /candidate changed during verification/);
 
 	const missing = record("'bun' 'test' 'missing'");

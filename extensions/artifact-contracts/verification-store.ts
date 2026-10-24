@@ -22,10 +22,11 @@ export type VerificationEvidence = Readonly<{
 	logSha256: string;
 	valid: boolean;
 	invalidReason?: string;
+	verifiedBy?: string;
 }>;
 
 type CandidateInput = Omit<CandidateIdentity, "id">;
-type EvidenceInput = Omit<VerificationEvidence, "id" | "argv"> & { argv: readonly string[] };
+type EvidenceInput = Omit<VerificationEvidence, "id" | "argv" | "verifiedBy"> & { argv: readonly string[] };
 type VerificationClaim = Readonly<{ evidenceId: string; command: string; exitCode: number }>;
 type VerificationAttempt = Readonly<{ token: symbol; generation: number }>;
 
@@ -79,6 +80,7 @@ export function recordVerificationEvidence(input: EvidenceInput, attempt?: Verif
 		valid,
 		...(invalidReason === undefined ? {} : { invalidReason }),
 		id,
+		...(valid ? { verifiedBy: `- \`command-json: ${JSON.stringify(input.command).replaceAll("`", "\\u0060")}\` → exit ${input.exitCode} [evidence: ${id}]` } : {}),
 		argv: Object.freeze([...argv]),
 	});
 	evidenceById.set(id, evidence);

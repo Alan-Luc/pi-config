@@ -254,7 +254,7 @@ test.each([
 ] as const)("exhausted %s corrections deliver a valid actionable terminal handoff", async (schema, env, rejectedReply) => {
 	const registered = hooks(env);
 	registered.agent_start({} as never);
-	for (let attempt = 0; attempt < 2; attempt++) {
+	for (let attempt = 0; attempt < 3; attempt++) {
 		assert.equal(await registered.message_end(event("bad")), undefined);
 		const correction = registered.turn_end({} as never) as { continue: boolean; entries: Array<{ content: string }> };
 		assert.equal(correction.continue, true);
@@ -273,6 +273,18 @@ test.each([
 	assert.equal(registered.turn_end({} as never), undefined);
 });
 
+test("a valid reply on the third correction is accepted", async () => {
+	const registered = hooks(child);
+	registered.agent_start({} as never);
+	for (let attempt = 0; attempt < 3; attempt++) {
+		assert.equal(await registered.message_end(event("bad")), undefined);
+		const correction = registered.turn_end({} as never) as { continue: boolean };
+		assert.equal(correction.continue, true);
+	}
+	assert.equal(await registered.message_end(event(valid)), undefined);
+	assert.equal(registered.turn_end({} as never), undefined);
+});
+
 test("agent_start resets retry state", async () => {
 	const registered = hooks(child);
 	registered.agent_start({} as never);
@@ -282,6 +294,16 @@ test("agent_start resets retry state", async () => {
 	await registered.message_end(event("bad"));
 	const correction = registered.turn_end({} as never) as { continue: boolean };
 	assert.equal(correction.continue, true);
+});
+
+test("stale evidence recovery requires fresh proof instead of another formatting attempt", () => {
+	const text = correctionMessage(["Verified by: evidence is stale: bash tool activity completed after verification"], "worker");
+	assert.match(text, /cannot refresh stale evidence/);
+	assert.match(text, /fresh verification/);
+	assert.match(text, /Current state/);
+	assert.match(text, /Not run/);
+	assert.match(text, /evidence\.verifiedBy/);
+	assert.match(failureReport(["stale"], "bad", "worker"), /after 3 correction attempts/);
 });
 
 test("pure report helpers include all errors", () => {
@@ -312,6 +334,37 @@ function evidence(command: string, exitCode = 0) {
 }
 afterAll(() => rmSync(evidenceRoot, { recursive: true, force: true }));
 
+it.each(["'node' '-e' 'console.log(`ok`)'", "'printf' 'first\nsecond'"])("receipt-generated claims round-trip command %j", async (command) => {
+	const registered = hooks(worker);
+	registered.agent_start({} as never);
+	const run = evidence(command);
+	assert.ok(run.verifiedBy, "valid receipts supply a ready-to-copy handoff item");
+	assert.equal(run.verifiedBy.split("\n").length, 1, "multiline commands cannot break the handoff list");
+	assert.equal((run.verifiedBy.match(/`/g) ?? []).length, 2, "command backticks cannot break the Markdown span");
+	const reply = workerReply(run.verifiedBy);
+	assert.equal(validate("worker", reply).ok, true, reply);
+	assert.deepEqual(verifiedByErrors(reply), []);
+	assert.equal(await registered.message_end(event(reply)), undefined);
+	assert.equal(registered.turn_end({} as never), undefined);
+});
+
+it.each(["command-json: {", "command-json: 42", "command-json: [\"wrong\"]"])("malformed encoded receipt command fails closed: %s", (command) => {
+	const registered = hooks(worker);
+	registered.agent_start({} as never);
+	const run = evidence("'bun' 'test'");
+	assert.match(verifiedByErrors(workerReply(`- \`${command}\` → exit 0 [evidence: ${run.id}]`)).join("\n"), /invalid encoded command/);
+});
+
+test("receipt-generated claims still reject later Bash activity", async () => {
+	const registered = hooks(worker);
+	registered.agent_start({} as never);
+	const run = evidence("'bun' 'test'");
+	assert.ok(run.verifiedBy);
+	registered.tool_call({ toolName: "bash", toolCallId: "inspect", input: {} } as never);
+	registered.tool_result({ toolName: "bash", toolCallId: "inspect", content: [], isError: false } as never);
+	assert.match(verifiedByErrors(workerReply(run.verifiedBy)).join("\n"), /stale: bash tool activity completed/);
+});
+
 test("Verified by must match current evidence exactly", async () => {
 	const registered = hooks(worker);
 	registered.agent_start({} as never);
@@ -335,8 +388,8 @@ test("exhausted command mismatches retain the blocker without accepting the orig
 	registered.agent_start({} as never);
 	const run = evidence("'bun' 'test' 'tests/'");
 	const rejected = workerReply(`- \`'python3' '-c' 'illustrative shorthand'\` → exit 0 [evidence: ${run.id}]`);
-	for (let attempt = 0; attempt < 2; attempt++) {
-		await registered.message_end(event(rejected));
+	for (let attempt = 0; attempt < 3; attempt++) {
+		assert.equal(await registered.message_end(event(rejected)), undefined);
 		const correction = registered.turn_end({} as never) as { continue: boolean; entries: Array<{ content: string }> };
 		assert.equal(correction.continue, true);
 		assert.match(correction.entries[0].content, /reported command does not match evidence/);

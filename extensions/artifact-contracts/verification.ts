@@ -48,6 +48,18 @@ export const MAX_EXPOSED_OUTPUT_BYTES = 4096;
 const VERIFICATION_LOG_DIRECTORY = join(tmpdir(), "pi", "verification");
 
 export const VERIFICATION_EVIDENCE_PARAMETERS = {
+	// Provider/schema renderers need top-level field types as well as the strict operation variants.
+	type: "object",
+	properties: {
+		operation: { type: "string", enum: ["capture", "run", "start", "collect"] },
+		repositoryRoot: { type: "string", minLength: 1 },
+		source: { type: "string", const: "staged" },
+		runtimeInputs: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
+		argv: { type: "array", items: { type: "string" }, minItems: 1 },
+		cwd: { type: "string", minLength: 1 },
+		timeout: { type: "number", exclusiveMinimum: 0, maximum: MAX_TIMEOUT_SECONDS },
+		taskId: { type: "string", minLength: 1 },
+	},
 	dependencies: { runtimeInputs: ["source"] },
 	oneOf: [
 		{
@@ -171,6 +183,7 @@ const evidenceOutputSchema = {
 		logSha256: { type: "string" },
 		valid: { type: "boolean" },
 		invalidReason: { type: "string" },
+		verifiedBy: { type: "string" },
 	},
 	required: ["id", "command", "argv", "cwd", "candidate", "exitCode", "logPath", "logSha256", "valid"],
 	additionalProperties: false,
@@ -1034,6 +1047,7 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 			"Use source: staged to check an isolated real-index snapshot; declare required ignored files/directories as runtimeInputs. Receipts pin their manifests; changed HEAD/index/source/inputs invalidate them. Missing snapshot prerequisites never fall back to live working files.",
 			"Default to start, automatic terminal notification without polling, then collect with the exact task id. Use synchronous run only when the background service is unavailable, the user explicitly requests it, or a stated concrete correctness or lifecycle constraint requires same-turn completion; expected lack of parallel work is not sufficient.",
 			"A failed command or changed candidate is evidence of failure; do not mask either result.",
+			"Copy current evidence.verifiedBy verbatim into the handoff. Finish raw Bash/cleanup before final checks; even read-only Bash afterward invalidates earlier receipts. Inspect with read/grep/find afterward instead.",
 		],
 		parameters: VERIFICATION_EVIDENCE_PARAMETERS,
 		outputSchema: VERIFICATION_EVIDENCE_OUTPUT_SCHEMA,
