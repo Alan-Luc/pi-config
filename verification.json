@@ -20,6 +20,7 @@
         "tests/review-preparation.test.ts",
         "tests/role-mcp.test.ts",
         "tests/staged-verification.test.ts",
+        "tests/task-snapshot-contract.test.ts",
         "tests/tech-lead.test.ts",
         "tests/verification-evidence.test.ts",
         "tests/verification-recipes.test.ts",

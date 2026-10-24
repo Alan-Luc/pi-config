@@ -239,6 +239,16 @@ const REJECTED_CAPABILITY_PATHS = [
 	".harness/plans/ignored/../2026-10-12-lean-instruction-architecture.md",
 ] as const;
 
+test("topic logs require additive read negotiation and are never mutable capabilities", () => {
+	for (const path of [".harness/2026/10/24/2026-10-24-workflow.md", ".harness/2026/10/24/local-feature.md"]) {
+		assert.equal(isArtifactCapabilityPath("read", path), false);
+		assert.equal(isArtifactCapabilityPath("read", path, { topicLogs: 1 }), true);
+		assert.equal(isArtifactCapabilityPath("write", path, { topicLogs: 1 }), false);
+		assert.equal(isArtifactCapabilityPath("edit", path, { topicLogs: 1 }), false);
+	}
+	assert.equal(isArtifactCapabilityPath("read", ".harness/2026/10/24/local-feature.md", { topicLogs: 2 }), false);
+});
+
 test("capability version 1 uses the exact path and operation matrix", () => {
 	assert.equal(ARTIFACT_CAPABILITY_VERSION, 1);
 	for (const operation of ["read", "write", "edit"] as const) {

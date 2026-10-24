@@ -33,6 +33,8 @@ import {
 	verificationClaimErrors,
 } from "../extensions/artifact-contracts/verification-store.ts";
 
+import { requestWorkStatus, VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE } from "../extensions/lib/work-status.ts";
+
 const root = mkdtempSync(join(tmpdir(), "verification-evidence-contract-"));
 let sequence = 0;
 const candidate = createCandidateIdentity({
@@ -69,6 +71,67 @@ function record(
 
 afterEach(() => clearVerificationEvidence());
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
+
+test("verification status is unknown without the same-owner live session responder", async () => {
+	const listeners = new Map<string, Set<(value: unknown) => void>>();
+	const events: EventBus = {
+		on(channel, listener) {
+			const handlers = listeners.get(channel) ?? new Set();
+			handlers.add(listener);
+			listeners.set(channel, handlers);
+			return () => { handlers.delete(listener); };
+		},
+		emit(channel, value) { for (const listener of listeners.get(channel) ?? []) listener(value); },
+	};
+	const lifecycle = new Map<string, (...args: never[]) => unknown>();
+	assert.equal(requestWorkStatus(events, "verification", "native-parent"), undefined);
+	registerVerificationEvidence({ events, registerTool() {}, on(name: string, handler: (...args: never[]) => unknown) { lifecycle.set(name, handler); } } as never);
+	assert.equal(requestWorkStatus(events, "verification", "native-parent"), undefined, "no initialized native session");
+	await lifecycle.get("session_start")?.(...[{}, { sessionManager: { getSessionId: () => "native-parent" } }] as never[]);
+	const status = requestWorkStatus(events, "verification", "native-parent");
+	assert.ok(status, "the live same-owner responder must answer");
+	assert.equal(status.sessionId, "native-parent");
+	assert.equal(status.starting, 0);
+	assert.deepEqual(status.uncollectedTaskIds, []);
+	assert.ok(status.generation);
+	assert.equal(requestWorkStatus(events, "verification", "foreign-parent"), undefined);
+	const removeDuplicate = events.on(VERIFICATION_STATUS_REQUEST, (request) => {
+		events.emit(VERIFICATION_STATUS_RESPONSE, { ...status, ...request });
+	});
+	assert.equal(requestWorkStatus(events, "verification", "native-parent"), undefined, "ambiguous responders fail closed");
+	removeDuplicate();
+	await lifecycle.get("session_shutdown")?.(...[] as never[]);
+	assert.equal(requestWorkStatus(events, "verification", "native-parent"), undefined, "shutdown invalidates producer");
+});
+
+test("verification status reads registering starts and owned uncollected tasks from its executing owner", async () => {
+	const directory = await newRepository();
+	const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+	const { promise: registering, resolve: entered } = Promise.withResolvers<void>();
+	const service = backgroundService(directory, { beforeRunResponse: () => { entered(); return gate; } });
+	const lifecycle: Record<string, (event: never, ctx: never) => unknown> = {};
+	registerVerificationEvidence({ events: service, registerTool() {}, on(name: string, handler: (event: never, ctx: never) => unknown) { lifecycle[name] = handler; } } as never);
+	await lifecycle.session_start({} as never, { sessionManager: { getSessionId: () => "executing-parent" } } as never);
+	const start = executeVerificationEvidence("status-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, makeContext(directory), service);
+	await registering;
+	try {
+		const pending = requestWorkStatus(service, "verification", "executing-parent");
+		assert.equal(pending?.starting, 1);
+		assert.deepEqual(pending?.uncollectedTaskIds, []);
+	} finally { release(); }
+	const started = await start;
+	if (started.details.operation !== "start") throw new Error("expected start");
+	try {
+		const pending = requestWorkStatus(service, "verification", "executing-parent");
+		assert.equal(pending?.starting, 0);
+		assert.deepEqual(pending?.uncollectedTaskIds, [started.details.taskId]);
+	} finally {
+		await executeVerificationEvidence("status-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	}
+	assert.deepEqual(requestWorkStatus(service, "verification", "executing-parent")?.uncollectedTaskIds, []);
+	await lifecycle.session_shutdown({} as never, {} as never);
+	assert.equal(requestWorkStatus(service, "verification", "executing-parent"), undefined);
+});
 
 test("registered verification tool exposes typed parameters to schema renderers", () => {
 	let tool: { parameters: { type?: string; properties?: Record<string, { type?: string }> } } | undefined;

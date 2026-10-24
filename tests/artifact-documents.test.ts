@@ -97,6 +97,17 @@ function blockedReason(result: { block: boolean; reason?: string } | void): stri
 	return result.reason;
 }
 
+test("topic log writes and edits are blocked without changing persisted bytes", () => {
+	withTempDir((cwd) => {
+		const path = ".harness/2026/10/24/2026-10-24-workflow.md";
+		writeFixture(cwd, path, "original\n");
+		const handler = registeredHandler();
+		assert.match(blockedReason(handler(writeEvent(path, "replacement\n"), context(cwd))), /append-only/);
+		assert.match(blockedReason(handler(editEvent(path, [{ oldText: "original", newText: "replacement" }]), context(cwd))), /append-only/);
+		assert.equal(readFileSync(join(cwd, path), "utf8"), "original\n");
+	});
+});
+
 test("applyExactEdits normalizes LF, requires unique matches, and rejects overlap", () => {
 	assert.deepEqual(applyExactEdits("a\r\nb\r\nc", [{ oldText: "b\r\n", newText: "B\n" }]), {
 		ok: true,

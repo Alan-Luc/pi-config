@@ -41,6 +41,7 @@ import {
 } from "./verification-store.ts";
 
 import { createStagedSnapshot, type StagedSnapshot } from "./staged-verification.ts";
+import { parseWorkStatusRequest, VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE } from "../lib/work-status.ts";
 
 const VERIFICATION_PROTOCOL_VERSION = 2;
 const MAX_TIMEOUT_SECONDS = 600;
@@ -1063,7 +1064,26 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 	if (pi.events) {
 		const events = pi.events;
 		const state = verificationEventState(events);
+		let sessionId: string | undefined;
+		let generation = randomUUID();
+		pi.on("session_start", (_event, ctx) => {
+			sessionId = ctx.sessionManager.getSessionId();
+			generation = randomUUID();
+		});
+		events.on(VERIFICATION_STATUS_REQUEST, (value) => {
+			const request = parseWorkStatusRequest(value);
+			if (!request || !sessionId || request.sessionId !== sessionId) return;
+			events.emit(VERIFICATION_STATUS_RESPONSE, {
+				...request,
+				generation,
+				starting: state.pendingStarts.size,
+				uncollectedTaskIds: [...state.startedTasks]
+					.filter(([, task]) => !task.result && !task.collectionFailed)
+					.map(([taskId]) => taskId).sort(),
+			});
+		});
 		pi.on("session_shutdown", async () => {
+			sessionId = undefined;
 			const errors: Error[] = [];
 			for (const [taskId, started] of state.startedTasks) {
 				if (!started.stagedSnapshot) continue;
