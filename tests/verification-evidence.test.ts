@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { afterEach, it, test } from "bun:test";
 import type { EventBus } from "@earendil-works/pi-coding-agent";
+import { registerHandoffHooks } from "../extensions/artifact-contracts/handoffs.ts";
 import {
 	BACKGROUND_TASK_REQUEST_CHANNEL,
 	BACKGROUND_TASK_RESPONSE_CHANNEL,
@@ -296,6 +297,7 @@ function backgroundService(directory: string, options: {
 	notifyOnCompletion?: boolean;
 	ordinaryTask?: BackgroundTaskSnapshot;
 	beforeKill?: (task: BackgroundTaskSnapshot) => void | Promise<void>;
+	beforeRunResponse?: () => Promise<void>;
 	statusError?: string;
 	statusErrors?: Record<string, string>;
 	killErrors?: Record<string, string>;
@@ -371,14 +373,18 @@ function backgroundService(directory: string, options: {
 			command = String(request.payload?.command ?? "");
 			task = { ...task, id: taskId, outputPath, command };
 			service.tasks.set(taskId, task);
-			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
-				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
-				request_id: request.request_id,
-				operation: "run",
-				ok: true,
-				result: task,
-			});
-			if (task.status !== "running" && options.emitTerminalOnRun !== false) service.complete(task.status, task.exitCode ?? null, taskId);
+			const respond = () => {
+				service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "run",
+					ok: true,
+					result: task,
+				});
+				if (task.status !== "running" && options.emitTerminalOnRun !== false) service.complete(task.status, task.exitCode ?? null, taskId);
+			};
+			if (options.beforeRunResponse) void options.beforeRunResponse().then(respond);
+			else respond();
 			return;
 		}
 		if (request.operation === "status") {
@@ -893,7 +899,7 @@ test("staged background checks execute the index image and clean it after collec
 	assert.notEqual(realpathSync(image), realpathSync(directory));
 	assert.equal(started.details.candidate.source, "staged");
 	const collected = await executeVerificationEvidence("stage-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.valid, true);
 	assert.equal(collected.details.evidence.exitCode, 1);
 	assert.deepEqual(collected.details.evidence.argv, request.argv);
@@ -934,7 +940,7 @@ test("staged start uses the native exec path", async () => {
 	assert.equal(executed.exitCode, 0);
 	const image = executed.output.trim();
 	const collected = await executeVerificationEvidence("native-start-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.valid, true);
 	assert.throws(() => statSync(image), /ENOENT/);
 });
@@ -1018,7 +1024,7 @@ it.each([
 	assert.equal(service.counts.kill, expectedKills);
 	service.complete("failed", 1, "task-1");
 	const collected = await executeVerificationEvidence(`shutdown-multi-${failure}-collect`, { operation: "collect", taskId: "task-1" }, undefined, context, service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.valid, true);
 	assert.equal(collected.details.evidence.exitCode, 1);
 	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
@@ -1037,7 +1043,7 @@ test("shutdown reconciliation errors propagate and preserve the staged image", a
 	assert.equal(existsSync(image), true, "uncertain task ownership must retain its source image");
 	service.complete("failed", 1);
 	const collected = await executeVerificationEvidence("shutdown-error-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.valid, true);
 	assert.equal(collected.details.evidence.exitCode, 1);
 	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
@@ -1054,7 +1060,7 @@ test("collect cleanup and repeated shutdown are idempotent", async () => {
 	const image = stagedImageFromCommand(started.details.task.command);
 	assert.equal((await runProcess(["bash", "-c", started.details.task.command], directory)).exitCode, 0);
 	const collected = await executeVerificationEvidence("repeat-shutdown-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.valid, true);
 	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
 	assert.equal(existsSync(image), false);
@@ -1076,7 +1082,7 @@ test("staged background collection invalidates index drift and cleans its image"
 	writeFileSync(join(directory, "tracked.txt"), "restaged\n");
 	await git(directory, "add", "tracked.txt");
 	const collected = await executeVerificationEvidence("drift-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.valid, false);
 	assert.match(collected.details.evidence.invalidReason ?? "", /tree changed/);
 	assert.throws(() => statSync(image), /ENOENT/);
@@ -1117,6 +1123,110 @@ test("staged collection failure cleans its image without claiming evidence", asy
 	assert.throws(() => statSync(image), /ENOENT/);
 });
 
+function verificationExitHooks(events: EventBus): Record<string, (event: never) => unknown> {
+	const registered: Record<string, (event: never) => unknown> = {};
+	const previous = process.env.PI_SUBAGENT_AGENT;
+	process.env.PI_SUBAGENT_AGENT = "live-verifier";
+	try {
+		registerHandoffHooks({
+			events,
+			on(name: string, handler: (event: never) => unknown) { registered[name] = handler; },
+		} as never);
+	} finally {
+		if (previous === undefined) delete process.env.PI_SUBAGENT_AGENT;
+		else process.env.PI_SUBAGENT_AGENT = previous;
+	}
+	return registered;
+}
+
+test("reliability: capture reports the loaded verification protocol", async () => {
+	const directory = await newRepository();
+	const captured = await executeVerificationEvidence("protocol-capture", { operation: "capture" }, undefined, makeContext(directory));
+	assert.equal(captured.details.protocolVersion, 2);
+});
+
+test("reliability: pending collection leaves the attempt and image available for actual terminal evidence", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false });
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("pending-start", {
+		operation: "start", source: "staged", argv: ["true"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const image = stagedImageFromCommand(started.details.task.command);
+	try {
+		const pending = await executeVerificationEvidence("pending-collect", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+		assert.equal(pending.isError, false);
+		assert.deepEqual(pending.details, {
+			operation: "collect", protocolVersion: 2, state: "pending", taskId: started.details.taskId,
+			nextAction: "wait-for-terminal-notification",
+		});
+		assert.equal("evidence" in pending.details, false);
+		assert.equal(service.counts.logs, 0);
+		assert.equal(existsSync(image), true);
+		service.complete();
+		const terminal = await executeVerificationEvidence("pending-terminal", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+		if (terminal.details.operation !== "collect" || terminal.details.state !== "collected") throw new Error("expected terminal collection");
+		assert.equal(terminal.details.evidence.valid, true);
+		assert.equal(terminal.details.evidence.exitCode, 0);
+		assert.equal(terminal.details.protocolVersion, 2);
+		assert.equal(started.details.protocolVersion, 2);
+		assert.equal(service.counts.run, 1);
+		assert.equal(service.counts.logs, 1);
+		assert.equal(existsSync(image), false);
+	} finally {
+		await shutdownVerification(service);
+	}
+});
+
+it.each(["caller_ping", "subagent_done"])("reliability: %s cannot discard terminal uncollected verification", async (toolName) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const context = makeContext(directory);
+	const registered = verificationExitHooks(service);
+	const started = await executeVerificationEvidence("uncollected-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const blocked = await registered.tool_call({ toolName, toolCallId: "uncollected-exit", input: {} } as never) as { block: boolean; reason: string } | undefined;
+	assert.equal(blocked?.block, true);
+	assert.match(blocked?.reason ?? "", /uncollected.*task-1/i);
+	const terminal = await executeVerificationEvidence("uncollected-terminal", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+	assert.equal(terminal.isError, false);
+	assert.equal(await registered.tool_call({ toolName, toolCallId: "collected-exit", input: {} } as never), undefined);
+});
+
+test("reliability: a surfaced terminal collection failure allows requesting help without evidence", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const context = makeContext(directory);
+	const registered = verificationExitHooks(service);
+	const started = await executeVerificationEvidence("failed-collection-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	unlinkSync(service.task.outputPath);
+	await assert.rejects(executeVerificationEvidence("failed-collection-terminal", { operation: "collect", taskId: started.details.taskId }, undefined, context, service), /output path/);
+	assert.equal(await registered.tool_call({ toolName: "caller_ping", toolCallId: "failed-collection-help", input: { message: "Collection failed; no verification is claimed." } } as never), undefined);
+});
+
+test("reliability: exit cannot race a verification start still registering", async () => {
+	const directory = await newRepository();
+	const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+	const { promise: registering, resolve: entered } = Promise.withResolvers<void>();
+	const service = backgroundService(directory, { beforeRunResponse: () => { entered(); return gate; } });
+	const context = makeContext(directory);
+	const registered = verificationExitHooks(service);
+	const start = executeVerificationEvidence("registering-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, context, service);
+	await registering;
+	try {
+		const blocked = await registered.tool_call({ toolName: "caller_ping", toolCallId: "registering-exit", input: {} } as never) as { block: boolean; reason: string } | undefined;
+		assert.equal(blocked?.block, true);
+		assert.match(blocked?.reason ?? "", /start.*register/i);
+	} finally {
+		release();
+		const started = await start;
+		if (started.details.operation !== "start") throw new Error("expected start result");
+		await executeVerificationEvidence("registering-terminal", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+	}
+});
+
 test("background start and early terminal collect preserve the verification contract", { timeout: 30_000 }, async () => {
 	const directory = await newRepository();
 	const fullOutput = "x".repeat(MAX_EXPOSED_OUTPUT_BYTES + 100);
@@ -1143,7 +1253,7 @@ test("background start and early terminal collect preserve the verification cont
 		service,
 	);
 	assert.equal(collected.isError, false);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.argv[0], "printf");
 	assert.equal(collected.details.evidence.cwd, ".");
 	assert.equal(collected.details.output.length, MAX_EXPOSED_OUTPUT_BYTES);
@@ -1179,7 +1289,7 @@ it.each(["linked worktree", "session subdirectory"])("legacy background output b
 	const collected = await executeVerificationEvidence("legacy-collect", {
 		operation: "collect", taskId: started.details.taskId,
 	}, undefined, context, service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.isError, false);
 	assert.equal(collected.details.evidence.candidate.repositoryRoot, realpathSync(repositoryRoot));
 	assert.equal(collected.details.output, "verification output\n");
@@ -1205,7 +1315,7 @@ it.each([
 	const collected = await executeVerificationEvidence("mutation-collect", {
 		operation: "collect", taskId: started.details.taskId,
 	}, undefined, context, service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.exitCode, 0);
 	assert.equal(collected.details.evidence.valid, false);
 	assert.equal(collected.details.evidence.invalidReason, "candidate changed during verification");
@@ -1259,12 +1369,12 @@ test("background collect accepts empty bounded-log text for silent commands", { 
 		service,
 	);
 	assert.equal(collected.isError, false);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.output, "");
 	assert.equal(readFileSync(collected.details.evidence.logPath).byteLength, 0);
 });
 
-test("background collect performs one status query and rejects a running task", { timeout: 30_000 }, async () => {
+test("background collect performs one status query and returns pending for a running task", { timeout: 30_000 }, async () => {
 	const directory = await newRepository();
 	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false });
 	const context = makeContext(directory);
@@ -1276,10 +1386,12 @@ test("background collect performs one status query and rejects a running task", 
 		service,
 	);
 	if (started.details.operation !== "start") throw new Error("expected start result");
-	await assert.rejects(
-		executeVerificationEvidence("collect-running", { operation: "collect", taskId: started.details.taskId }, undefined, context, service),
-		/still running/,
-	);
+	const pending = await executeVerificationEvidence("collect-running", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+	assert.equal(pending.isError, false);
+	assert.deepEqual(pending.details, {
+		operation: "collect", protocolVersion: 2, state: "pending", taskId: started.details.taskId,
+		nextAction: "wait-for-terminal-notification",
+	});
 	assert.equal(service.counts.status, 1);
 	service.complete();
 	const collected = await executeVerificationEvidence(
@@ -1313,7 +1425,7 @@ test("background collect reports nonzero exits and candidate mutation", { timeou
 		failedService,
 	);
 	assert.equal(failedCollect.isError, true);
-	if (failedCollect.details.operation !== "collect") throw new Error("expected collect result");
+	if (failedCollect.details.operation !== "collect" || failedCollect.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(failedCollect.details.evidence.exitCode, 7);
 	assert.equal(failedCollect.details.evidence.valid, true);
 
@@ -1337,7 +1449,7 @@ test("background collect reports nonzero exits and candidate mutation", { timeou
 		mutatedService,
 	);
 	assert.equal(mutatedCollect.isError, true);
-	if (mutatedCollect.details.operation !== "collect") throw new Error("expected collect result");
+	if (mutatedCollect.details.operation !== "collect" || mutatedCollect.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(mutatedCollect.details.evidence.valid, false);
 	assert.equal(mutatedCollect.details.evidence.invalidReason, "candidate changed during verification");
 });
@@ -1362,7 +1474,7 @@ test.each(["failed", "killed"] as const)("%s tasks without an exit code are inva
 		service,
 	);
 	assert.equal(collected.isError, true);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.exitCode, -1);
 	assert.match(collected.details.evidence.invalidReason ?? "", /did not report a numeric exit code/);
 });

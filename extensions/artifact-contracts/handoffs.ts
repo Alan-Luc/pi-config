@@ -5,6 +5,7 @@ import { AGENT_OUTPUT, DEFAULT_OUTPUT, SCHEMAS, type SchemaId } from "./schemas.
 import { appendInstructions, renderTemplate } from "./render.ts";
 import { sectionBody, validate } from "./validate.ts";
 import { clearVerificationEvidence, invalidateVerificationEvidence, verificationClaimErrors } from "./verification-store.ts";
+import { pendingVerificationWork } from "./verification.ts";
 
 const CORRECTION_TYPE = "artifact-contract-correction";
 const MAX_CORRECTIONS = 3;
@@ -122,27 +123,38 @@ export function failureReport(errors: readonly string[], originalText: string, s
 	].join("\n");
 }
 
-const MAX_RUNNING_TASKS_IN_ERROR = 5;
+const MAX_TASKS_IN_ERROR = 5;
 const MAX_TASK_LABEL_LENGTH = 80;
 
-function taskLabel(task: BackgroundTaskSnapshot): string {
+function taskLabel(task: Pick<BackgroundTaskSnapshot, "id" | "name">): string {
 	const label = task.name === undefined ? task.id : `${task.id} (${task.name})`;
 	return label.length <= MAX_TASK_LABEL_LENGTH ? label : `${label.slice(0, MAX_TASK_LABEL_LENGTH - 1)}…`;
 }
 
-async function backgroundTaskErrors(events: EventBus): Promise<string[]> {
+async function ownedWorkErrors(events: EventBus, activeVerificationCalls: number): Promise<string[]> {
+	const pending = pendingVerificationWork(events);
+	const errors: string[] = [];
+	if (activeVerificationCalls > 0) errors.push(`verification tool calls still running: ${activeVerificationCalls}`);
+	if (pending.starting > 0) errors.push(`verification starts still registering: ${pending.starting}`);
+	if (pending.uncollectedTaskIds.length > 0) {
+		const shown = pending.uncollectedTaskIds.toSorted().slice(0, MAX_TASKS_IN_ERROR).map((id) => taskLabel({ id }));
+		const remaining = pending.uncollectedTaskIds.length - shown.length;
+		errors.push(`uncollected verification results: ${shown.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}`);
+	}
 	try {
 		const { tasks } = await requestBackgroundTask(events, "status", {});
 		const running = tasks
 			.filter((task) => task.status === "running")
 			.toSorted((left, right) => left.id.localeCompare(right.id) || (left.name ?? "").localeCompare(right.name ?? ""));
-		if (running.length === 0) return [];
-		const shown = running.slice(0, MAX_RUNNING_TASKS_IN_ERROR).map(taskLabel);
-		const remaining = running.length - shown.length;
-		return [`background tasks still running: ${shown.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}`];
+		if (running.length > 0) {
+			const shown = running.slice(0, MAX_TASKS_IN_ERROR).map(taskLabel);
+			const remaining = running.length - shown.length;
+			errors.push(`background tasks still running: ${shown.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}`);
+		}
+		return errors;
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
-		return [`background task status check failed: ${detail}`];
+		return [...errors, `background task status check failed: ${detail}`];
 	}
 }
 
@@ -167,7 +179,14 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 		clearVerificationEvidence();
 	});
 
-	pi.on("tool_call", (event) => {
+	pi.on("tool_call", async (event) => {
+		if (event.toolName === "caller_ping" || event.toolName === "subagent_done") {
+			const errors = await ownedWorkErrors(pi.events, verificationCalls.size);
+			if (errors.length > 0) {
+				return { block: true, reason: `Cannot close helper: ${errors.join("; ")}. Wait for terminal notification and collect verification results, or cancel owned work and reconcile its terminal state before exiting.` };
+			}
+			return;
+		}
 		if (event.toolName === "verification_evidence") {
 			verificationCalls.add(event.toolCallId);
 			return;
@@ -200,7 +219,7 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 			if (errors.length > 0) result = { ok: false, errors };
 		}
 		if (result.ok) {
-			const errors = await backgroundTaskErrors(pi.events);
+			const errors = await ownedWorkErrors(pi.events, verificationCalls.size);
 			result = errors.length === 0 ? { ok: true, errors: [] } : { ok: false, errors };
 		}
 		if (result.ok) {

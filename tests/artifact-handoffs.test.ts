@@ -163,6 +163,40 @@ test("does not register or query background status outside child environments", 
 	assert.equal(requests, 0);
 });
 
+it.each(["caller_ping", "subagent_done"])("reliability: exit tool %s cannot abandon running work", async (toolName) => {
+	const registered = hooks(worker, (requestId) => statusFrame(requestId, [backgroundTask("owned-job", "running")]));
+	registered.agent_start({} as never);
+	const result = await registered.tool_call({ toolName, toolCallId: "premature-exit", input: {} } as never) as { block: boolean; reason: string } | undefined;
+	assert.equal(result?.block, true);
+	assert.match(result?.reason ?? "", /owned-job/);
+	assert.match(result?.reason ?? "", /collect|cancel/i);
+});
+
+it.each(["caller_ping", "subagent_done"])("reliability: %s waits for an in-flight verification call before its task exists", async (toolName) => {
+	const registered = hooks(worker);
+	await registered.tool_call({ toolName: "verification_evidence", toolCallId: "registering-call", input: { operation: "start", argv: ["true"], cwd: ".", timeout: 10 } } as never);
+	const blocked = await registered.tool_call({ toolName, toolCallId: "racing-close", input: {} } as never) as { block: boolean; reason: string } | undefined;
+	assert.equal(blocked?.block, true);
+	assert.match(blocked?.reason ?? "", /verification tool calls still running/);
+	registered.tool_result({ toolName: "verification_evidence", toolCallId: "registering-call", input: {}, content: [], isError: true } as never);
+	assert.equal(await registered.tool_call({ toolName, toolCallId: "settled-close", input: {} } as never), undefined);
+});
+
+it.each(["caller_ping", "subagent_done"])("reliability: exit tool %s remains available after terminal ordinary work", async (toolName) => {
+	const registered = hooks(worker, (requestId) => statusFrame(requestId, [backgroundTask("owned-job", "completed")]));
+	registered.agent_start({} as never);
+	assert.equal(await registered.tool_call({ toolName, toolCallId: "safe-exit", input: {} } as never), undefined);
+});
+
+test("reliability: exit tools fail closed when work ownership cannot be queried", async () => {
+	const registered = hooks(worker, (requestId) => ({
+		schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA, request_id: requestId, operation: "status", ok: false, error: "owner unavailable",
+	}));
+	const result = await registered.tool_call({ toolName: "caller_ping", toolCallId: "unknown-owner", input: {} } as never) as { block: boolean; reason: string } | undefined;
+	assert.equal(result?.block, true);
+	assert.match(result?.reason ?? "", /owner unavailable/);
+});
+
 test("running child jobs reject through the correction lifecycle", async () => {
 	let requests = 0;
 	const registered = hooks(child, (requestId) => {

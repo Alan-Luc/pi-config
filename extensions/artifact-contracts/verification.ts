@@ -42,6 +42,7 @@ import {
 
 import { createStagedSnapshot, type StagedSnapshot } from "./staged-verification.ts";
 
+const VERIFICATION_PROTOCOL_VERSION = 2;
 const MAX_TIMEOUT_SECONDS = 600;
 const CANDIDATE_TIMEOUT_SECONDS = 30;
 export const MAX_EXPOSED_OUTPUT_BYTES = 4096;
@@ -192,20 +193,21 @@ export const VERIFICATION_EVIDENCE_OUTPUT_SCHEMA = {
 	oneOf: [
 		{
 			type: "object",
-			properties: { operation: { const: "capture" }, candidate: candidateOutputSchema },
-			required: ["operation", "candidate"],
+			properties: { operation: { const: "capture" }, protocolVersion: { type: "integer", const: VERIFICATION_PROTOCOL_VERSION }, candidate: candidateOutputSchema },
+			required: ["operation", "protocolVersion", "candidate"],
 			additionalProperties: false,
 		},
 		{
 			type: "object",
-			properties: { operation: { const: "run" }, evidence: evidenceOutputSchema, output: { type: "string" } },
-			required: ["operation", "evidence", "output"],
+			properties: { operation: { const: "run" }, protocolVersion: { type: "integer", const: VERIFICATION_PROTOCOL_VERSION }, evidence: evidenceOutputSchema, output: { type: "string" } },
+			required: ["operation", "protocolVersion", "evidence", "output"],
 			additionalProperties: false,
 		},
 		{
 			type: "object",
 			properties: {
 				operation: { const: "start" },
+				protocolVersion: { type: "integer", const: VERIFICATION_PROTOCOL_VERSION },
 				taskId: { type: "string" },
 				task: backgroundTaskOutputSchema,
 				candidate: candidateOutputSchema,
@@ -213,13 +215,25 @@ export const VERIFICATION_EVIDENCE_OUTPUT_SCHEMA = {
 				argv: { type: "array", items: { type: "string" } },
 				cwd: { type: "string" },
 			},
-			required: ["operation", "taskId", "task", "candidate", "command", "argv", "cwd"],
+			required: ["operation", "protocolVersion", "taskId", "task", "candidate", "command", "argv", "cwd"],
 			additionalProperties: false,
 		},
 		{
 			type: "object",
-			properties: { operation: { const: "collect" }, evidence: evidenceOutputSchema, output: { type: "string" } },
-			required: ["operation", "evidence", "output"],
+			properties: {
+				operation: { const: "collect" }, protocolVersion: { type: "integer", const: VERIFICATION_PROTOCOL_VERSION },
+				state: { const: "collected" }, evidence: evidenceOutputSchema, output: { type: "string" },
+			},
+			required: ["operation", "protocolVersion", "state", "evidence", "output"],
+			additionalProperties: false,
+		},
+		{
+			type: "object",
+			properties: {
+				operation: { const: "collect" }, protocolVersion: { type: "integer", const: VERIFICATION_PROTOCOL_VERSION },
+				state: { const: "pending" }, taskId: { type: "string" }, nextAction: { const: "wait-for-terminal-notification" },
+			},
+			required: ["operation", "protocolVersion", "state", "taskId", "nextAction"],
 			additionalProperties: false,
 		},
 	],
@@ -229,17 +243,20 @@ export type VerificationToolContext = Pick<ExtensionToolContext, "cwd" | "execut
 
 export type CandidateCaptureResult = Readonly<{
 	operation: "capture";
+	protocolVersion: typeof VERIFICATION_PROTOCOL_VERSION;
 	candidate: CandidateIdentity;
 }>;
 
 export type VerificationRunResult = Readonly<{
 	operation: "run";
+	protocolVersion: typeof VERIFICATION_PROTOCOL_VERSION;
 	evidence: VerificationEvidence;
 	output: string;
 }>;
 
 export type VerificationStartResult = Readonly<{
 	operation: "start";
+	protocolVersion: typeof VERIFICATION_PROTOCOL_VERSION;
 	taskId: string;
 	task: BackgroundTaskSnapshot;
 	candidate: CandidateIdentity;
@@ -248,10 +265,20 @@ export type VerificationStartResult = Readonly<{
 	cwd: string;
 }>;
 
-export type VerificationCollectResult = Readonly<{
+export type VerificationCollectedResult = Readonly<{
 	operation: "collect";
+	protocolVersion: typeof VERIFICATION_PROTOCOL_VERSION;
+	state: "collected";
 	evidence: VerificationEvidence;
 	output: string;
+}>;
+
+export type VerificationCollectResult = VerificationCollectedResult | Readonly<{
+	operation: "collect";
+	protocolVersion: typeof VERIFICATION_PROTOCOL_VERSION;
+	state: "pending";
+	taskId: string;
+	nextAction: "wait-for-terminal-notification";
 }>;
 
 export type VerificationEvidenceResult = CandidateCaptureResult | VerificationRunResult | VerificationStartResult | VerificationCollectResult;
@@ -274,7 +301,8 @@ type StartedVerificationTask = {
 	outputDirectory: string;
 	task: BackgroundTaskSnapshot;
 	terminal?: BackgroundTaskSnapshot;
-	result?: VerificationCollectResult;
+	result?: VerificationCollectedResult;
+	collectionFailed?: true;
 	stagedSnapshot?: StagedSnapshot;
 };
 type PendingVerificationStart = { terminalTasks: Map<string, BackgroundTaskSnapshot> };
@@ -299,6 +327,15 @@ function verificationEventState(events: EventBus): VerificationEventState {
 		for (const pending of state.pendingStarts) pending.terminalTasks.set(task.id, task);
 	});
 	return state;
+}
+
+export function pendingVerificationWork(events: EventBus): Readonly<{ starting: number; uncollectedTaskIds: readonly string[] }> {
+	const state = verificationEventStates.get(events);
+	if (!state) return { starting: 0, uncollectedTaskIds: [] };
+	return {
+		starting: state.pendingStarts.size,
+		uncollectedTaskIds: [...state.startedTasks].filter(([, task]) => !task.result && !task.collectionFailed).map(([taskId]) => taskId),
+	};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -843,7 +880,7 @@ export async function executeVerification(
 			valid,
 			invalidReason,
 		}, attempt);
-		return { operation: "run", evidence, output: boundedOutput(commandResult.output) };
+		return { operation: "run", protocolVersion: VERIFICATION_PROTOCOL_VERSION, evidence, output: boundedOutput(commandResult.output) };
 	} finally {
 		stagedSnapshot?.cleanup();
 	}
@@ -898,6 +935,7 @@ async function executeVerificationStart(
 		transferred = true;
 		return {
 			operation: "start",
+			protocolVersion: VERIFICATION_PROTOCOL_VERSION,
 			taskId: task.id,
 			task,
 			candidate,
@@ -921,7 +959,7 @@ async function executeVerificationCollect(
 	if (!events) throw new Error("verification_evidence background task service is unavailable");
 	const eventState = verificationEventState(events);
 	const started = eventState.startedTasks.get(params.taskId);
-	if (!started) throw new Error(`verification_evidence task ${params.taskId} is unknown`);
+	if (!started) throw new Error(`verification_evidence task ${params.taskId} is unknown in this loaded session. Conversation resume does not restore task ownership; return to its live owner or reconcile the original owned process before starting a fresh check.`);
 	if (started.result) throw new Error(`verification_evidence task ${params.taskId} was already collected`);
 
 	let terminal = started.terminal;
@@ -930,7 +968,12 @@ async function executeVerificationCollect(
 		terminal = status.tasks.find((task) => task.id === params.taskId);
 		if (!terminal) throw new Error(`verification_evidence task ${params.taskId} was not found by the background task service`);
 	}
-	if (terminal.status === "running") throw new Error(`verification_evidence task ${params.taskId} is still running`);
+	if (terminal.status === "running") {
+		return {
+			operation: "collect", protocolVersion: VERIFICATION_PROTOCOL_VERSION, state: "pending",
+			taskId: params.taskId, nextAction: "wait-for-terminal-notification",
+		};
+	}
 
 	try {
 		const logs = await requestBackgroundTask(events, "logs", {
@@ -960,14 +1003,20 @@ async function executeVerificationCollect(
 			valid,
 			invalidReason,
 		}, started.attempt);
-		const result: VerificationCollectResult = {
+		const result: VerificationCollectedResult = {
 			operation: "collect",
+			protocolVersion: VERIFICATION_PROTOCOL_VERSION,
+			state: "collected",
 			evidence,
 			output: boundedOutput(outputBytes.toString("utf8")),
 		};
 		started.terminal = terminal;
 		started.result = result;
 		return result;
+	} catch (error) {
+		started.terminal = terminal;
+		started.collectionFailed = true;
+		throw error;
 	} finally {
 		started.stagedSnapshot?.cleanup();
 	}
@@ -985,7 +1034,7 @@ export async function executeVerificationEvidence(
 	events?: EventBus,
 ): Promise<AgentToolResult<VerificationEvidenceResult>> {
 	if (params.operation === "capture") {
-		const result: CandidateCaptureResult = { operation: "capture", candidate: await captureCandidate(ctx, signal, params.repositoryRoot, params.source) };
+		const result: CandidateCaptureResult = { operation: "capture", protocolVersion: VERIFICATION_PROTOCOL_VERSION, candidate: await captureCandidate(ctx, signal, params.repositoryRoot, params.source) };
 		return { content: [{ type: "text", text: contentFor(result) }], details: result, structuredContent: result };
 	}
 	if (params.operation === "start") {
@@ -998,7 +1047,7 @@ export async function executeVerificationEvidence(
 			content: [{ type: "text", text: contentFor(result) }],
 			details: result,
 			structuredContent: result,
-			isError: result.evidence.exitCode !== 0 || !result.evidence.valid,
+			isError: result.state === "collected" && (result.evidence.exitCode !== 0 || !result.evidence.valid),
 		};
 	}
 	const result = await executeVerification(toolCallId, params, ctx, signal);
@@ -1047,6 +1096,8 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 			"Use source: staged to check an isolated real-index snapshot; declare required ignored files/directories as runtimeInputs. Receipts pin their manifests; changed HEAD/index/source/inputs invalidate them. Missing snapshot prerequisites never fall back to live working files.",
 			"Default to start, automatic terminal notification without polling, then collect with the exact task id. Use synchronous run only when the background service is unavailable, the user explicitly requests it, or a stated concrete correctness or lifecycle constraint requires same-turn completion; expected lack of parallel work is not sufficient.",
 			"A failed command or changed candidate is evidence of failure; do not mask either result.",
+			"Loaded verification protocol 2 reports protocolVersion in every result. A pending collect has no evidence: wait for terminal notification, then collect. Unknown task ownership is an error, not pending. Missing version leaves an old session's loaded protocol unproven; reconcile active work before reload.",
+			"Do not close a helper through caller_ping, subagent_done or a final reply while verification starts are registering, work is running or verification results remain uncollected. Cancel owned work deliberately if abandoning it, then reconcile/collect the terminal result.",
 			"Copy current evidence.verifiedBy verbatim into the handoff. Finish raw Bash/cleanup before final checks; even read-only Bash afterward invalidates earlier receipts. Inspect with read/grep/find afterward instead.",
 		],
 		parameters: VERIFICATION_EVIDENCE_PARAMETERS,
