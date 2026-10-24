@@ -171,6 +171,18 @@ test("one recipe skill owns preparation and six checkable cards without a second
 	}
 });
 
+test("large staged advisories partition bounded Haiku work without changing the review gate", () => {
+	const deslop = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
+	includesAll(deslop, [
+		"cannot fit one 30-second run", "fresh Haiku/low instances",
+		"non-overlapping paths or hunks", "cover the entire staged diff",
+		"same frozen staged candidate", "bounded patch excerpt",
+		"eight-live-child cap", "join every slice result",
+		"Do not retry the same oversized brief", "whole-diff pass remains stronger",
+	]);
+	assert.ok(recipeCards.includes("../../deslop/SKILL.md"), "recipes route advisory partitioning to its canonical owner");
+});
+
 test("task effort follows actual uncertainty within explicit locked-role capability", () => {
 	includesAll(taskRecipe, [
 		"smallest justified effort once", "short rationale in its existing brief",
@@ -374,7 +386,11 @@ test("global instructions retain Alan-specific conventions", () => {
 		"Never push without Alan's explicit authorization",
 		"`benchmark/<run-id>`",
 		"Use BLUF",
-		"Before non-trivial tools or delegation",
+		"Before extended reasoning",
+		"before working through the solution",
+		"progress checkpoint before continuing",
+		"Alan can interrupt at any time",
+		"Honor explicit pause/stop requests",
 		"Prefer concurrent work when disjoint slices can make progress or avoid blocking",
 		"sequence dependencies and risky shared writes",
 		"record outcomes after completion",

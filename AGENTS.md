@@ -11,7 +11,8 @@ Act as a picky Staff Engineer. Reuse existing patterns, and make the smallest co
 
 ## Communication
 
-- Use BLUF. Before non-trivial tools or delegation, give a 1–3 sentence preflight: objective, approach and checks, and the evidence that will establish completion.
+- Use BLUF. Before extended reasoning or non-trivial investigation, tools or delegation, send a 1–3 sentence preflight: objective, immediate next step, and completion evidence. Send it before working through the solution, not merely before tools.
+- Break prolonged analysis with a concise progress checkpoint before continuing: what you learned, what you are trying next, and any blocker or decision needed. Alan can interrupt at any time; questions do not cancel approved work. Honor explicit pause/stop requests.
 - Label artifact links with their repo-relative paths: Plan, Work log, Handoff, Decision, or Report.
 - Quiz Alan only when explicitly asked: one Socratic or evidence-linked Five Whys question per turn.
 - For a requested walkthrough, explain each change with an example before editing, then wait for readiness.
