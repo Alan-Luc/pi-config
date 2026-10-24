@@ -112,7 +112,6 @@ export async function createStagedSnapshot(
   const indexPath = (await git(exec, root, ["rev-parse", "--git-path", "index"])).trim();
   const absoluteIndex = resolve(root, indexPath);
   if (!existsSync(absoluteIndex)) throw new Error("staged snapshot requires an existing Git index");
-  const indexBytes = readFileSync(absoluteIndex);
   const temporary = mkdtempSync(join(tmpdir(), "pi-staged-verification-"));
   const directory = join(temporary, "source");
   mkdirSync(directory);
@@ -121,10 +120,11 @@ export async function createStagedSnapshot(
   let retained = false;
   try {
     const tree = (await git(exec, root, ["write-tree"], privateIndex)).trim();
-    await git(exec, root, ["checkout-index", "--all", `--prefix=${directory}${sep}`], privateIndex);
+    const stagedPaths = (await git(exec, root, ["ls-files", "-z", "--cached"], privateIndex)).split("\0").filter(Boolean);
+    await git(exec, root, ["checkout-index", "--all", "--ignore-skip-worktree-bits", `--prefix=${directory}${sep}`], privateIndex);
     const tracked = new Set([
       ...(await git(exec, root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"])).split("\0"),
-      ...(await git(exec, root, ["ls-files", "-z", "--cached"], privateIndex)).split("\0"),
+      ...stagedPaths,
     ].filter(Boolean));
     const runtimeInputs: StagedRuntimeInput[] = [];
     for (const input of runtimeInputPaths) {
@@ -149,8 +149,13 @@ export async function createStagedSnapshot(
       runtimeInputs: frozenInputs,
       async validate() {
         if ((await git(exec, root, ["rev-parse", "--verify", "HEAD"])).trim() !== head) throw new Error("staged snapshot HEAD changed");
-        if (!readFileSync(absoluteIndex).equals(indexBytes)) throw new Error("staged snapshot index changed");
-        if ((await git(exec, root, ["write-tree"], privateIndex)).trim() !== tree) throw new Error("staged snapshot tree changed");
+        const validationIndex = join(temporary, "validation-index");
+        copyFileSync(absoluteIndex, validationIndex);
+        try {
+          if ((await git(exec, root, ["write-tree"], validationIndex)).trim() !== tree) throw new Error("staged snapshot tree changed");
+        } finally {
+          rmSync(validationIndex, { force: true });
+        }
         const currentFiles = snapshotFiles(directory, directory);
         if (JSON.stringify([...currentFiles]) !== JSON.stringify([...initialFiles])) throw new Error("staged snapshot source image changed");
         for (const item of frozenInputs) {

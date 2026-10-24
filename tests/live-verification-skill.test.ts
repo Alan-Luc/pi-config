@@ -14,6 +14,8 @@ test("live verification owns bounded failure rechecks, negative-promise proof, a
 		"compare relevant files, requests, processes or Git refs before and after",
 		"Execute the documented startup, readiness, action, effect and cleanup procedure.",
 		"artifacts remain readable after teardown",
+		"Staged snapshots require Git support for `checkout-index --ignore-skip-worktree-bits`",
+		"if unavailable, verification is blocked and must never fall back to live workspace files",
 	]) assert.ok(skill.includes(marker), marker);
 });
 
@@ -47,6 +49,9 @@ test.each(["live-verification", "build-live-verification", "thermonuclear-correc
 				assert.equal(renamed.length, 1, "discover exactly one composite command");
 				const promptPath = join(agentDir, "prompts", "eviscerate-diff.md");
 				assert.equal(renamed[0].filePath, promptPath);
+				const liveRows = renamed[0].content.split("\n").filter((line) => /^\| `live-verification-(?:success|attack)` \|/.test(line));
+				assert.deepEqual(liveRows.map((line) => line.split("|")[1].trim()), ["`live-verification-success`", "`live-verification-attack`"], "loaded pass requires separate positive and adversarial live workers");
+				for (const row of liveRows) assert.ok(row.includes("`live-verifier`"), "both lanes reuse the existing verifier profile");
 				assert.equal(prompts.some((prompt) => prompt.name === "code_review"), false, "old composite alias is absent");
 				assert.deepEqual(diagnostics.filter((diagnostic) => diagnostic.path === promptPath), []);
 			}

@@ -229,17 +229,17 @@ function writeAll(descriptor: number, bytes: Buffer): void {
 	for (let offset = 0; offset < bytes.byteLength;) offset += writeSync(descriptor, bytes, offset, bytes.byteLength - offset);
 }
 
-function openExistingPatch(path: string): number {
+function openExistingPatch(path: string, label: string): number {
 	try {
 		return openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
 	} catch (error: unknown) {
 		const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
-		if (code === "ELOOP") throw new Error(`review preparation patch cannot be a symbolic link: ${path}`);
+		if (code === "ELOOP") throw new Error(`review preparation ${label} cannot be a symbolic link: ${path}`);
 		throw error;
 	}
 }
 
-function writePatch(path: string, bytes: Buffer): void {
+function writePatch(path: string, bytes: Buffer, label = "patch"): void {
 	try {
 		const descriptor = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
 		try {
@@ -254,10 +254,10 @@ function writePatch(path: string, bytes: Buffer): void {
 		if (code !== "EEXIST") throw error;
 	}
 
-	const descriptor = openExistingPatch(path);
+	const descriptor = openExistingPatch(path, label);
 	try {
-		if (!fstatSync(descriptor).isFile()) throw new Error(`review preparation patch must be a regular file: ${path}`);
-		if (!readFileSync(descriptor).equals(bytes)) throw new Error(`review preparation patch already exists with different bytes: ${path}`);
+		if (!fstatSync(descriptor).isFile()) throw new Error(`review preparation ${label} must be a regular file: ${path}`);
+		if (!readFileSync(descriptor).equals(bytes)) throw new Error(`review preparation ${label} already exists with different bytes: ${path}`);
 		fchmodSync(descriptor, 0o600);
 	} finally {
 		closeSync(descriptor);
@@ -268,19 +268,25 @@ async function treeBlobs(
 	exec: CandidateExec,
 	root: string,
 	tree: string,
+	paths: readonly string[],
 	signal: AbortSignal | undefined,
 ): Promise<Map<string, string>> {
-	const output = await executeGit(exec, root, ["ls-tree", "-r", "-z", "--full-tree", tree], signal);
+	if (paths.length === 0) return new Map();
+	const output = await executeGit(exec, root, ["ls-tree", "-r", "-z", "--full-tree", tree, "--", ...paths.map(literalPathspec)], signal);
+	const requestedPaths = new Set(paths);
 	const blobs = new Map<string, string>();
 	for (const record of output.split("\0")) {
 		if (!record) continue;
 		const separator = record.indexOf("\t");
+		if (separator < 0) throw new Error("review preparation received malformed Git tree entry");
 		const metadata = record.slice(0, separator).split(" ");
 		const path = record.slice(separator + 1);
 		const object = metadata[2];
-		if (separator < 0 || metadata[1] !== "blob" || !object || !/^[0-9a-f]{40,64}$/.test(object)) {
+		if (!object || !/^[0-9a-f]{40,64}$/.test(object)) {
 			throw new Error("review preparation received malformed Git tree entry");
 		}
+		if (!requestedPaths.has(path)) continue;
+		if (metadata[1] !== "blob") throw new Error(`review preparation cannot prepare staged non-blob context: ${path}`);
 		blobs.set(path, object);
 	}
 	return blobs;
@@ -291,29 +297,6 @@ function gitBlobObjectId(blob: string, bytes: Buffer): string {
 	return createHash(algorithm).update(`blob ${bytes.byteLength}\0`).update(bytes).digest("hex");
 }
 
-function writeStagedCopy(path: string, bytes: Buffer): void {
-	try {
-		const descriptor = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
-		try {
-			writeAll(descriptor, bytes);
-			fchmodSync(descriptor, 0o600);
-		} finally {
-			closeSync(descriptor);
-		}
-	} catch (error: unknown) {
-		const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
-		if (code !== "EEXIST") throw error;
-		const descriptor = openExistingPatch(path);
-		try {
-			if (!fstatSync(descriptor).isFile() || !readFileSync(descriptor).equals(bytes)) {
-				throw new Error(`review preparation staged context already exists with different bytes: ${path}`);
-			}
-		} finally {
-			closeSync(descriptor);
-		}
-	}
-}
-
 async function stagedReviewPaths(
 	exec: CandidateExec,
 	candidate: CandidateIdentity,
@@ -322,8 +305,10 @@ async function stagedReviewPaths(
 ): Promise<{ paths: string[]; mapping: Array<{ reviewPath: string; originalPath: string; blob: string; sha256: string }> }> {
 	if (candidate.head === null || candidate.source !== "staged") throw new Error("staged review requires a committed staged candidate");
 	const root = candidate.repositoryRoot;
-	const stagedBlobs = await treeBlobs(exec, root, candidate.tree, signal);
-	const headBlobs = await treeBlobs(exec, root, `${candidate.head}^{tree}`, signal);
+	const stagedPaths = records.flatMap(({ newPath }) => newPath === undefined ? [] : [newPath]);
+	const deletedPaths = records.flatMap(({ oldPath, newPath }) => newPath === undefined && oldPath !== undefined ? [oldPath] : []);
+	const stagedBlobs = await treeBlobs(exec, root, candidate.tree, stagedPaths, signal);
+	const headBlobs = await treeBlobs(exec, root, `${candidate.head}^{tree}`, deletedPaths, signal);
 	const files = new Map<string, { originalPath: string; blob: string }>();
 	for (const record of records) {
 		if (record.newPath !== undefined) {
@@ -346,7 +331,7 @@ async function stagedReviewPaths(
 		}
 		const sha256 = createHash("sha256").update(bytes).digest("hex");
 		const copy = join(directory, `${sha256}.source`);
-		writeStagedCopy(copy, bytes);
+		writePatch(copy, bytes, "staged context");
 		mapping.push({ reviewPath: copy, originalPath, blob, sha256 });
 	}
 	return { paths: mapping.map(({ reviewPath }) => reviewPath), mapping };
@@ -445,8 +430,7 @@ export async function prepareReview(
 			"--find-renames",
 			...diff.args,
 			"--",
-			...(staged === undefined ? paths : originalPaths)
-				.map((path) => literalPathspec(relative(current.repositoryRoot, path))),
+			...originalPaths.map((path) => literalPathspec(relative(current.repositoryRoot, path))),
 		],
 		signal,
 	);
@@ -540,7 +524,6 @@ export function registerReviewPreparation(pi: ExtensionAPI): void {
 			if (typeof launch.task !== "string") continue;
 			const target = requestedReviewTarget(launch.task);
 			const range = requestedReviewRange(launch.task);
-			if (target !== undefined && range !== undefined) throw new Error("review preparation rejects mixed Review target and Review range");
 			const result = await prepare(ctx, range, target);
 			const nextTask = addReviewMetadata(launch.task, result);
 			const validation = validate("brief", nextTask);

@@ -23,7 +23,7 @@ import {
 	type ReviewPreparationResult,
 	type TaskBoundary,
 } from "../extensions/artifact-contracts/review-preparation.ts";
-import { captureCandidateWithExec } from "../extensions/artifact-contracts/verification.ts";
+import { captureCandidateWithExec, type CandidateExec } from "../extensions/artifact-contracts/verification.ts";
 import { registerGuardrails, REVIEW_ARTIFACT_ROOT } from "../extensions/guardrails/guardrails.ts";
 import { validate } from "../extensions/artifact-contracts/validate.ts";
 import { AGENT_OUTPUT } from "../extensions/artifact-contracts/schemas.ts";
@@ -431,6 +431,57 @@ test("removes shadow metadata across the brief before inserting one Scope block"
 	}
 	assert.match(generated, /^Patch artifact: \/tmp\/pi\/review-preparation\/example\.patch$/m);
 	assert.match(generated, /^Excluded pre-dirty paths: \["\/tmp\/project\/baseline\.txt"\]$/m);
+});
+
+test("rejects malformed tree records before filtering unrequested paths", async () => {
+	const root = await repository();
+	const harness = toolCallHandler(root);
+	const boundary = await captureCandidateWithExec(harness.exec, root);
+	writeFileSync(join(root, "task.txt"), "staged source\n");
+	await git(root, "add", "task.txt");
+	const malformedTreeExec: CandidateExec = async (command, args, options) => {
+		if (command === "git" && args[0] === "ls-tree") {
+			return { stdout: "malformed-tree-record", stderr: "", code: 0, killed: false };
+		}
+		return harness.exec(command, args, options);
+	};
+
+	await assert.rejects(
+		prepareReview(malformedTreeExec, { candidate: boundary }, root, undefined, undefined, "staged"),
+		/review preparation received malformed Git tree entry/,
+	);
+});
+
+test("prepares staged file artifacts when an unchanged gitlink is present", async () => {
+	const root = await repository();
+	const head = await git(root, "rev-parse", "HEAD");
+	await git(root, "update-index", "--add", "--cacheinfo", `160000,${head},vendor/unchanged`);
+	await git(root, "commit", "--quiet", "-m", "add unchanged gitlink");
+	writeFileSync(join(root, "task.txt"), "staged with gitlink\n");
+	await git(root, "add", "task.txt");
+	const harness = toolCallHandler(root);
+	const reviewer = { agent: "code-reviewer", task: brief("Review target: staged") };
+
+	await harness.call(launch(reviewer));
+
+	const paths = JSON.parse(reviewer.task.match(/^Review paths: (.*)$/m)?.[1] ?? "[]") as string[];
+	const mapping = JSON.parse(reviewer.task.match(/^Staged path mapping: (.*)$/m)?.[1] ?? "[]") as Array<{ originalPath: string }>;
+	assert.deepEqual(mapping.map(({ originalPath }) => originalPath), ["task.txt"]);
+	assert.equal(readFileSync(paths[0] ?? "", "utf8"), "staged with gitlink\n");
+});
+
+test("rejects a changed staged gitlink instead of omitting its context", async () => {
+	const root = await repository();
+	const oldCommit = await git(root, "rev-parse", "HEAD");
+	await git(root, "commit", "--quiet", "--allow-empty", "-m", "next gitlink target");
+	const newCommit = await git(root, "rev-parse", "HEAD");
+	await git(root, "update-index", "--add", "--cacheinfo", `160000,${oldCommit},vendor/changed`);
+	await git(root, "commit", "--quiet", "-m", "add gitlink");
+	await git(root, "update-index", "--cacheinfo", `160000,${newCommit},vendor/changed`);
+	const harness = toolCallHandler(root);
+	const reviewer = { agent: "code-reviewer", task: brief("Review target: staged") };
+
+	await assert.rejects(harness.call(launch(reviewer)), /cannot prepare staged non-blob context/);
 });
 
 test("prepares staged-only review inputs without exposing partially staged working-tree content", async () => {

@@ -998,7 +998,32 @@ export async function executeVerificationEvidence(
 }
 
 export function registerVerificationEvidence(pi: ExtensionAPI): void {
-	if (pi.events) verificationEventState(pi.events);
+	if (pi.events) {
+		const events = pi.events;
+		const state = verificationEventState(events);
+		pi.on("session_shutdown", async () => {
+			const errors: Error[] = [];
+			for (const [taskId, started] of state.startedTasks) {
+				if (!started.stagedSnapshot) continue;
+				try {
+					let terminal = started.terminal;
+					if (!terminal) {
+						const status = await requestBackgroundTask(events, "status", { taskId });
+						terminal = status.tasks.find((task) => task.id === taskId);
+						if (!terminal) throw new Error("background task service did not return this task");
+					}
+					if (terminal.status === "running") {
+						terminal = (await requestBackgroundTask(events, "kill", { taskId })).task;
+						if (terminal.status === "running") throw new Error("background task remained running after kill");
+					}
+					started.stagedSnapshot.cleanup();
+				} catch (error) {
+					errors.push(new Error(`staged verification shutdown failed for task ${taskId}: ${String(error)}`, { cause: error }));
+				}
+			}
+			if (errors.length > 0) throw new AggregateError(errors, errors.map((error) => error.message).join("; "));
+		});
+	}
 	pi.registerTool({
 		name: "verification_evidence",
 		label: "Verification evidence",

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { afterEach, it, test } from "bun:test";
@@ -20,6 +20,7 @@ import {
 	executeVerification,
 	executeVerificationEvidence,
 	registerVerificationEvidence,
+	type CandidateExec,
 	type VerificationToolContext,
 } from "../extensions/artifact-contracts/verification.ts";
 import {
@@ -169,6 +170,7 @@ type ProcessResult = { exitCode: number; output: string };
 type FakeBashOptions = {
 	omitExitFor?: (command: string) => boolean;
 	resultFor?: (command: string) => ProcessResult | undefined;
+	nativeExec?: { calls: number };
 };
 
 async function runProcess(argv: readonly string[], cwd: string): Promise<ProcessResult> {
@@ -198,10 +200,34 @@ async function repository(): Promise<string> {
 	return directory;
 }
 
+async function runNativeExec(file: string, args: string[], options: Parameters<CandidateExec>[2]): ReturnType<CandidateExec> {
+	const child = Bun.spawn([file, ...args], { cwd: options?.cwd, stdout: "pipe", stderr: "pipe" });
+	let killed = false;
+	const kill = () => { killed = true; child.kill(); };
+	const timer = options?.timeout === undefined ? undefined : setTimeout(kill, options.timeout);
+	options?.signal?.addEventListener("abort", kill, { once: true });
+	try {
+		const [stdout, stderr, code] = await Promise.all([
+			new Response(child.stdout).text(),
+			new Response(child.stderr).text(),
+			child.exited,
+		]);
+		return { code: code ?? -1, stdout, stderr, killed };
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+		options?.signal?.removeEventListener("abort", kill);
+	}
+}
+
 function makeContext(directory: string, options: FakeBashOptions = {}): VerificationToolContext {
 	let nestedCall = 0;
+	const nativeExec = options.nativeExec;
 	return {
 		cwd: directory,
+		...(nativeExec ? { exec: async (file, args, execOptions) => {
+			nativeExec.calls += 1;
+			return runNativeExec(file, args, execOptions);
+		} } : {}),
 		executeTool: async (name, args) => {
 			assert.equal(name, "bash");
 			if (typeof args !== "object" || args === null || Array.isArray(args)) throw new Error("invalid fake bash input");
@@ -241,9 +267,11 @@ async function newRepository(): Promise<string> {
 }
 
 type FakeBackgroundService = EventBus & {
-	counts: Record<"run" | "status" | "logs", number>;
+	counts: Record<"run" | "status" | "logs" | "kill", number>;
 	task: BackgroundTaskSnapshot;
-	complete(status?: "completed" | "failed" | "killed", exitCode?: number | null): void;
+	tasks: Map<string, BackgroundTaskSnapshot>;
+	ordinaryTask?: BackgroundTaskSnapshot;
+	complete(status?: "completed" | "failed" | "killed", exitCode?: number | null, taskId?: string): void;
 };
 
 function backgroundService(directory: string, options: {
@@ -256,14 +284,18 @@ function backgroundService(directory: string, options: {
 	logsText?: string;
 	emitTerminalOnRun?: boolean;
 	notifyOnCompletion?: boolean;
+	ordinaryTask?: BackgroundTaskSnapshot;
+	beforeKill?: (task: BackgroundTaskSnapshot) => void | Promise<void>;
+	statusError?: string;
+	statusErrors?: Record<string, string>;
+	killErrors?: Record<string, string>;
 } = {}): FakeBackgroundService {
 	const listeners = new Map<string, Set<(value: unknown) => void>>();
-	const counts = { run: 0, status: 0, logs: 0 };
+	const counts = { run: 0, status: 0, logs: 0, kill: 0 };
 	const output = Buffer.from(options.output ?? "verification output\n");
 	const runtimeDirectory = mkdtempSync(join(realpathSync(tmpdir()), "pi-background-tasks-test-"));
 	runtimeRepositories.push(runtimeDirectory);
 	const outputPath = options.outputPath ?? join(runtimeDirectory, "task-1.output");
-	const absoluteOutputPath = isAbsolute(outputPath) ? outputPath : join(directory, outputPath);
 	let command = "";
 	let task: BackgroundTaskSnapshot = {
 		id: "task-1",
@@ -293,17 +325,23 @@ function backgroundService(directory: string, options: {
 		},
 		counts,
 		get task() { return task; },
-		complete(status: "completed" | "failed" | "killed" = "completed", exitCode: number | null = 0) {
-			task = {
-				...task,
+		tasks: new Map<string, BackgroundTaskSnapshot>(),
+		ordinaryTask: options.ordinaryTask,
+		complete(status: "completed" | "failed" | "killed" = "completed", exitCode: number | null = 0, taskId = task.id) {
+			const current = service.tasks.get(taskId);
+			if (!current) throw new Error(`unknown fake task ${taskId}`);
+			const terminal = {
+				...current,
 				status,
 				endTime: 2,
 				...(options.omitExitCode ? {} : { exitCode }),
 				notified: true,
 			};
+			service.tasks.set(taskId, terminal);
+			if (taskId === task.id) task = terminal;
 			service.emit(BACKGROUND_TASK_TERMINAL_CHANNEL, {
 				schema_version: BACKGROUND_TASK_TERMINAL_SCHEMA,
-				task,
+				task: terminal,
 			});
 		},
 	} as FakeBackgroundService;
@@ -313,12 +351,16 @@ function backgroundService(directory: string, options: {
 		if (typeof request.request_id !== "string" || typeof request.operation !== "string") throw new Error("malformed request");
 		if (request.operation === "run") {
 			counts.run += 1;
+			const taskId = `task-${counts.run}`;
+			const outputPath = options.outputPath ?? join(runtimeDirectory, `${taskId}.output`);
+			const taskOutputPath = isAbsolute(outputPath) ? outputPath : join(directory, outputPath);
 			if (!options.outputPath) {
-				writeFileSync(absoluteOutputPath, output);
-				writeFileSync(join(runtimeDirectory, "task-1.json"), "{}\n");
+				writeFileSync(taskOutputPath, output);
+				writeFileSync(join(runtimeDirectory, `${taskId}.json`), "{}\n");
 			}
 			command = String(request.payload?.command ?? "");
-			task = { ...task, command };
+			task = { ...task, id: taskId, outputPath, command };
+			service.tasks.set(taskId, task);
 			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
 				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
 				request_id: request.request_id,
@@ -326,35 +368,78 @@ function backgroundService(directory: string, options: {
 				ok: true,
 				result: task,
 			});
-			if (task.status !== "running" && options.emitTerminalOnRun !== false) service.complete(task.status, task.exitCode ?? null);
+			if (task.status !== "running" && options.emitTerminalOnRun !== false) service.complete(task.status, task.exitCode ?? null, taskId);
 			return;
 		}
 		if (request.operation === "status") {
 			counts.status += 1;
-			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
-				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
-				request_id: request.request_id,
-				operation: "status",
-				ok: true,
-				result: { tasks: [task] },
-			});
+			const taskId = typeof request.payload?.taskId === "string" ? request.payload.taskId : "";
+			const statusError = options.statusErrors?.[taskId] ?? options.statusError;
+			const requestedTask = service.tasks.get(taskId);
+			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, statusError
+				? {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "status",
+					ok: false,
+					error: statusError,
+				}
+				: {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "status",
+					ok: true,
+					result: { tasks: [...(requestedTask ? [requestedTask] : []), ...(options.ordinaryTask ? [options.ordinaryTask] : [])] },
+				});
+			return;
+		}
+		if (request.operation === "kill") {
+			counts.kill += 1;
+			const taskId = typeof request.payload?.taskId === "string" ? request.payload.taskId : "";
+			const killError = options.killErrors?.[taskId];
+			if (killError) {
+				service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "kill",
+					ok: false,
+					error: killError,
+				});
+				return;
+			}
+			const requestedTask = service.tasks.get(taskId);
+			if (!requestedTask) throw new Error(`unknown fake task ${taskId}`);
+			void (async () => {
+				await options.beforeKill?.(requestedTask);
+				service.complete("killed", null, taskId);
+				service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "kill",
+					ok: true,
+					result: { task: service.tasks.get(taskId), message: "killed" },
+				});
+			})();
 			return;
 		}
 		if (request.operation === "logs") {
 			counts.logs += 1;
+			const taskId = typeof request.payload?.taskId === "string" ? request.payload.taskId : "";
+			const loggedTask = service.tasks.get(taskId);
+			if (!loggedTask) throw new Error(`unknown fake task ${taskId}`);
 			const boundedText = output.subarray(0, MAX_EXPOSED_OUTPUT_BYTES).toString("utf8");
 			const truncated = output.byteLength > MAX_EXPOSED_OUTPUT_BYTES;
 			const text = truncated
-				? `${boundedText}\n\n[Showing head ${MAX_EXPOSED_OUTPUT_BYTES} bytes of ${output.byteLength} bytes; ${output.byteLength - MAX_EXPOSED_OUTPUT_BYTES} bytes omitted. Full output: ${outputPath}]`
-				: `${boundedText}\n\n[Full output: ${outputPath}]`;
+				? `${boundedText}\n\n[Showing head ${MAX_EXPOSED_OUTPUT_BYTES} bytes of ${output.byteLength} bytes; ${output.byteLength - MAX_EXPOSED_OUTPUT_BYTES} bytes omitted. Full output: ${loggedTask.outputPath}]`
+				: `${boundedText}\n\n[Full output: ${loggedTask.outputPath}]`;
 			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
 				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
 				request_id: request.request_id,
 				operation: "logs",
 				ok: true,
 				result: {
-					task,
-					path: options.logsPath ?? outputPath,
+					task: loggedTask,
+					path: options.logsPath ?? loggedTask.outputPath,
 					bytesRead: Math.min(output.byteLength, MAX_EXPOSED_OUTPUT_BYTES),
 					truncated,
 					tail: false,
@@ -364,6 +449,26 @@ function backgroundService(directory: string, options: {
 		}
 	});
 	return service;
+}
+
+async function shutdownVerification(service: FakeBackgroundService): Promise<void> {
+	let shutdown: (() => void | Promise<void>) | undefined;
+	registerVerificationEvidence({
+		events: service,
+		on: (event: string, handler: () => void | Promise<void>) => {
+			if (event === "session_shutdown") shutdown = handler;
+			return () => undefined;
+		},
+		registerTool: () => undefined,
+	} as never);
+	assert.ok(shutdown, "the registered session shutdown handler must be invokable");
+	await shutdown();
+}
+
+function stagedImageFromCommand(command: string): string {
+	const match = /^cd '([^']+)' &&/.exec(command);
+	assert.ok(match, "staged command must target its private source image");
+	return match[1];
 }
 
 process.on("exit", () => {
@@ -787,6 +892,167 @@ test("staged background checks execute the index image and clean it after collec
 	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
 });
 
+test("node --test records the failing staged test from a skip-worktree index with native exec", async () => {
+	const directory = await newRepository();
+	const testSource = "const test=require('node:test');const assert=require('node:assert/strict');test('staged assertion',()=>assert.equal('broken','fixed'));\n";
+	writeFileSync(join(directory, "broken.test.js"), testSource);
+	await git(directory, "add", "broken.test.js");
+	await git(directory, "update-index", "--skip-worktree", "broken.test.js");
+	const index = readFileSync(join(directory, ".git", "index"));
+	const nativeExec = { calls: 0 };
+	const result = await executeVerification("node-test-staged", {
+		operation: "run", source: "staged", argv: ["node", "--test"], cwd: ".", timeout: 10,
+	}, makeContext(directory, { nativeExec }));
+	assert.ok(nativeExec.calls > 0, "staged snapshot Git commands must use the native exec path");
+	assert.equal(result.evidence.exitCode, 1);
+	assert.equal(result.evidence.valid, true, "a real failing staged test is valid evidence");
+	assert.match(result.output, /staged assertion/);
+	assert.match(result.output, /fail 1/);
+	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index, "native snapshot execution preserves real index flags");
+});
+
+test("staged start uses the native exec path", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const nativeExec = { calls: 0 };
+	const started = await executeVerificationEvidence("native-start", {
+		operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+	}, undefined, makeContext(directory, { nativeExec }), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	assert.ok(nativeExec.calls > 0, "staged start Git commands must use the native exec path");
+	const executed = await runProcess(["bash", "-c", started.details.task.command], directory);
+	assert.equal(executed.exitCode, 0);
+	const image = executed.output.trim();
+	const collected = await executeVerificationEvidence("native-start-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.throws(() => statSync(image), /ENOENT/);
+});
+
+test("session shutdown cleans a terminal uncollected staged image", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("shutdown-terminal-start", {
+		operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const image = stagedImageFromCommand(started.details.task.command);
+	assert.equal((await runProcess(["bash", "-c", started.details.task.command], directory)).exitCode, 0);
+	assert.equal(existsSync(image), true);
+	await shutdownVerification(service);
+	assert.equal(existsSync(image), false);
+	assert.equal(service.counts.logs, 0, "shutdown must not fabricate collection or evidence");
+});
+
+test("session shutdown kills a running staged task before cleanup and leaves ordinary tasks alone", async () => {
+	const directory = await newRepository();
+	let child: ReturnType<typeof Bun.spawn> | undefined;
+	let imageWasPresentDuringKill = false;
+	const ordinaryTask: BackgroundTaskSnapshot = {
+		id: "ordinary-task", command: "ordinary", status: "running", outputPath: "/tmp/ordinary.output", cwd: directory,
+		startTime: 1, bytesWritten: 0, isAgent: false, notified: false, notifyOnCompletion: true, triggerOnCompletion: true,
+	};
+	let image = "";
+	const service = backgroundService(directory, {
+		status: "running", emitTerminalOnRun: false, ordinaryTask,
+		beforeKill: async () => {
+			imageWasPresentDuringKill = existsSync(image) && existsSync(join(image, "alive"));
+			child?.kill("SIGTERM");
+			await child?.exited;
+		},
+	});
+	const started = await executeVerificationEvidence("shutdown-running-start", {
+		operation: "start", source: "staged",
+		argv: ["node", "-e", "require('node:fs').writeFileSync('alive','yes');setInterval(()=>{},1000)"], cwd: ".", timeout: 30,
+	}, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	image = stagedImageFromCommand(started.details.task.command);
+	child = Bun.spawn(["bash", "-c", started.details.task.command], { cwd: directory, stdout: "ignore", stderr: "ignore" });
+	for (let attempt = 0; attempt < 100 && !existsSync(join(image, "alive")); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+	assert.equal(existsSync(join(image, "alive")), true, "the verification process must be using its source image");
+	await shutdownVerification(service);
+	assert.equal(imageWasPresentDuringKill, true, "the image remains until task termination completes");
+	assert.equal(service.task.status, "killed");
+	assert.equal(service.counts.kill, 1);
+	assert.equal(service.ordinaryTask?.status, "running", "unowned ordinary tasks must not be killed");
+	assert.equal(existsSync(image), false);
+	assert.notEqual(await child.exited, null);
+});
+
+it.each([
+	{ failure: "status" as const, statusErrors: { "task-1": "status service unavailable" }, expectedKills: 1 },
+	{ failure: "kill" as const, killErrors: { "task-1": "kill service unavailable" }, expectedKills: 2 },
+])("shutdown continues reconciling task 2 after task 1 $failure failure", async ({ failure, statusErrors, killErrors, expectedKills }) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false, statusErrors, killErrors });
+	const context = makeContext(directory);
+	const images: string[] = [];
+	for (let index = 0; index < 2; index += 1) {
+		const result = await executeVerificationEvidence(`shutdown-multi-${failure}-${index}`, {
+			operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+		}, undefined, context, service);
+		if (result.details.operation !== "start") throw new Error("expected start result");
+		images.push(stagedImageFromCommand(result.details.task.command));
+	}
+	for (const image of images) assert.equal(existsSync(image), true);
+	await assert.rejects(shutdownVerification(service), (error: unknown) => {
+		assert.ok(error instanceof AggregateError);
+		assert.equal(error.errors.length, 1);
+		assert.match(error.message, new RegExp(`task task-1.*${failure === "status" ? "status" : "kill"} service unavailable`));
+		return true;
+	});
+	assert.equal(existsSync(images[0]), true, "the task with uncertain ownership retains its source image");
+	assert.equal(existsSync(images[1]), false, "the unaffected task is killed before its image is removed");
+	assert.equal(service.tasks.get("task-2")?.status, "killed");
+	assert.equal(service.counts.kill, expectedKills);
+	service.complete("failed", 1, "task-1");
+	const collected = await executeVerificationEvidence(`shutdown-multi-${failure}-collect`, { operation: "collect", taskId: "task-1" }, undefined, context, service);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(collected.details.evidence.exitCode, 1);
+	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
+	assert.throws(() => statSync(images[0]), /ENOENT/);
+});
+
+test("shutdown reconciliation errors propagate and preserve the staged image", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false, statusError: "status service unavailable" });
+	const started = await executeVerificationEvidence("shutdown-error-start", {
+		operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+	}, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const image = stagedImageFromCommand(started.details.task.command);
+	await assert.rejects(shutdownVerification(service), /status service unavailable/);
+	assert.equal(existsSync(image), true, "uncertain task ownership must retain its source image");
+	service.complete("failed", 1);
+	const collected = await executeVerificationEvidence("shutdown-error-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(collected.details.evidence.exitCode, 1);
+	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
+	assert.throws(() => statSync(image), /ENOENT/);
+});
+
+test("collect cleanup and repeated shutdown are idempotent", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const started = await executeVerificationEvidence("repeat-shutdown-start", {
+		operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+	}, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const image = stagedImageFromCommand(started.details.task.command);
+	assert.equal((await runProcess(["bash", "-c", started.details.task.command], directory)).exitCode, 0);
+	const collected = await executeVerificationEvidence("repeat-shutdown-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
+	assert.equal(existsSync(image), false);
+	await shutdownVerification(service);
+	await shutdownVerification(service);
+	assert.equal(existsSync(image), false);
+});
+
 test("staged background collection invalidates index drift and cleans its image", async () => {
 	const directory = await newRepository();
 	const service = backgroundService(directory);
@@ -802,7 +1068,7 @@ test("staged background collection invalidates index drift and cleans its image"
 	const collected = await executeVerificationEvidence("drift-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
 	if (collected.details.operation !== "collect") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.valid, false);
-	assert.match(collected.details.evidence.invalidReason ?? "", /index changed/);
+	assert.match(collected.details.evidence.invalidReason ?? "", /tree changed/);
 	assert.throws(() => statSync(image), /ENOENT/);
 });
 
@@ -1159,7 +1425,7 @@ test("start preserves validation and fails when the EventBus is unavailable", as
 test("malformed terminal frames are rejected by the shared EventBus listener", async () => {
 	const directory = await newRepository();
 	const service = backgroundService(directory);
-	registerVerificationEvidence({ events: service, registerTool: () => undefined } as never);
+	registerVerificationEvidence({ events: service, on: () => () => undefined, registerTool: () => undefined } as never);
 	assert.throws(() => service.emit(BACKGROUND_TASK_TERMINAL_CHANNEL, {
 		schema_version: BACKGROUND_TASK_TERMINAL_SCHEMA,
 		task: { id: "task-1", status: "completed", extra: true },

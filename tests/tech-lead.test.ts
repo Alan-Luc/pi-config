@@ -71,7 +71,7 @@ const deliveryOwners = [
 	{
 		invariantName: "broad integration and candidate recapture",
 		canonicalOwnerPath: "prompts/eviscerate-diff.md",
-		requiredMarker: "The live lane runs the required broad integration recipe once against the frozen candidate, then recaptures it.",
+		requiredMarker: "The success worker runs the required broad integration recipe once against the frozen candidate; the attack worker does not duplicate that run.",
 	},
 	{
 		invariantName: "background jobs",
@@ -321,6 +321,14 @@ test("live verifier is a distinct fixed-low read-only role and test writing stay
 	assert.match(verifier, /^deny-env: GITLAB_PERSONAL_ACCESS_TOKEN$/m);
 	assert.match(verifier, /^skills: none$/m);
 	assert.match(verifier, /skills\/live-verification\/SKILL\.md/);
+	includesAll(verifier, [
+		"Keep required checks and their receipts in one live runtime",
+		"use bounded synchronous `verification_evidence` `run`",
+		"do not use `caller_ping` to wait or keep the helper alive",
+		"do not report receipts from a prior runtime as current `Verified by`",
+		"Preserve asynchronous `start`/`collect` when task ownership genuinely persists",
+		"not a synchronous default",
+	]);
 	assert.doesNotMatch(verifier, /(?:^|,)\s*(?:edit|write|subagent|TaskCreate|TaskUpdate)(?:,|$)/m);
 	assert.doesNotMatch(verifier, /^thinking-overrides:/m);
 	assert.match(agents["test-automation-engineer"], /^thinking: high$/m);
@@ -450,7 +458,8 @@ test("full review/testing selects complete lanes and hardens autonomously to clo
 		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
 		"eight live children", "complete pairs", "canonical `agents/live-verifier.md` role", "protected", "missing counterpart", "not votes",
 		"thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "fresh selected reviewer-profile",
-		"Focused and Full work use this ticket-close review/testing stage", "ticket-close", "Focused and Full work", "Direct work uses its consuming-surface check", "Risk can require Full treatment regardless of size", "Record a concrete reason for each skipped optional lane", "live-verification", "3 children", "5 (plus either optional pair)", "7 (both optional pairs)",
+		"Focused and Full work use this ticket-close review/testing stage", "ticket-close", "Focused and Full work", "Direct work uses its consuming-surface check", "Risk can require Full treatment regardless of size", "Record a concrete reason for each skipped optional lane", "live-verification-success", "live-verification-attack", "4 children", "6 (plus either optional pair)", "8 (both optional pairs)",
+		"both independent live workers are mandatory", "separate fresh sessions", "isolated disposable state and separate evidence", "Join both live results", "attack worker does not duplicate that run",
 		"Launch every selected ready lane together", "read-only", "Join all selected results", "Source edits invalidate", "exact-trigger failing regression", "repeat autonomously", "fixed or explicitly dismissed", "requires input", "The shared reviewer registry must drive metadata preparation and artifact/hash/path checks for every reviewer profile", "same generated immutable metadata", "Explicit `/eviscerate-diff` is an independent reviewer swarm", "Solo mode", "complete selected review, integration and live clearance", "selected and skipped lanes with reasons",
 	]);
 	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");

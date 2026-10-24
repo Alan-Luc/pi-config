@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "bun:test";
@@ -140,10 +140,55 @@ test("snapshot source permission changes invalidate the frozen image", async () 
   }
 });
 
+test("skip-worktree staged files are materialized", async () => {
+  const root = await fixture();
+  writeFileSync(join(root, "source.txt"), "staged broken\n"); await git(root, "add", "source.txt");
+  await git(root, "update-index", "--skip-worktree", "source.txt");
+  const index = readFileSync(join(root, ".git", "index"));
+  const snapshot = await createStagedSnapshot(exec, root);
+  try {
+    assert.equal(readFileSync(join(snapshot.directory, "source.txt"), "utf8"), "staged broken\n");
+    await snapshot.validate();
+    assert.deepEqual(readFileSync(join(root, ".git", "index")), index, "materialization must preserve real index flags");
+  } finally {
+    snapshot.cleanup();
+  }
+});
+
+test("node --test discovers a skip-worktree staged test", async () => {
+  const root = await fixture();
+  writeFileSync(join(root, "broken.test.js"), "const test=require('node:test');const assert=require('node:assert/strict');test('staged assertion',()=>assert.equal('broken','fixed'));\n");
+  await git(root, "add", "broken.test.js");
+  await git(root, "update-index", "--skip-worktree", "broken.test.js");
+  const index = readFileSync(join(root, ".git", "index"));
+  const snapshot = await createStagedSnapshot(exec, root);
+  try {
+    const result = await run(["node", "--test"], snapshot.cwd);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stdout + result.stderr, /staged assertion/);
+    assert.deepEqual(readFileSync(join(root, ".git", "index")), index, "node --test must not change real index flags");
+  } finally {
+    snapshot.cleanup();
+  }
+});
+
+test("stat-only index refresh with unchanged tree remains valid", async () => {
+  const root = await fixture();
+  const snapshot = await createStagedSnapshot(exec, root);
+  try {
+    const future = new Date(Date.now() + 2_000);
+    utimesSync(join(root, "source.txt"), future, future);
+    await git(root, "status", "--short");
+    await assert.doesNotReject(snapshot.validate(), "stat-only index changes with unchanged tree are valid");
+  } finally {
+    snapshot.cleanup();
+  }
+});
+
 test("stale index, HEAD, and modified snapshot source invalidate validation", async () => {
   const root = await fixture(); const snapshot = await createStagedSnapshot(exec, root);
   writeFileSync(join(root, "source.txt"), "next\n"); await git(root, "add", "source.txt");
-  await assert.rejects(snapshot.validate(), /index changed/); snapshot.cleanup();
+  await assert.rejects(snapshot.validate(), /tree changed/); snapshot.cleanup();
   const next = await createStagedSnapshot(exec, root);
   writeFileSync(join(next.directory, "source.txt"), "tampered\n");
   await assert.rejects(next.validate(), /source image changed/); next.cleanup();

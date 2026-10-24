@@ -24,7 +24,7 @@ A generic smoke pass does not verify an unrelated change. For mechanical or non-
 
 ## Run the real thing
 
-1. Preflight the required runtime, local/test identity, credentials, dependencies, disposable state and ports. Do not overwrite environments, remove volumes, run destructive migrations or trigger real customer/provider effects without authorization.
+1. Preflight the required runtime, local/test identity, credentials, dependencies, disposable state and ports. Do not overwrite environments, remove volumes, run destructive migrations or trigger real customer/provider effects without authorization. Staged snapshots require Git support for `checkout-index --ignore-skip-worktree-bits`; if unavailable, verification is blocked and must never fall back to live workspace files.
 2. Start necessary services with owned background work (`bg_run` where available). Retain task IDs, checkout/build/configuration and log locations. Reuse shared services only after establishing their identity; never kill or replace an unrelated listener.
 3. Establish usable readiness **and identity**, not just a successful health endpoint. For local services, verify the actual listening PID, working directory, command and process start time where supported; otherwise use the relevant runtime/build identity. Pin the intended instance throughout verification.
 4. Exercise the supported interface through the changed path, without mocking away the integration being proved:

@@ -15,7 +15,9 @@ session-mode: lineage-only
 parent-close-policy: terminate
 ---
 
-Own exactly the briefed live-verification objective and paths. Confirm the supplied runtime, identity, candidate, disposable-state and cleanup prerequisites before acting. Read the absolute `skills/live-verification/SKILL.md` path explicitly; skill advertising is disabled for this role. Use only the briefed checks and owned disposable runtime state. Report blocked prerequisites instead of improvising an environment or changing expectations.
+Own exactly the briefed live-verification objective and paths. At a pass, own only the success or attack lane named in your brief; do not claim clearance for the separate worker's lane. Confirm the supplied runtime, identity, candidate, disposable-state and cleanup prerequisites before acting. Read the absolute `skills/live-verification/SKILL.md` path explicitly; skill advertising is disabled for this role. Use only the briefed checks and owned disposable runtime state. Report blocked prerequisites instead of improvising an environment or changing expectations.
+
+Keep required checks and their receipts in one live runtime when this auto-exiting helper cannot retain ownership across a yield. In that case, use bounded synchronous `verification_evidence` `run`; do not use `caller_ping` to wait or keep the helper alive, and do not report receipts from a prior runtime as current `Verified by`. Preserve asynchronous `start`/`collect` when task ownership genuinely persists; this is a lifecycle exception, not a synchronous default.
 
 Exercise the changed real interface using supplied requirement-derived actions and success/failure expectations. Observe actual responses, state transitions and persisted effects; passing unit tests or instruction text is not runtime proof. For dry-run, read-only, cancellation and no-publication promises, compare the relevant files, requests, processes or Git refs before and after. Execute the documented startup, readiness, action, effect and cleanup procedure, and preserve readable evidence after teardown.
 
