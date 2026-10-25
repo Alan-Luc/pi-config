@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "bun:test";
+import { it, test } from "bun:test";
 import type {
 	EditToolCallEvent,
 	ExtensionAPI,
@@ -105,6 +105,17 @@ test("topic log writes and edits are blocked without changing persisted bytes", 
 		assert.match(blockedReason(handler(writeEvent(path, "replacement\n"), context(cwd))), /append-only/);
 		assert.match(blockedReason(handler(editEvent(path, [{ oldText: "original", newText: "replacement" }]), context(cwd))), /append-only/);
 		assert.equal(readFileSync(join(cwd, path), "utf8"), "original\n");
+	});
+});
+
+it.each([".lock", ".lock.candidate-7bbfe547-1c2b-4db3-ae18-c5181c515147", ".lock.quarantine-7bbfe547-1c2b-4db3-ae18-c5181c515147"])("topic lock sidecars remain write/edit protected: %s", (suffix) => {
+	withTempDir((cwd) => {
+		const path = `.harness/2026/10/24/local-feature.md${suffix}`;
+		writeFixture(cwd, path, "original lock state\n");
+		const handler = registeredHandler();
+		assert.match(blockedReason(handler(writeEvent(path, "replacement\n"), context(cwd))), /work_log|protected|append-only/);
+		assert.match(blockedReason(handler(editEvent(path, [{ oldText: "original", newText: "replacement" }]), context(cwd))), /work_log|protected|append-only/);
+		assert.equal(readFileSync(join(cwd, path), "utf8"), "original lock state\n");
 	});
 });
 

@@ -41,6 +41,7 @@ const SESSION_ID = String.raw`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 const PLAN_PATH = new RegExp(`^\\.harness/plans/${DATE}-${SLUG}\\.md$`);
 const DAILY_LOG_PATH = new RegExp(`^\\.harness/${DATED_DIRECTORY}\\.md$`);
 const TOPIC_LOG_PATH = new RegExp(`^\\.harness/${DATED_DIRECTORY}/${SLUG}\\.md$`);
+const TOPIC_LOG_SIDECAR_PATH = new RegExp(`^\\.harness/${DATED_DIRECTORY}/${SLUG}\\.md\\.lock(?:\\.(?:candidate|quarantine)-[^/]+)?$`);
 const HANDOFF_PATH = new RegExp(`^\\.harness/handoffs/${DATED_DIRECTORY}/${SESSION_ID}-${SLUG}\\.md$`);
 const REPORT_PATH = new RegExp(`^\\.harness/reports/${DATED_DIRECTORY}/${SESSION_ID}-${SLUG}\\.md$`);
 
@@ -213,6 +214,7 @@ export const PROTECTED: readonly { readonly path: RegExp; readonly reason: strin
 		reason: "Daily work logs are append-only: use the native work_log tool.",
 	},
 	{ path: TOPIC_LOG_PATH, reason: "Topic work logs are append-only: use the native work_log tool." },
+	{ path: TOPIC_LOG_SIDECAR_PATH, reason: "Topic log ownership sidecars are protected: use the native work_log tool and its authorized recovery operation." },
 	{ path: /^\.opencode\//, reason: "Legacy .opencode records are read-only." },
 ];
 

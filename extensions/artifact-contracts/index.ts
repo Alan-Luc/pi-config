@@ -8,7 +8,7 @@ import { ARTIFACT_CAPABILITY_VERSION } from "./schemas.ts";
 
 export const ARTIFACT_CAPABILITY_REQUEST_CHANNEL = "artifact-contracts:capability-request";
 export const ARTIFACT_CAPABILITY_CHANNEL = "artifact-contracts:capability";
-const ARTIFACT_CAPABILITY = { version: ARTIFACT_CAPABILITY_VERSION, mutations: true } as const;
+const ARTIFACT_CAPABILITY = { version: ARTIFACT_CAPABILITY_VERSION, mutations: true, topicLogs: 1 } as const;
 
 export function registerArtifactCapability(pi: Pick<ExtensionAPI, "events">): void {
 	const announce = () => pi.events.emit(ARTIFACT_CAPABILITY_CHANNEL, ARTIFACT_CAPABILITY);

@@ -287,13 +287,13 @@ test("the root capability announces after listening and responds to package-firs
 		`emit:${ARTIFACT_CAPABILITY_CHANNEL}`,
 	]);
 	assert.deepEqual(emitted, [
-		{ channel: ARTIFACT_CAPABILITY_CHANNEL, payload: { version: 1, mutations: true } },
+		{ channel: ARTIFACT_CAPABILITY_CHANNEL, payload: { version: 1, mutations: true, topicLogs: 1 } },
 	]);
 
 	listeners.get(ARTIFACT_CAPABILITY_REQUEST_CHANNEL)?.({});
 	assert.deepEqual(emitted.at(-1), {
 		channel: ARTIFACT_CAPABILITY_CHANNEL,
-		payload: { version: 1, mutations: true },
+		payload: { version: 1, mutations: true, topicLogs: 1 },
 	});
 });
 
