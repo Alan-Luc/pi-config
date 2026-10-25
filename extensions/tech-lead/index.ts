@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isSubagentChildEnvironment } from "../lib/shared.ts";
 import { appendInstructions } from "../artifact-contracts/render.ts";
+import { registerContinuationGuard } from "./continuation.ts";
 
 const SUBAGENT_TOOLS = ["subagent", "subagent_resume", "subagent_kill"];
 const UNUSED_TASK_TOOLS = ["TaskOutput", "TaskStop", "TaskExecute"];
@@ -23,6 +24,7 @@ export default function registerTechLead(
 		`${heading}\n\nSolo mode: work directly; do not delegate to subagents. Do not claim paired review or model diversity in solo mode; disclose required coverage gaps rather than waive them.\n` +
 		(next === -1 ? "" : instructions.slice(next));
 
+	registerContinuationGuard(pi, env);
 	let soloTools: string[] | undefined; // tools active before solo; defined iff solo is on
 	pi.on("session_start", () => {
 		pi.setActiveTools(pi.getActiveTools().filter((name) => !UNUSED_TASK_TOOLS.includes(name)));

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { it, test } from "bun:test";
-import { parseTaskSnapshot } from "../extensions/lib/task-snapshot.ts";
+import { parseTaskSnapshot, TASK_SNAPSHOT_REQUEST, TASK_SNAPSHOT_RESPONSE } from "../extensions/lib/task-snapshot.ts";
+import { parseWorkStatusRequest, requestWorkStatus } from "../extensions/lib/work-status.ts";
+import type { EventBus } from "@earendil-works/pi-coding-agent";
 
 function snapshot() {
 	const blockedBy: string[] = [];
@@ -14,6 +16,34 @@ function snapshot() {
 		},
 	};
 }
+
+test("task snapshot query correlates its actual producer and fails closed for foreign or ambiguous replies", () => {
+	const listeners = new Map<string, Set<(value: unknown) => void>>();
+	const events: EventBus = {
+		on(channel, listener) {
+			const handlers = listeners.get(channel) ?? new Set();
+			handlers.add(listener);
+			listeners.set(channel, handlers);
+			return () => { handlers.delete(listener); };
+		},
+		emit(channel, value) { for (const handler of listeners.get(channel) ?? []) handler(value); },
+	};
+	assert.equal(requestWorkStatus(events, "tasks", "native-parent"), undefined);
+	events.on(TASK_SNAPSHOT_REQUEST, (value) => {
+		const request = parseWorkStatusRequest(value);
+		if (request?.sessionId === "native-parent") events.emit(TASK_SNAPSHOT_RESPONSE, { ...snapshot(), ...request });
+	});
+	const reply = requestWorkStatus(events, "tasks", "native-parent");
+	assert.ok(reply, "registered task producer must answer on the correlated task channel");
+	assert.equal(reply.storeId, "isolated-store");
+	assert.equal(requestWorkStatus(events, "tasks", "foreign-parent"), undefined);
+	const removeDuplicate = events.on(TASK_SNAPSHOT_REQUEST, (value) => {
+		const request = parseWorkStatusRequest(value);
+		if (request) events.emit(TASK_SNAPSHOT_RESPONSE, { ...snapshot(), ...request });
+	});
+	assert.equal(requestWorkStatus(events, "tasks", "native-parent"), undefined);
+	removeDuplicate();
+});
 
 test("task snapshot is a detached typed wire observation, not an approval grant", () => {
 	const input = snapshot();

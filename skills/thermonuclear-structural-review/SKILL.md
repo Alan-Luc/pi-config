@@ -1,12 +1,12 @@
 ---
 name: thermonuclear-structural-review
-description: Challenge structural regressions and unnecessary complexity in a stable task-owned diff. Use for the full structural-review lane or an explicit demanding maintainability review, not every quick edit.
+description: Challenge structural regressions and unnecessary complexity in a stable task-owned diff. Use for a named structural-risk lane or an explicit demanding maintainability review, not every quick edit.
 license: MIT
 ---
 
 # Structural-quality review
 
-Apply this lens within the full concurrent counterpart review or an explicit bounded review. Review the supplied candidate, exact patch and named connected contracts. Ponytail remains the canonical minimalism policy.
+Apply this lens when selected for a named risk under the canonical acceptance table in `AGENTS.md` or an explicit bounded review; do not add another panel. Review the supplied candidate, exact patch and named connected contracts. Ponytail remains the canonical minimalism policy.
 
 Look beyond local polish for a concrete smaller coherent design:
 - Can whole branches, modes, wrappers or coordination layers disappear instead of moving around? Prefer fewer concepts, not merely more files.

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { EventBus } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./shared.ts";
+import { parseTaskSnapshot, TASK_SNAPSHOT_REQUEST, TASK_SNAPSHOT_RESPONSE, type TaskSnapshot } from "./task-snapshot.ts";
 
 export const VERIFICATION_STATUS_REQUEST = "workflow:verification-status:request:v1";
 export const VERIFICATION_STATUS_RESPONSE = "workflow:verification-status:response:v1";
@@ -31,16 +32,18 @@ export function parseWorkStatusRequest(value: unknown): WorkStatusRequest | unde
 /** Snapshot producers reply synchronously; silence or multiple replies is unknown. */
 export function requestWorkStatus(events: EventBus, owner: "verification", sessionId: string): VerificationStatus | undefined;
 export function requestWorkStatus(events: EventBus, owner: "delegation", sessionId: string): DelegationStatus | undefined;
+export function requestWorkStatus(events: EventBus, owner: "tasks", sessionId: string): TaskSnapshot | undefined;
 export function requestWorkStatus(
 	events: EventBus,
-	owner: "verification" | "delegation",
+	owner: "verification" | "delegation" | "tasks",
 	sessionId: string,
-): VerificationStatus | DelegationStatus | undefined {
+): VerificationStatus | DelegationStatus | TaskSnapshot | undefined {
 	const request = parseWorkStatusRequest({ version: 1, requestId: randomUUID(), sessionId });
 	if (!request) return undefined;
 	const [requestChannel, responseChannel] = owner === "verification"
 		? [VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE]
-		: [DELEGATION_STATUS_REQUEST, DELEGATION_STATUS_RESPONSE];
+		: owner === "delegation" ? [DELEGATION_STATUS_REQUEST, DELEGATION_STATUS_RESPONSE]
+			: [TASK_SNAPSHOT_REQUEST, TASK_SNAPSHOT_RESPONSE];
 	const replies: unknown[] = [];
 	const unsubscribe = events.on(responseChannel, (reply) => replies.push(reply));
 	try {
@@ -54,6 +57,7 @@ export function requestWorkStatus(
 	const reply = replies[0];
 	if (!isRecord(reply) || reply.version !== 1 || reply.requestId !== request.requestId
 		|| reply.sessionId !== sessionId || !identifier(reply.generation)) return undefined;
+	if (owner === "tasks") return parseTaskSnapshot(reply);
 	const identity: StatusIdentity = { ...request, generation: reply.generation };
 	if (owner === "verification") {
 		if (Object.keys(reply).length !== 6 || !count(reply.starting) || !identifiers(reply.uncollectedTaskIds)) return undefined;

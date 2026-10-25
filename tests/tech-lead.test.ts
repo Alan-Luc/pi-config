@@ -71,7 +71,7 @@ const deliveryOwners = [
 	{
 		invariantName: "broad integration and candidate recapture",
 		canonicalOwnerPath: "prompts/eviscerate-diff.md",
-		requiredMarker: "The success worker runs the required broad integration recipe once against the frozen candidate; the attack worker does not duplicate that run.",
+		requiredMarker: "runs the relevant broad integration recipe once against the frozen candidate; the attack worker does not duplicate that run.",
 	},
 	{
 		invariantName: "background jobs",
@@ -96,7 +96,8 @@ const deliveryOwners = [
 	{
 		invariantName: "finish records",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Record each completed implementation, review, or configuration slice in one append-only daily work-log entry.",
+		requiredMarker: "Record each completed implementation, review, or configuration slice once through `work_log`",
+
 	},
 	{
 		invariantName: "pre-dispatch ready set",
@@ -138,7 +139,7 @@ test("temporary dogfooding reuses evidence and records friction without ceremoni
 });
 
 test("one recipe skill owns preparation and six checkable cards without a second router", () => {
-	includesAll(techLead, ["For non-Direct work, load `task-recipe`", "bug-fix, feature, refactor, investigation, review or harness-change", "Side questions do not pause approved work", "unless Alan stops or a real gate blocks"]);
+	includesAll(techLead, ["For non-Direct work, load `task-recipe`", "select its matching card", "Side questions do not pause approved work", "pause/stop", "a real gate suppresses automatic continuation"]);
 	includesAll(taskRecipe, [
 		"sole authority", "steps verbatim into live tasks", "skipped: <reason>",
 		"Direct work is exempt", "whether or not it is committed",
@@ -198,7 +199,7 @@ test("task effort follows actual uncertainty within explicit locked-role capabil
 
 test("the router preserves direct, planning, and approval controls", () => {
 	includesAll(techLead, [
-		"Direct/Focused/Full table in `AGENTS.md`",
+		"Direct/Small/Focused/Full table in `AGENTS.md`",
 		"`plan with me`",
 		"`brief plan`",
 		"`take over`",
@@ -218,7 +219,7 @@ test("the router preserves lifecycle ownership without leaking delegation manual
 		"Delegate only across a real ownership or expertise seam",
 		"use its tool-owned delegation guidance and validated brief contract",
 	]);
-	includesAll(globalInstructions, ["| Direct |", "| Focused |", "| Full |", "no behavior change or material trust", "then the correctness pair and live verification", "explicit approval outrank size or defaults", "Direct is a tier", "never weaker rigor", "Explicit planning always writes a plan"]);
+	includesAll(globalInstructions, ["| Direct |", "| Small |", "| Focused |", "| Full |", "no behavior change or material trust", "one independent correctness/noise reviewer", "parent live success/failure proof", "independent success/attack live coverage", "Risk and explicit approval outrank size", "Direct is a tier", "never weaker rigor", "Explicit planning writes a plan"]);
 	for (const consumer of [techLead, reviewPrompt, durablePlan]) assert.doesNotMatch(consumer, /^\| (Direct|Full) \|/m, "work-tier definitions stay in AGENTS, separate from reviewer depth profiles");
 	for (const owner of [globalInstructions, techLead, reviewPrompt, durablePlan]) assert.doesNotMatch(owner, /truly trivial|quick iterations|very small, low-risk/i);
 	assert.doesNotMatch(techLead, /Apply Ponytail|Truly trivial direct work|A plan never authorizes push|The parent may create coherent passing local commits/);
@@ -251,7 +252,7 @@ test("the roster includes the canonical live verifier and explicit MR observer w
 		"test-automation-engineer",
 	]);
 	for (const name of ["implementation-engineer", "test-automation-engineer"]) {
-		assert.match(agents[name], /^tools: .*TaskCreate,TaskList,TaskGet,TaskUpdate$/m);
+		assert.match(agents[name], /^tools: .*TaskCreate,TaskList,TaskGet,TaskUpdate,submit_agent_result$/m);
 	}
 	assert.ok(globalInstructions.includes("Not run: <reason>"));
 	assert.match(agents["code-explorer"], /^thinking: low$/m);
@@ -310,7 +311,7 @@ it.each([
 			assert.deepEqual(resolveSubagentTimeoutState(profile), { timeoutBudget: { timeoutSeconds: 30 }, timeoutBlocksResume: true });
 		}
 		if (name === "live-verifier") {
-			assert.equal(profile.tools, "read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill");
+			assert.equal(profile.tools, "read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result");
 			assert.equal(profile.skills, "none");
 		}
 		assert.notEqual(profile.noContextFiles, true);
@@ -328,7 +329,7 @@ test("live verifier is a distinct fixed-low read-only role and test writing stay
 	assert.match(verifier, /^model: openai-codex\/gpt-6-luna$/m);
 	assert.match(verifier, /^thinking: low$/m);
 	assert.match(verifier, /^allow-model-override: false$/m);
-	assert.match(verifier, /^tools: read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill$/m);
+	assert.match(verifier, /^tools: read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result$/m);
 	assert.match(verifier, /^flags: --no-mcp$/m);
 	assert.match(verifier, /^deny-env: GITLAB_PERSONAL_ACCESS_TOKEN$/m);
 	assert.match(verifier, /^skills: none$/m);
@@ -394,7 +395,7 @@ test("global instructions retain Alan-specific conventions", () => {
 		"Prefer concurrent work when disjoint slices can make progress or avoid blocking",
 		"sequence dependencies and risky shared writes",
 		"record outcomes after completion",
-		"Focused and Full work close with the required adversarial pass",
+		"Non-Direct work closes through the policy-selected adversarial pass",
 		"do not independently rereview an unchanged patch",
 		"Label artifact links",
 		"Quiz Alan only when explicitly asked",
@@ -468,15 +469,15 @@ test("dismissed material findings keep evidence-based reasons in the pass summar
 	assert.ok(recipeCards.includes("dismissed with evidence and reason in the pass summary"));
 });
 
-test("full review/testing selects complete lanes and hardens autonomously to closure", () => {
-	includesAll(techLead, ["consequential architectural", "prompts/eviscerate-diff.md", "eight live children", "capacity", "Classify work once using the Direct/Focused/Full table", "Focused and Full work close with the required adversarial pass"]);
+test("policy-selected review keeps complete independent coverage without a fixed worker topology", () => {
+	includesAll(techLead, ["consequential architectural", "prompts/eviscerate-diff.md", "eight live children", "capacity", "canonical Direct/Small/Focused/Full table", "do not recreate a heavier topology", "Explicit deep review keeps its requested coverage"]);
 	includesAll(reviewPrompt, [
 		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
 		"eight live children", "complete pairs", "canonical `agents/live-verifier.md` role", "protected", "missing counterpart", "not votes",
 		"thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "fresh selected reviewer-profile",
-		"Focused and Full work use this ticket-close review/testing stage", "ticket-close", "Focused and Full work", "Direct work uses its consuming-surface check", "Risk can require Full treatment regardless of size", "Record a concrete reason for each skipped optional lane", "live-verification-success", "live-verification-attack", "4 children", "6 (plus either optional pair)", "8 (both optional pairs)",
-		"both independent live workers are mandatory", "separate fresh sessions", "isolated disposable state and separate evidence", "Join both live results", "attack worker does not duplicate that run",
-		"Launch every selected ready lane together", "read-only", "Join all selected results", "Source edits invalidate", "exact-trigger failing regression", "repeat autonomously", "fixed or explicitly dismissed", "requires input", "The shared reviewer registry must drive metadata preparation and artifact/hash/path checks for every reviewer profile", "same generated immutable metadata", "Explicit `/eviscerate-diff` is an independent reviewer swarm", "Solo mode", "complete selected review, integration and live clearance", "selected and skipped lanes with reasons",
+		"canonical acceptance table in `AGENTS.md`", "ticket-close", "Direct work uses its consuming-surface check", "risk outranks size", "Name concrete reasons for added", "live-verification-success", "live-verification-attack", "not a target worker count",
+		"When independent live workers are not selected, the parent owns",  "separate fresh sessions", "isolated disposable state and separate evidence", "Join both live results", "attack worker does not duplicate that run",
+		"Launch every selected ready lane together", "read-only", "Join all selected results", "Source edits invalidate", "exact-trigger failing regression", "repeat autonomously", "fixed or explicitly dismissed", "requires input", "The shared reviewer registry must drive metadata preparation and artifact/hash/path checks for every reviewer profile", "same generated immutable metadata", "Explicit `/eviscerate-diff` retains the requested independent coverage", "Solo mode", "complete selected review, integration and live clearance", "selected and skipped lanes with reasons",
 	]);
 	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
 	includesAll(cleanup, ["Ponytail", "trust-boundary", "data-loss", "unchanged behavior", "read-only", "parent"]);

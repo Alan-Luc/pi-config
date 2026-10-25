@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
 	lstatSync,
+	mkdirSync,
 	mkdtempSync,
 	readdirSync,
 	realpathSync,
@@ -19,6 +20,7 @@ import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-wo
 import {
 	registerReviewPreparation,
 	prepareReview,
+	validatePlanReviewMetadata,
 	addReviewMetadata,
 	type ReviewPreparationResult,
 	type TaskBoundary,
@@ -149,6 +151,95 @@ function preparationMetadata(): ReviewPreparationResult {
 		excludedPreDirtyPaths: ["/tmp/project/baseline.txt"],
 	};
 }
+
+test("prepares an ignored plan and explicit references without requiring a Git diff", async () => {
+	const root = await repository();
+	const planPath = ".harness/plans/2026-01-02-native-plan.md";
+	const planBytes = Buffer.from("# Native plan\nStatus: ready\nUpdated: 2026-01-02\n\n## Requirements and acceptance\n- Preserve the caller contract.\n\n## Approved decision\n- Freeze the source bytes.\n");
+	mkdirSync(join(root, ".harness/plans"), { recursive: true });
+	writeFileSync(join(root, ".gitignore"), ".harness/plans/\n");
+	await git(root, "add", ".gitignore");
+	await git(root, "commit", "--quiet", "-m", "ignore fixture plans");
+	writeFileSync(join(root, planPath), planBytes);
+	assert.equal(await git(root, "status", "--porcelain"), "");
+	const sourcePath = "task.txt";
+	const sourceBytes = readFileSync(join(root, sourcePath));
+	const harness = toolCallHandler(root);
+	const reviewer = {
+		agent: "code-reviewer",
+		task: brief([
+			"Review target: plan",
+			`Plan source: ${planPath}`,
+			'Plan references: [{"kind":"requirement","heading":"Requirements and acceptance"},{"kind":"decision","heading":"Approved decision"},{"kind":"source","path":"task.txt"}]',
+		].join("\n")),
+	};
+
+	await harness.call(launch(reviewer));
+
+	assert.match(reviewer.task, /^Review target: plan$/m);
+	assert.match(reviewer.task, /^Plan SHA-256: [0-9a-f]{64}$/m);
+	assert.match(reviewer.task, /^Plan source identity: /m);
+	assert.doesNotMatch(reviewer.task, /^Patch SHA-256:/m);
+	const artifact = reviewer.task.match(/^Plan artifact: (.*)$/m)?.[1];
+	if (!artifact) throw new Error("missing immutable plan artifact");
+	artifactDirectories.push(dirname(artifact));
+	assert.deepEqual(readFileSync(artifact), planBytes);
+	const references = JSON.parse(reviewer.task.match(/^Plan references: (.*)$/m)?.[1] ?? "[]") as Array<{ kind: string; path: string; artifact: string; sha256: string }>;
+	assert.deepEqual(references.map(({ kind, path }) => [kind, path]), [
+		["requirement", "Requirements and acceptance"],
+		["decision", "Approved decision"],
+		["source", sourcePath],
+	]);
+	assert.equal(references.every(({ artifact: copy, sha256 }) => createHash("sha256").update(readFileSync(copy)).digest("hex") === sha256), true);
+	assert.deepEqual(readFileSync(join(root, sourcePath)), sourceBytes);
+	await validatePlanReviewMetadata(reviewer.task, harness.exec, root);
+	const coercedKind = reviewer.task.replace(/^Plan references:.*$/m, `Plan references: ${JSON.stringify([...references, { ...references[0], kind: ["requirement"] }])}`);
+	await assert.rejects(validatePlanReviewMetadata(coercedKind, harness.exec, root), /reference metadata is malformed/);
+	let guardrail: ((event: ToolCallEvent, ctx: ExtensionContext) => Promise<unknown> | unknown) | undefined;
+	registerGuardrails({
+		exec: harness.exec,
+		on: (name: string, handler: typeof guardrail) => { if (name === "tool_call") guardrail = handler; return () => undefined; },
+	} as unknown as ExtensionAPI, {});
+	if (!guardrail) throw new Error("guardrail hook was not registered");
+	await guardrail(launch(reviewer), { cwd: root } as ExtensionContext);
+	await guardrail(launch({ children: ["code-reviewer-sol", "code-reviewer-opus"].map((agent) => ({ agent, task: reviewer.task })) }), { cwd: root } as ExtensionContext);
+	await assert.rejects(validatePlanReviewMetadata(reviewer.task.replace("Review target: plan", "Review target: staged"), harness.exec, root), /wrong review target/);
+	await assert.rejects(validatePlanReviewMetadata(`${reviewer.task}\nPatch SHA-256: ${"0".repeat(64)}`, harness.exec, root), /mixed PLAN and patch metadata/);
+	for (const invalid of [
+		reviewer.task.replace("Review target: plan", "Review target: staged"),
+		`${reviewer.task}\nPatch SHA-256: ${"0".repeat(64)}`,
+		`${reviewer.task}\nReview target: plan`,
+		reviewer.task.replace(/^Plan references:.*\n?/m, ""),
+	]) await assert.rejects(guardrail(launch({ agent: "code-reviewer", task: invalid }), { cwd: root } as ExtensionContext), /plan|PLAN|Review target/);
+	writeFileSync(artifact, "tampered plan\n");
+	await assert.rejects(validatePlanReviewMetadata(reviewer.task, harness.exec, root), /artifact hash does not match/);
+	await assert.rejects(guardrail(launch(reviewer), { cwd: root } as ExtensionContext), /artifact hash does not match/);
+	writeFileSync(artifact, planBytes);
+	writeFileSync(join(root, planPath), Buffer.concat([planBytes, Buffer.from("changed\n")]));
+	await assert.rejects(validatePlanReviewMetadata(reviewer.task, harness.exec, root), /source drifted/);
+	await assert.rejects(guardrail(launch(reviewer), { cwd: root } as ExtensionContext), /source drifted/);
+	writeFileSync(join(root, planPath), planBytes);
+	writeFileSync(join(root, sourcePath), "source drift\n");
+	await assert.rejects(validatePlanReviewMetadata(reviewer.task, harness.exec, root), /reference source drifted|source identity drifted/);
+	await assert.rejects(guardrail(launch(reviewer), { cwd: root } as ExtensionContext), /reference source drifted|source identity drifted/);
+}, 30_000);
+
+test("rejects plan targets with mixed diff metadata or missing explicit references", async () => {
+	const root = await repository();
+	const harness = toolCallHandler(root);
+	await assert.rejects(
+		harness.call(launch({ agent: "code-reviewer", task: brief("Review target: plan\nReview range: HEAD") })),
+		/rejects mixed Review target and Review range/,
+	);
+	await assert.rejects(
+		harness.call(launch({ agent: "code-reviewer", task: brief("Review target: plan\nPlan source: .harness/plans/2026-01-02-native-plan.md") })),
+		/requires exactly one Plan references JSON line/,
+	);
+	await assert.rejects(
+		harness.call(launch({ agent: "code-reviewer", task: brief("Review target: plan\nPlan source: ../outside.md\nPlan references: []") })),
+		/canonical Plan source path/,
+	);
+});
 
 test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-haiku"] as const)("prepares registered reviewer profile %s", async (agent) => {
 	assert.equal(AGENT_OUTPUT[agent], "review");

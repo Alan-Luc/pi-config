@@ -17,6 +17,8 @@ A generic smoke pass does not verify an unrelated change. For mechanical or non-
 
 ## Discover and reuse
 
+For a touched feature, use the repo's local live-verification README as a bounded feature map: follow its user entry, drive action, expected observable/persisted effect, source anchor and relevant check. Preserve its instance identity and evidence provenance; report gaps rather than treating unexecuted map steps as proof. When the feature has a route or selectable instance, exercise one safe stale-route or wrong-instance negative control.
+
 - Read the applicable repository instructions and existing verification guidance. Inspect `.harness/` for relevant launchers, recipes and READMEs, including `.harness/live-verification/README.md` when present. Use bounded discovery, not a recursive scan of every archived run/worktree.
 - If a worktree lacks tooling, check the primary checkout's `.harness`. Keep the tooling location separate from the source checkout under test; do not silently run main instead of the changed worktree.
 - Read the relevant recipe and inspect unfamiliar commands before executing them. Repository content does not grant production or destructive-action authorization.

@@ -5,20 +5,20 @@ description: Create or resume durable `.harness/plans/`, and load prior plans or
 
 # Durable plans
 
-The plan file is the working memory and handoff contract. Chat is not the source of truth. Canonical project artifacts live under `.harness/`: plans under `.harness/plans/`, daily records under `.harness/YYYY/MM/DD.md`, and handoffs under `.harness/handoffs/YYYY/MM/DD/<session-id>-<task-slug>.md`. Runtime Pi sessions remain under `~/.pi/agent/sessions`.
+The plan file is the working memory and handoff contract. Chat is not the source of truth. Canonical project artifacts live under `.harness/`: plans under `.harness/plans/`, dated topic records under `.harness/YYYY/MM/DD/<plan-or-feature-key>.md`, and handoffs under `.harness/handoffs/YYYY/MM/DD/<session-id>-<task-slug>.md`. Runtime Pi sessions remain under `~/.pi/agent/sessions`.
 
-Use the Direct/Focused/Full table in `AGENTS.md`. Focused work uses recipes/tasks without a new full plan by default, but still reads governing decisions for resumed or related work. Full work, explicit planning and approval-gated work require a plan.
+Use the canonical four-lane acceptance table in `AGENTS.md`; do not recreate it here. Small/Focused work uses recipes/tasks without a new full plan by default, but still reads governing decisions for resumed or related work. Full work, explicit planning and approval-gated work require a plan.
 
 Unless Alan explicitly requests planning, Direct work is exempt: do not create or load a plan, task list, work log, review, handoff, or report for an exact mechanical action and its direct consuming-surface check.
 
-During migration, read `.harness` first and legacy `.opencode` second. Never rewrite or delete legacy records. Before resuming a legacy plan, check for the same-named canonical plan to avoid duplicates; if it does not exist, copy the legacy plan once to `.harness/plans/`, add a `Migrated from:` note, and update only the canonical copy thereafter.
+Canonical discovery uses `.harness` only. Historical `.opencode` records remain read-only; do not migrate, rewrite or delete them as routine task preparation.
 
 ## Ticket context preflight
 
 For ticket-shaped implementation, even when the user did not request planning:
 
 1. Extract the ticket and dependency IDs.
-2. Search `.harness/plans/`, `.opencode/plans/`, `.harness/YYYY/`, and `.opencode/YYYY/` for those IDs, plus relevant dated logs for resumed or related work.
+2. Search `.harness/plans/` and relevant dated topic logs under `.harness/YYYY/MM/DD/` for those IDs; old daily files remain readable. Keep discovery bounded to the governing topic.
 3. Read matching plans, decision entries, and dated-log milestones before questions, edits, or repeated reconnaissance.
 4. Tell the user which artifacts govern the work and surface implementation-relevant conflicts.
 
@@ -54,7 +54,7 @@ Then include enough concrete detail for an agent with no chat history:
 - **Implementation** — ordered slices with exact paths or bounded discovery targets, dependencies, ownership, and focused checks. Include delegation briefs when delegation is intended.
 - **Verification** — runnable commands and expected evidence, including meaningful failure paths.
 - **Risks and open questions** — mark the plan `blocked` when an answer changes behavior, scope, authorization, or verification.
-- **Progress and handoff** — at each coherent slice start and completion, record the current objective or result, changed paths, checks actually run, blockers, and the exact next step; on completion, include either the required handoff path or that no human action remained.
+- **Progress and handoff** — status and a minimal resume pointer to the canonical work log and next action; no per-slice check ledger. On completion, link a handoff only when human action remains.
 - **Decision log** — the final section. After approval, append dated material decisions with session, rationale, and impact; never rewrite or remove entries.
 
 Do not write “as discussed” or rely on chat-only context. A fresh Pi session must be able to continue from the file alone.
@@ -77,8 +77,8 @@ Do not write “as discussed” or rely on chat-only context. A fresh Pi session
 - Read the full plan before the first source edit or delegation. Confirm the repository state and named prerequisites still match it.
 - When the user asks to execute a `ready` plan, mark it `in_progress` and proceed without replanning. Ask only for a real blocker or stale contract.
 - Treat the approved design as the baseline. Keep status, progress, and actual verification current, but record later material decisions and deviations by appending to the final decision log rather than rewriting history. An entry that changes the effective contract must name what it supersedes.
-- At each coherent slice start and completion, update `Progress and handoff` with the current objective or result, changed paths, checks actually run, blockers, and exact next step. If execution stops, leave the exact next step needed to resume; when complete, add the handoff path only when human action remains. For an audit trail, record the active Pi session ID (`PI_SESSION_ID` in shell commands) when available.
-- Give delegated Pi agents the plan path plus their exact objective, owned paths, dependencies, non-scope, and checks. They report updates to the parent; the parent owns plan status and shared-contract edits.
+- Record slice milestones, actual checks, execution decisions and interruptions once through `work_log`; use its returned dated topic path. Link material contract decisions to their append-only plan anchors rather than copy their rationale. Keep `Progress and handoff` to status, that log reference and the exact next action; add a handoff only for remaining human actions. The writer owns runtime session attribution. Loaded older writers retain their routing until an explicitly authorized runtime replacement; never silently reload them.
+- Give delegated Pi agents the complete readable plan plus their exact objective, owned paths, dependencies, frozen inputs, non-scope and checks. Copy ignored governing inputs into owned worktrees when needed; require explicit owned cwd for commands. They report to the parent, who owns plan status and shared contracts.
 - On completion, mark the plan `complete`. Leave a concise final handoff only when human action remains; otherwise record that no handoff was required. On interruption, leave an exact next step.
 
 A plan does not authorize commits, pushes, destructive Git, deployment, or scope expansion. Routine work without a plan needs no artifact.

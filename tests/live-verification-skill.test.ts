@@ -19,6 +19,19 @@ test("live verification owns bounded failure rechecks, negative-promise proof, a
 	]) assert.ok(skill.includes(marker), marker);
 });
 
+test("live-verification skills define a bounded feature map and honest negative-control provenance", async () => {
+	const [build, live] = await Promise.all([
+		readFile(resolve(import.meta.dir, "../skills/build-live-verification/SKILL.md"), "utf8"),
+		readFile(resolve(import.meta.dir, "../skills/live-verification/SKILL.md"), "utf8"),
+	]);
+	for (const marker of ["user entry point", "drive action", "observable or persisted effect", "source anchor", "relevant check", "evidence gap/provenance", "stale-route or wrong-instance control", "selected instance"]) {
+		assert.ok(build.includes(marker), marker);
+	}
+	for (const marker of ["bounded feature map", "expected observable/persisted effect", "source anchor", "relevant check", "instance identity", "evidence provenance", "safe stale-route or wrong-instance negative control", "report gaps"]) {
+		assert.ok(live.includes(marker), marker);
+	}
+});
+
 test.each(["live-verification", "build-live-verification", "thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "task-recipe"])(
 	"Pi default discovery advertises %s as a selectable user skill",
 	async (skillName) => {

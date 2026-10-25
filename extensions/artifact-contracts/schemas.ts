@@ -89,7 +89,7 @@ export const SCHEMAS = {
 			{ heading: "Risks and open questions", hint: "blocking questions and known risks" },
 			{
 				heading: "Progress and handoff",
-				hint: "per slice: result, changed paths, checks run, blockers, exact next step",
+				hint: "minimal current status and resume pointer to the canonical topic work log; no duplicated execution ledger",
 				subheading: { pattern: new RegExp(`^### ${DATE} — \\S.*$`), example: "### YYYY-MM-DD — <slice or milestone>" },
 			},
 			{

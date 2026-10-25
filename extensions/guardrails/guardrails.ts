@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
-import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
 import { AGENT_OUTPUT } from "../artifact-contracts/schemas.ts";
+import type { CandidateExec } from "../artifact-contracts/verification.ts";
+import { authorizeGitPublication, type PublicationRuntime } from "./publication.ts";
 
 // Keep review artifacts inside Pi's runtime-specific temporary directory.
 export const REVIEW_ARTIFACT_ROOT = resolve(tmpdir(), "pi");
@@ -110,7 +112,7 @@ async function requireReviewArtifact(value: string): Promise<Buffer> {
 	}
 }
 
-async function validateBoundedReview(input: unknown): Promise<void> {
+async function validateBoundedReview(input: unknown, ctx: ExtensionContext, exec: CandidateExec): Promise<void> {
 	const launches: RecordValue[] = [];
 	if (!isRecord(input)) return;
 	if (Array.isArray(input.children) && input.children.length > 0) {
@@ -121,12 +123,20 @@ async function validateBoundedReview(input: unknown): Promise<void> {
 	for (const launch of launches) {
 		if (typeof launch.agent !== "string" || AGENT_OUTPUT[launch.agent] !== "review") continue;
 		const task = typeof launch.task === "string" ? launch.task : "";
+		const reviewTargetMatches = [...task.matchAll(/^Review target:[ \t]*(.*)$/gim)];
+		const reviewTarget = reviewTargetMatches[0]?.[1].trim();
+		if (reviewTarget === "plan") {
+			// Preparation imports this module's artifact root.
+			const { validatePlanReviewMetadata } = await import("../artifact-contracts/review-preparation.ts");
+			await validatePlanReviewMetadata(task, exec, ctx.cwd, ctx.signal);
+			continue;
+		}
+		if (/^ {0,3}Plan (?:source|artifact|SHA-256|source identity|references):/im.test(task)) throw new Error("Blocked plan review metadata without Review target: plan");
 		const artifactMatch = task.match(/^Patch artifact:[ \t]*(.*)$/im);
 		const reviewPathsMatch = task.match(/^Review paths:[ \t]*(.*)$/im);
 		const excludedPreDirtyPathsMatch = task.match(/^Excluded pre-dirty paths:[ \t]*(.*)$/im);
 		const candidateMatch = task.match(/^Candidate:[ \t]*(candidate_[0-9a-f]{64})$/im);
 		const patchHashMatch = task.match(/^Patch SHA-256:[ \t]*([0-9a-f]{64})$/im);
-		const reviewTargetMatches = [...task.matchAll(/^Review target:[ \t]*(.*)$/gim)];
 		const stagedMappingMatch = task.match(/^Staged path mapping:[ \t]*(.*)$/im);
 		const reviewPathsText = reviewPathsMatch?.[1].trim() ?? "";
 		let reviewPaths: string[] = [];
@@ -147,7 +157,6 @@ async function validateBoundedReview(input: unknown): Promise<void> {
 		} catch {
 			excludedPreDirtyPaths = undefined;
 		}
-		const reviewTarget = reviewTargetMatches[0]?.[1].trim();
 		if (reviewTargetMatches.length > 1 || (reviewTarget !== undefined && reviewTarget !== "staged")) {
 			throw new Error("Blocked code-reviewer task with an unknown or duplicate Review target");
 		}
@@ -248,7 +257,7 @@ function isVerificationIndexCommand(command: string): boolean {
 		&& dirname(indexDirectory) === resolve(tmpdir());
 }
 
-function directGit(command: ShellCommand, allowGitIndexFile: boolean): string[] | undefined {
+function directGit(command: ShellCommand, allowGitIndexFile: boolean, workdir: string): string[] | undefined {
 	let index = 0;
 	while (isAssignment(command[index])) {
 		const retarget = command[index].match(/^(GIT_[A-Z0-9_]*)(\+?=)/);
@@ -256,6 +265,17 @@ function directGit(command: ShellCommand, allowGitIndexFile: boolean): string[] 
 			throw new Error("Blocked direct Git invocation with GIT_* environment retargeting");
 		}
 		index += 1;
+	}
+	if (basename(command[index] ?? "") === "env") {
+		const candidates = [command, ...command.flatMap((token) => tokenizeShell(token) ?? [])];
+		for (const candidate of candidates) {
+			for (let offset = 0; offset < candidate.length; offset += 1) {
+				if (!isGit(candidate[offset])) continue;
+				const tokens = candidate.slice(offset);
+				const invocation = parseGit(tokens, workdir);
+				if (invocation?.name === "push" || invocation?.name === "commit") return tokens;
+			}
+		}
 	}
 	return isGit(command[index]) ? command.slice(index) : undefined;
 }
@@ -356,7 +376,7 @@ async function validateWorktree(args: string[], projectRoot: string, workdir: st
 
 const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which owns local commits and may push only with Alan's explicit authorization.";
 
-async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean, allowGitIndexFile = false): Promise<void> {
+async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean, allowGitIndexFile = false, publication?: PublicationRuntime): Promise<void> {
 	const retargets = [...command.matchAll(/\b(?:export\s+)?(GIT_[A-Z0-9_]*)(\+?=)/g)];
 	if (retargets.some((match) => !allowGitIndexFile || match[1] !== "GIT_INDEX_FILE" || match[2] !== "=") && /\bgit\b/.test(command)) {
 		throw new Error("Blocked direct Git invocation with GIT_* environment retargeting");
@@ -367,13 +387,26 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 	for (const shellCommand of commands) {
 		let index = 0; while (isAssignment(shellCommand[index])) index += 1;
 		if (shellCommand[index] === "cd") { changedDirectory = true; continue; }
-		const tokens = directGit(shellCommand, allowGitIndexFile); if (!tokens) continue;
+		const tokens = directGit(shellCommand, allowGitIndexFile, workdir); if (!tokens) continue;
 		if (tokens.includes("--no-verify")) throw new Error("Blocked direct Git invocation containing --no-verify");
 		const invocation = parseGit(tokens, workdir);
 		if (!invocation) { if (isChild) throw new Error(SUBAGENT_GIT_BLOCK); continue; }
 		if (isChild && (invocation.name === "commit" || invocation.name === "push")) throw new Error(SUBAGENT_GIT_BLOCK);
 		if (invocation.name === "commit" && hasCommitNoVerify(invocation.args)) throw new Error("Blocked direct Git commit containing -n (short for --no-verify)");
-		if (invocation.name === "push") validatePush(invocation.args);
+		if (invocation.name === "push") {
+			validatePush(invocation.args);
+			if (!publication) throw new Error("Blocked publication gate disabled: trusted parent grant, target, candidate and scanner adapters are required.");
+			if (commands.length !== 1 || shellCommand.length !== 4 || shellCommand[0] !== "git" || shellCommand[1] !== "push"
+				|| invocation.args.length !== 2 || invocation.args[0] !== "origin") {
+				throw new Error("Blocked publication: only a standalone literal git push origin <task-branch> is supported; no companion command, wrapper or override.");
+			}
+			if (await realpath(invocation.workdir) !== await realpath(publication.cwd)) throw new Error("Blocked publication: trusted runtime belongs to another worktree.");
+			const decision = await authorizeGitPublication({
+				action: "push", remote: "origin", branch: invocation.args[1], isChild,
+				force: false, delete: false, mirror: false, prune: false, refspec: false, retarget: false, override: false,
+			}, publication);
+			if (!decision.allowed) throw new Error(`Blocked publication: ${decision.reason}`);
+		}
 		if (invocation.name === "worktree" && invocation.args[0] === "add") {
 			if (changedDirectory) throw new Error("Blocked direct git worktree add after cd; set the Bash workdir explicitly");
 			await validateWorktree(invocation.args.slice(1), projectRoot, invocation.workdir);
@@ -384,7 +417,7 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 function normalize(command: string): string { return command.replace(ALLOW_INFRA_RETRY_RE, "").trim().replace(/\s+/g, " "); }
 function resultText(event: ToolResultEvent): string { return event.content.filter((item) => item.type === "text").map((item) => item.text).join("\n"); }
 
-export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string, string | undefined>> = process.env): void {
+export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string, string | undefined>> = process.env, publication?: PublicationRuntime): void {
 	const isChild = isSubagentChildEnvironment(env);
 	const infrastructureFailures = new Map<string, string>();
 	const verificationCalls = new Set<string>();
@@ -394,7 +427,7 @@ export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string
 			return;
 		}
 		if (event.toolName === "subagent") {
-			await validateBoundedReview(event.input);
+			await validateBoundedReview(event.input, ctx, pi.exec);
 			return;
 		}
 		if (event.toolName !== "bash" || !isRecord(event.input) || typeof event.input.command !== "string") return;
@@ -402,7 +435,7 @@ export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string
 		const allowGitIndexFile = event.parentToolCallId !== undefined
 			&& verificationCalls.has(event.parentToolCallId)
 			&& isVerificationIndexCommand(command);
-		await validateGit(command, ctx.cwd, ctx.cwd, isChild, allowGitIndexFile);
+		await validateGit(command, ctx.cwd, ctx.cwd, isChild, allowGitIndexFile, publication);
 		const normalized = normalize(command);
 		const blocker = infrastructureFailures.get(normalized);
 		if (blocker && !ALLOW_INFRA_RETRY_RE.test(command)) throw new Error(`Blocked repeat bash command after an unchanged DB/infrastructure failure in this session: ${normalized}\nPrevious blocker: ${blocker}\nIf the dependency state changed and you need one explicit retry, prefix the command with PI_ALLOW_INFRA_RETRY=1.`);

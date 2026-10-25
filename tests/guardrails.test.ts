@@ -23,8 +23,12 @@ async function artifact(): Promise<string> {
 	return path;
 }
 
- test.each(["git push origin main", "git push --force origin feature", "git -C /tmp/repository push -f origin release"])("allows explicit push: %s", async (command) => {
-	await call(createPi(), command);
+test("publication is disabled without trusted parent grant, target, candidate and scanner adapters", async () => {
+	await expect(call(createPi(), "git push origin TASK-123-fix")).rejects.toThrow(/publication.*disabled/);
+});
+
+test.each(["git push origin main", "git push --force origin feature", "git -C /tmp/repository push -f origin release"])("denies publication without runtime authority: %s", async (command) => {
+	await expect(call(createPi(), command)).rejects.toThrow("publication");
 });
 
 test.each([
@@ -165,15 +169,15 @@ function createPiWithEnv(env: Record<string, string | undefined>) {
 	return handlers;
 }
 
-test("subagent children cannot commit or push; main session unaffected", async () => {
+test("children cannot commit or push; parents can commit but publication stays disabled", async () => {
 	const key = "PI_SUBAGENT_AGENT";
 	const child = createPiWithEnv({ [key]: "1" });
-	for (const command of ["git commit -m x", "git push origin main", "git -C repo commit", "ls && git push origin main", "git --no-pager commit -m x", "git -C"]) {
+	for (const command of ["git commit -m x", "git push origin main", "git -C repo commit", "ls && git push origin main", "git --no-pager commit -m x", "git -C", "env git commit -m x", "env -S 'git push origin TASK-123-fix'"]) {
 		await expect(call(child, command)).rejects.toThrow("Subagents cannot commit or push");
 	}
 	await call(child, "git status");
 	await call(child, "git diff");
 	const main = createPiWithEnv({});
 	await call(main, "git commit -m x");
-	await call(main, "git push origin main");
+	await expect(call(main, "git push origin main")).rejects.toThrow("publication gate disabled");
 });
