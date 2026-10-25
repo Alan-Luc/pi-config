@@ -266,11 +266,12 @@ function directGit(command: ShellCommand, allowGitIndexFile: boolean, workdir: s
 		}
 		index += 1;
 	}
-	while (command[index] === "command" || command[index] === "exec") {
-		const wrapper = command[index++];
+	while (["builtin", "command", "exec"].includes(basename(command[index] ?? ""))) {
+		const wrapper = basename(command[index++]);
 		while (command[index]?.startsWith("-")) {
 			const option = command[index++];
 			if (option === "--") break;
+			if (wrapper === "builtin") return undefined;
 			if (wrapper === "command") {
 				if (!/^-[pvV]+$/.test(option) || /[vV]/.test(option)) return undefined;
 			} else {
@@ -284,18 +285,21 @@ function directGit(command: ShellCommand, allowGitIndexFile: boolean, workdir: s
 			}
 		}
 	}
-	if (basename(command[index] ?? "") === "env") {
-		const candidates = [command, ...command.flatMap((token) => tokenizeShell(token) ?? [])];
-		for (const candidate of candidates) {
-			for (let offset = 0; offset < candidate.length; offset += 1) {
-				if (!isGit(candidate[offset])) continue;
-				const tokens = candidate.slice(offset);
-				const invocation = parseGit(tokens, workdir);
-				if (invocation?.name === "push" || invocation?.name === "commit") return tokens;
-			}
+	const invocationTokens = command.slice(index);
+	if (isGit(invocationTokens[0])) return invocationTokens;
+	// Keep quoted command text opaque outside the existing env split-string handling.
+	const candidates = basename(invocationTokens[0] ?? "") === "env"
+		? [invocationTokens, ...invocationTokens.flatMap((token) => tokenizeShell(token) ?? [])]
+		: [invocationTokens];
+	for (const candidate of candidates) {
+		for (let offset = 0; offset < candidate.length; offset += 1) {
+			if (!isGit(candidate[offset])) continue;
+			const tokens = candidate.slice(offset);
+			const invocation = parseGit(tokens, workdir);
+			if (invocation?.name === "push" || invocation?.name === "commit") return tokens;
 		}
 	}
-	return isGit(command[index]) ? command.slice(index) : undefined;
+	return undefined;
 }
 
 function parseGit(tokens: string[], workdir: string): { name: string; args: string[]; workdir: string } | undefined {

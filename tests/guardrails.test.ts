@@ -27,7 +27,7 @@ test("publication is disabled without trusted parent grant, target, candidate an
 	await expect(call(createPi(), "git push origin TASK-123-fix")).rejects.toThrow(/publication.*disabled/);
 });
 
-test.each(["git push origin main", "git push --force origin feature", "git -C /tmp/repository push -f origin release", "command git push origin TASK-123-fix", "exec git push origin TASK-123-fix", "command -p git push origin TASK-123-fix", "exec -- git push origin TASK-123-fix", "command -p -- git push origin TASK-123-fix", "exec -c git push origin TASK-123-fix", "exec -a fixture-name git push origin TASK-123-fix", "command command -p git push origin TASK-123-fix"])("denies publication without runtime authority: %s", async (command) => {
+test.each(["git push origin main", "git push --force origin feature", "git -C /tmp/repository push -f origin release", "command git push origin TASK-123-fix", "exec git push origin TASK-123-fix", "command -p git push origin TASK-123-fix", "exec -- git push origin TASK-123-fix", "command -p -- git push origin TASK-123-fix", "exec -c git push origin TASK-123-fix", "exec -a fixture-name git push origin TASK-123-fix", "command command -p git push origin TASK-123-fix", "builtin command git push origin TASK-123-fix", "/usr/bin/command git push origin TASK-123-fix", "time git push origin TASK-123-fix", "nohup git push origin TASK-123-fix"])("denies publication without runtime authority: %s", async (command) => {
 	await expect(call(createPi(), command)).rejects.toThrow("publication");
 });
 

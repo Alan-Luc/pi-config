@@ -123,7 +123,7 @@ function registeredPushGuard(runtime: PublicationRuntime) {
 	return (command: string) => handlers.get("tool_call")?.({ toolName: "bash", toolCallId: "fixture-push", input: { command } } as never, { cwd: runtime.cwd } as never);
 }
 
-test.each(["command git push origin TASK-123-fix", "exec git push origin TASK-123-fix", "command -p git push origin TASK-123-fix", "exec -- git push origin TASK-123-fix", "command -p -- git push origin TASK-123-fix", "exec -c git push origin TASK-123-fix", "exec -a fixture-name git push origin TASK-123-fix", "command command -p git push origin TASK-123-fix"])("registered guard rejects wrapped pushes without invoking adapters: %s", async (command) => withFixture(async (fixture) => {
+test.each(["command git push origin TASK-123-fix", "exec git push origin TASK-123-fix", "command -p git push origin TASK-123-fix", "exec -- git push origin TASK-123-fix", "command -p -- git push origin TASK-123-fix", "exec -c git push origin TASK-123-fix", "exec -a fixture-name git push origin TASK-123-fix", "command command -p git push origin TASK-123-fix", "builtin command git push origin TASK-123-fix", "/usr/bin/command git push origin TASK-123-fix", "time git push origin TASK-123-fix", "nohup git push origin TASK-123-fix"])("registered guard rejects wrapped pushes without invoking adapters: %s", async (command) => withFixture(async (fixture) => {
 	await expect(registeredPushGuard(fixture.runtime)(command)).rejects.toThrow("publication");
 	expect(fixture.requests).toHaveLength(0);
 	expect(fixture.scans).toHaveLength(0);
@@ -158,7 +158,7 @@ test.each([
 
 test("registered guard leaves read-only Git wrapper queries outside publication authorization", async () => withFixture(async (fixture) => {
 	await registeredPushGuard(fixture.runtime)("env git show push");
-	await registeredPushGuard(fixture.runtime)("command -v git");
+	for (const command of ["command -v git", "builtin command -v git push", "/usr/bin/command -v git push", "printf '%s\\n' 'git push origin TASK-123-fix'", "rg 'git push' file.ts"]) await registeredPushGuard(fixture.runtime)(command);
 	expect(fixture.requests).toHaveLength(0);
 	expect(fixture.scans).toHaveLength(0);
 }));
