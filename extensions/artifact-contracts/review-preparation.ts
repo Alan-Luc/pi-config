@@ -430,6 +430,14 @@ function generatedMetadata(result: ReviewPreparationResult | PlanReviewPreparati
 	];
 }
 
+function planSection(text: string, heading: string): Buffer {
+	const lines = text.split("\n");
+	const start = lines.indexOf(`## ${heading}`);
+	if (start < 0) throw new Error(`plan review reference heading does not exist: ${heading}`);
+	const end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+	return Buffer.from(`${lines.slice(start, end < 0 ? undefined : end).join("\n")}\n`, "utf8");
+}
+
 function readPlanSource(repositoryRoot: string, sourcePath: string): Buffer {
 	if (sourcePath.includes("\0") || isAbsolute(sourcePath) || sourcePath.split(/[\\/]/).includes("..")) {
 		throw new Error(`plan review rejects unsafe source path: ${sourcePath}`);
@@ -481,11 +489,7 @@ export async function preparePlanReview(
 		const path = reference.kind === "source" ? reference.path : reference.heading;
 		let bytes: Buffer;
 		if (reference.kind === "source") bytes = readPlanSource(repositoryRoot, reference.path);
-		else {
-			const start = planText.indexOf(`## ${reference.heading}`);
-			const next = planText.indexOf("\n## ", start + 1);
-			bytes = Buffer.from(`${planText.slice(start, next < 0 ? undefined : next)}\n`, "utf8");
-		}
+		else bytes = planSection(planText, reference.heading);
 		const sha256 = createHash("sha256").update(bytes).digest("hex");
 		const artifact = join(directory, `${sha256}.source`);
 		writePatch(artifact, bytes, "plan review source");
@@ -555,13 +559,7 @@ export async function validatePlanReviewMetadata(task: string, exec: CandidateEx
 		if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new Error(`plan review reference artifact hash mismatch: ${entry.path}`);
 		let original: Buffer;
 		if (entry.kind === "source") original = readPlanSource(identity.repositoryRoot, entry.path);
-		else {
-			const text = planBytes.toString("utf8");
-			const start = text.indexOf(`## ${entry.path}`);
-			if (start < 0) throw new Error(`plan review reference heading no longer exists: ${entry.path}`);
-			const next = text.indexOf("\n## ", start + 1);
-			original = Buffer.from(`${text.slice(start, next < 0 ? undefined : next)}\n`, "utf8");
-		}
+		else original = planSection(planBytes.toString("utf8"), entry.path);
 		if (!original.equals(bytes)) throw new Error(`plan review reference source drifted after preparation: ${entry.path}`);
 	}
 }

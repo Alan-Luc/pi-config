@@ -152,10 +152,10 @@ function preparationMetadata(): ReviewPreparationResult {
 	};
 }
 
-test("prepares an ignored plan and explicit references without requiring a Git diff", async () => {
+test.each(["## Approved decision notes", "### Approved decision notes"])("prepares an ignored plan and exact references despite decoy %s", async (decoy) => {
 	const root = await repository();
 	const planPath = ".harness/plans/2026-01-02-native-plan.md";
-	const planBytes = Buffer.from("# Native plan\nStatus: ready\nUpdated: 2026-01-02\n\n## Requirements and acceptance\n- Preserve the caller contract.\n\n## Approved decision\n- Freeze the source bytes.\n");
+	const planBytes = Buffer.from(`# Native plan\nStatus: ready\nUpdated: 2026-01-02\n\n${decoy}\n- Decoy heading.\n\n## Requirements and acceptance\n- Preserve the caller contract.\n\n## Approved decision\n- Freeze the source bytes.\n`);
 	mkdirSync(join(root, ".harness/plans"), { recursive: true });
 	writeFileSync(join(root, ".gitignore"), ".harness/plans/\n");
 	await git(root, "add", ".gitignore");
@@ -191,8 +191,16 @@ test("prepares an ignored plan and explicit references without requiring a Git d
 		["source", sourcePath],
 	]);
 	assert.equal(references.every(({ artifact: copy, sha256 }) => createHash("sha256").update(readFileSync(copy)).digest("hex") === sha256), true);
+	const decision = references.find(({ kind }) => kind === "decision");
+	assert.ok(decision);
+	assert.equal(readFileSync(decision.artifact, "utf8"), "## Approved decision\n- Freeze the source bytes.\n\n");
 	assert.deepEqual(readFileSync(join(root, sourcePath)), sourceBytes);
 	await validatePlanReviewMetadata(reviewer.task, harness.exec, root);
+	const misboundReferences = references.map((reference) => reference.kind === "decision"
+		? { ...reference, artifact: references.find(({ kind }) => kind === "requirement")?.artifact ?? reference.artifact }
+		: reference);
+	const misboundTask = reviewer.task.replace(/^Plan references:.*$/m, `Plan references: ${JSON.stringify(misboundReferences)}`);
+	await assert.rejects(validatePlanReviewMetadata(misboundTask, harness.exec, root), /reference artifact hash mismatch|reference source drifted/);
 	const coercedKind = reviewer.task.replace(/^Plan references:.*$/m, `Plan references: ${JSON.stringify([...references, { ...references[0], kind: ["requirement"] }])}`);
 	await assert.rejects(validatePlanReviewMetadata(coercedKind, harness.exec, root), /reference metadata is malformed/);
 	let guardrail: ((event: ToolCallEvent, ctx: ExtensionContext) => Promise<unknown> | unknown) | undefined;
