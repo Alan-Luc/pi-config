@@ -192,7 +192,7 @@ def run_list(args, parser):
             omissions.append({"path": str(path), "session_id": header["id"], "reason": reason})
             continue
         metadata = subagent_metadata(entries)
-        if header.get("parentSession") and metadata:
+        if metadata:
             omissions.append({"path": str(path), "session_id": header["id"], "reason": "known-subagent"})
             continue
         timestamps = [iso_time(entry.get("timestamp")) for _, entry in entries]
@@ -229,7 +229,7 @@ def run_extract(args, parser):
     if not isinstance(header.get("cwd"), str) or not header["cwd"] or Path(header["cwd"]).expanduser().resolve() != workspace:
         parser.error("session workspace does not match --workspace")
     metadata = subagent_metadata(entries)
-    if header.get("parentSession") and metadata:
+    if metadata:
         parser.error("refusing known subagent session")
     branch, leaf_basis = path_for_leaf(entries)
     if leaf_basis == "broken-or-cyclic-parent-chain":

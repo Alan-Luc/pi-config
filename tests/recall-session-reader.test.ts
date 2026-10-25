@@ -46,6 +46,23 @@ it("lists only explicit workspace sessions, excluding current, marked children, 
   } finally { rmSync(base, { recursive: true, force: true }); }
 });
 
+it.each([undefined, "/parent.jsonl"])("excludes a valid launch marker independently of parent lineage (%s)", (parentSession) => {
+  const { base, sessions } = fixture();
+  try {
+    const file = join(sessions, "marked-child.jsonl");
+    writeFileSync(file, session("marked-child", { parentSession, entries: [{ type: "custom", id: "marker", parentId: null, timestamp: iso(21), customType: "pi-subagents_launch_metadata", data: { version: 1, name: "worker", mode: "background" } }, entry("child-entry", "marker", "private child result", 22)] }));
+    const common = ["--session-dir", sessions, "--workspace", workspace, "--current-session-id", "other"];
+    const listed = run(["list", ...common], base);
+    assert.equal(listed.status, 0, listed.stderr);
+    const output = JSON.parse(listed.stdout);
+    assert.equal(output.sessions.some((item: { session_id: string }) => item.session_id === "marked-child"), false);
+    assert.ok(output.omissions.some((item: { session_id: string; reason: string }) => item.session_id === "marked-child" && item.reason === "known-subagent"));
+    const extracted = run(["extract", ...common, "--session-file", file], base);
+    assert.notEqual(extracted.status, 0);
+    assert.match(extracted.stderr, /refusing known subagent session/);
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
 it("extracts active leaf ancestors with original entry citations and honest activity ordering", () => {
   const { base, sessions } = fixture();
   try {
