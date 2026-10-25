@@ -95,6 +95,16 @@ export function recordVerificationEvidence(input: EvidenceInput, attempt?: Verif
 	return evidence;
 }
 
+export function getVerificationEvidence(id: string): VerificationEvidence | undefined {
+	return evidenceById.get(id);
+}
+
+export function verificationEvidenceErrors(id: string): string[] {
+	const evidence = evidenceById.get(id);
+	if (!evidence) return [`Verified by: evidence ${id} was not found in this session`];
+	return verificationClaimErrors({ evidenceId: id, command: evidence.command, exitCode: evidence.exitCode });
+}
+
 export function verificationClaimErrors(claim: VerificationClaim): string[] {
 	const evidence = evidenceById.get(claim.evidenceId);
 	if (!evidence) return [`Verified by: evidence ${claim.evidenceId} was not found in this session`];

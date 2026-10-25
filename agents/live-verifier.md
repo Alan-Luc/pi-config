@@ -7,7 +7,7 @@ auto-exit: true
 model: openai-codex/gpt-6-luna
 allow-model-override: false
 thinking: low
-tools: read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill
+tools: read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result
 flags: --no-mcp
 deny-env: GITLAB_PERSONAL_ACCESS_TOKEN
 skills: none

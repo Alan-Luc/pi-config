@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, it, test } from "bun:test";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { correctionMessage, failureReport, registerHandoffHooks, replyInstructions, replySchema, verifiedByErrors } from "../extensions/artifact-contracts/handoffs.ts";
 import {
 	BACKGROUND_TASK_REQUEST_CHANNEL,
@@ -11,6 +12,7 @@ import {
 	BACKGROUND_TASK_RESPONSE_SCHEMA,
 } from "../extensions/artifact-contracts/background-tasks.ts";
 import { renderTemplate } from "../extensions/artifact-contracts/render.ts";
+import { currentAssignment, sameAssignment } from "../extensions/artifact-contracts/assignment.ts";
 import { validate } from "../extensions/artifact-contracts/validate.ts";
 import {
 	createCandidateIdentity,
@@ -19,9 +21,158 @@ import {
 
 const child = { PI_SUBAGENT_AGENT: "code-explorer" };
 const worker = { PI_SUBAGENT_AGENT: "other" };
+
+function nativeSession() {
+	return SessionManager.inMemory("/tmp/artifact-handoff-native");
+}
+
+function appendUser(session: SessionManager, text: string): string {
+	return session.appendMessage({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() });
+}
+
+it.each([
+	"implementation-engineer", "implementation-engineer-sol", "implementation-engineer-opus",
+	"test-automation-engineer", "live-verifier", "code-explorer", "mr-babysitter",
+	"code-reviewer", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-sonnet", "code-reviewer-haiku",
+])("%s explicitly exposes the schema-bound submission tool", async (role) => {
+	const source = await Bun.file(new URL(`../agents/${role}.md`, import.meta.url)).text();
+	const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1];
+	assert.ok(frontmatter, "a real checked-in role profile must be read");
+	const tools = frontmatter.match(/^tools:[ \t]*(.*)$/m)?.[1].split(",").map((name) => name.trim());
+	assert.ok(tools?.includes("submit_agent_result"), "registered result submission must remain active under the role's explicit loadout");
+});
+
+test("assignment snapshots use persisted entry identity and survive compaction ancestry", () => {
+	const session = nativeSession();
+	const requestId = appendUser(session, "identical assignment");
+	const original = currentAssignment(session);
+	assert.equal(original?.requestEntryId, requestId);
+	const compactId = session.appendCompaction("Compacted context", requestId, 12);
+	const compacted = currentAssignment(session);
+	assert.equal(compacted?.requestEntryId, requestId);
+	assert.ok(sameAssignment(original!, compacted!));
+	assert.ok(compacted?.branchEntryIds.includes(compactId));
+});
+
+test("branch navigation invalidates evidence on the newly selected native branch", () => {
+	const session = nativeSession();
+	const requestId = appendUser(session, "branch request");
+	session.appendCustomEntry("old-branch-marker");
+	const registered = hooks(worker);
+	const context = { sessionManager: session };
+	registered.agent_start({} as never, context);
+	const run = evidence("'bun' 'test'");
+	const oldLeafId = session.getLeafId();
+	session.branch(requestId);
+	const newLeafId = session.appendCustomEntry("alternate-branch-marker");
+	registered.session_tree({ oldLeafId, newLeafId } as never, context);
+	assert.match(verifiedByErrors(workerReply(run.verifiedBy ?? "")).join("\n"), /was not found in this session/);
+});
+
+test("abandoning an unobserved acknowledgement clears the same-prefix submission and receipt", async () => {
+	const session = nativeSession();
+	const requestId = appendUser(session, "branch request");
+	const registered = hooks(worker, undefined, true);
+	const context = { sessionManager: session };
+	registered.agent_start({} as never, context);
+	for (let attempt = 0; attempt < 3; attempt++) {
+		assert.equal(await registered.message_end(event("missing structured result"), context), undefined);
+		const correction = registered.turn_end({} as never) as { continue: boolean };
+		assert.equal(correction.continue, true);
+	}
+	const proof = evidence("'bun' 'test'");
+	const tool = registered.tools.get("submit_agent_result") as unknown as SubmitTool;
+	await tool.execute("submit-branch", {
+		status: "done", objective: "Branch result", currentState: "Submitted before navigation.",
+		decisions: [], proofIds: [proof.id], observationIds: [], notRun: [], nextSteps: [], doNot: [],
+	}, undefined, undefined, context);
+	const oldLeafId = session.appendCustomEntry("submission-ack");
+	session.branch(requestId);
+	const newLeafId = session.getLeafId();
+	registered.session_tree({ oldLeafId, newLeafId } as never, context);
+	assert.match(verifiedByErrors(workerReply(proof.verifiedBy ?? "")).join("\n"), /was not found in this session/);
+	assert.equal(await registered.message_end(event("ignored model prose"), context), undefined);
+	const correction = registered.turn_end({} as never) as { continue: boolean; entries: Array<{ content: string }> };
+	assert.equal(correction.continue, true);
+	assert.match(correction.entries[0].content, /structured result missing/);
+});
+
+test("new sessions and runtime replacement reset assignment-bound state", async () => {
+	const firstSession = nativeSession();
+	appendUser(firstSession, "first assignment");
+	const registered = hooks(worker, undefined, true);
+	const firstContext = { sessionManager: firstSession };
+	registered.agent_start({} as never, firstContext);
+	const firstProof = evidence("'bun' 'test' 'first-session'");
+	const tool = registered.tools.get("submit_agent_result") as unknown as SubmitTool;
+	const fields = (proofId: string) => ({
+		status: "done", objective: "Assignment", currentState: "Persisted locally.",
+		decisions: [], proofIds: [proofId], observationIds: [], notRun: [], nextSteps: [], doNot: [],
+	});
+	await tool.execute("submit-first", fields(firstProof.id), undefined, undefined, firstContext);
+
+	const nextSession = nativeSession();
+	const nextContext = { sessionManager: nextSession };
+	registered.session_start({ reason: "new" } as never, nextContext);
+	assert.match(verifiedByErrors(workerReply(firstProof.verifiedBy ?? "")).join("\n"), /was not found in this session/);
+
+	appendUser(nextSession, "replacement assignment");
+	registered.agent_start({} as never, nextContext);
+	const replacementProof = evidence("'bun' 'test' 'replacement-session'");
+	await tool.execute("submit-replacement", fields(replacementProof.id), undefined, undefined, nextContext);
+	registered.session_start({ reason: "reload" } as never, nextContext);
+	assert.match(verifiedByErrors(workerReply(replacementProof.verifiedBy ?? "")).join("\n"), /was not found in this session/);
+	assert.equal(await registered.message_end(event("ignored model prose"), nextContext), undefined);
+});
+
+test("same-request retry, compaction, and repair preserve structured state", async () => {
+	const session = nativeSession();
+	const requestId = appendUser(session, "same assignment");
+	const registered = hooks(worker, undefined, true);
+	const context = { sessionManager: session };
+	registered.agent_start({} as never, context);
+	const firstProof = evidence("'bun' 'test' 'before-repair'");
+	const tool = registered.tools.get("submit_agent_result") as unknown as SubmitTool;
+	const fields = (proofId: string) => ({
+		status: "done", objective: "Assignment", currentState: "Persisted locally.",
+		decisions: [], proofIds: [proofId], observationIds: [], notRun: [], nextSteps: [], doNot: [],
+	});
+	await tool.execute("submit-initial", fields(firstProof.id), undefined, undefined, context);
+	registered.agent_start({} as never, context);
+	session.appendCompaction("Preserved same-request context", requestId, 1);
+	registered.agent_start({} as never, context);
+	const firstFinal = await registered.message_end(event("ignored model prose"), context) as { message: { content: Array<{ text: string }> } };
+	assert.ok(firstFinal.message.content[0].text.includes(firstProof.id));
+
+	registered.tool_call({ toolName: "bash", toolCallId: "repair-write", input: {} } as never);
+	registered.tool_result({ toolName: "bash", toolCallId: "repair-write", content: [], isError: false } as never);
+	assert.equal(await registered.message_end(event("stale proof needs repair"), context), undefined);
+	assert.match((registered.turn_end({} as never) as { entries: Array<{ content: string }> }).entries[0].content, /stale: bash tool activity/);
+	const repairedProof = evidence("'bun' 'test' 'after-repair'");
+	await tool.execute("submit-repaired", fields(repairedProof.id), undefined, undefined, context);
+	const repairedFinal = await registered.message_end(event("ignored model prose"), context) as { message: { content: Array<{ text: string }> } };
+	assert.ok(repairedFinal.message.content[0].text.includes(repairedProof.id));
+});
+
+test("identical-text follow-ups and abandoned branches are different assignments", () => {
+	const session = nativeSession();
+	const firstRequest = appendUser(session, "same text");
+	const oldBranchEntry = session.appendCustomEntry("branch-marker");
+	const first = currentAssignment(session);
+	session.branch(firstRequest);
+	session.appendCustomEntry("alternate-branch");
+	const alternate = currentAssignment(session);
+	assert.equal(alternate?.requestEntryId, firstRequest);
+	assert.equal(sameAssignment(first!, alternate!), false);
+	assert.notEqual(oldBranchEntry, alternate?.branchEntryIds.at(-1));
+	appendUser(session, "same text");
+	const followUp = currentAssignment(session);
+	assert.notEqual(followUp?.requestEntryId, firstRequest);
+	assert.equal(sameAssignment(alternate!, followUp!), false);
+});
 const valid = "## Status\ndone\n\n## Answer\nFound it.\n\n## Relevant paths\n`src/a.ts:1`\n\n## Uncertainty\nNone.";
 
-type Handler = (event: never) => unknown;
+type Handler = (event: never, context?: unknown) => unknown;
 type StatusResponse = (requestId: unknown) => Record<string, unknown>;
 
 function record(value: unknown): Record<string, unknown> {
@@ -30,11 +181,14 @@ function record(value: unknown): Record<string, unknown> {
 	return value as Record<string, unknown>;
 }
 
-function hooks(env: Record<string, string | undefined>, statusResponse?: StatusResponse): Record<string, Handler> {
+type HookRegistry = Record<string, Handler> & { tools: Map<string, unknown> };
+
+function hooks(env: Record<string, string | undefined>, statusResponse?: StatusResponse, structuredToolActive = false): HookRegistry {
 	const previous = { ...process.env };
 	for (const key of Object.keys(process.env)) delete process.env[key];
 	Object.assign(process.env, env);
-	const registered: Record<string, Handler> = {};
+	const registered = {} as HookRegistry;
+	Object.defineProperty(registered, "tools", { value: new Map<string, unknown>() });
 	const listeners = new Map<string, Set<(value: unknown) => void>>();
 	const events = {
 		on(channel: string, listener: (value: unknown) => void) {
@@ -61,6 +215,8 @@ function hooks(env: Record<string, string | undefined>, statusResponse?: StatusR
 	});
 	registerHandoffHooks({
 		on: (name: string, handler: Handler) => { registered[name] = handler; return () => undefined; },
+		registerTool: (tool: { name: string }) => registered.tools.set(tool.name, tool),
+		getActiveTools: () => structuredToolActive ? ["submit_agent_result"] : [],
 		events,
 	} as never);
 	for (const key of Object.keys(process.env)) delete process.env[key];
@@ -125,12 +281,14 @@ it.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-rev
 });
 
 test("appends the template without dropping the prior prompt", () => {
-	const registered = hooks(child);
+	const registered = hooks(child, undefined, true);
 	const start = { systemPromptOptions: { appendSystemPrompt: "Prior instructions" } } as never;
 	registered.before_agent_start(start);
 	assert.match((start as { systemPromptOptions: { appendSystemPrompt: string } }).systemPromptOptions.appendSystemPrompt, /^Prior instructions\n\n/);
 	assert.match((start as { systemPromptOptions: { appendSystemPrompt: string } }).systemPromptOptions.appendSystemPrompt, /Template:/);
 	assert.equal(replyInstructions("explorer").includes(renderTemplate("explorer")), true);
+	assert.match(replyInstructions("explorer"), /submit_agent_result/);
+	assert.match(replyInstructions("explorer"), /recorded, not delivered/i);
 
 	const unset = { systemPromptOptions: {} as { appendSystemPrompt?: string } };
 	registered.before_agent_start(unset as never);
@@ -319,15 +477,26 @@ test("a valid reply on the third correction is accepted", async () => {
 	assert.equal(registered.turn_end({} as never), undefined);
 });
 
-test("agent_start resets retry state", async () => {
-	const registered = hooks(child);
-	registered.agent_start({} as never);
-	await registered.message_end(event("bad"));
-	registered.turn_end({} as never);
-	registered.agent_start({} as never);
-	await registered.message_end(event("bad"));
-	const correction = registered.turn_end({} as never) as { continue: boolean };
-	assert.equal(correction.continue, true);
+test("agent_start preserves same-assignment evidence across retries", () => {
+	const registered = hooks(worker);
+	const branch = [{ type: "message", id: "request-1", parentId: null, message: { role: "user", content: [] } }];
+	const context = { sessionManager: { getSessionId: () => "session-1", getBranch: () => branch } };
+	registered.agent_start({} as never, context);
+	const run = evidence("'bun' 'test'");
+	registered.agent_start({} as never, context);
+	assert.deepEqual(verifiedByErrors(workerReply(run.verifiedBy ?? "")), []);
+});
+
+test("a distinct identical-text request invalidates prior assignment evidence", () => {
+	const registered = hooks(worker);
+	const firstBranch = [{ type: "message", id: "request-1", parentId: null, message: { role: "user", content: [{ type: "text", text: "same" }] } }];
+	const firstContext = { sessionManager: { getSessionId: () => "session-1", getBranch: () => firstBranch } };
+	registered.agent_start({} as never, firstContext);
+	const run = evidence("'bun' 'test'");
+	const nextBranch = [...firstBranch, { type: "message", id: "request-2", parentId: "request-1", message: { role: "user", content: [{ type: "text", text: "same" }] } }];
+	const nextContext = { sessionManager: { getSessionId: () => "session-1", getBranch: () => nextBranch } };
+	registered.agent_start({} as never, nextContext);
+	assert.match(verifiedByErrors(workerReply(run.verifiedBy ?? "")).join("\n"), /was not found in this session/);
 });
 
 test("stale evidence recovery requires fresh proof instead of another formatting attempt", () => {
@@ -367,6 +536,151 @@ function evidence(command: string, exitCode = 0) {
 	});
 }
 afterAll(() => rmSync(evidenceRoot, { recursive: true, force: true }));
+
+type SubmitTool = {
+	execute: (toolCallId: string, params: Record<string, unknown>, signal: AbortSignal | undefined, onUpdate: unknown, context: unknown) => Promise<{
+		content: Array<{ type: string; text: string }>;
+		details: unknown;
+	}>;
+};
+
+function submissionContext(requestId: string, branch: readonly unknown[] = [{
+	type: "message", id: requestId, parentId: null, message: { role: "user", content: [{ type: "text", text: "same request" }] },
+}]) {
+	return { sessionManager: { getSessionId: () => "session-1", getBranch: () => branch } };
+}
+
+it("records structured data and replaces prose with a revalidated deterministic final", async () => {
+	const registered = hooks(worker, undefined, true);
+	const context = submissionContext("request-1");
+	registered.agent_start({} as never, context);
+	const proof = evidence("'bun' 'test'", 0);
+	const observation = evidence("'bun' 'test' 'negative-control'", 1);
+	const tool = registered.tools.get("submit_agent_result") as unknown as SubmitTool;
+	const result = await tool.execute("submit-1", {
+		status: "failed",
+		objective: "Report the failed check",
+		currentState: "The expected negative was observed.",
+		decisions: [],
+		proofIds: [proof.id],
+		observationIds: [observation.id],
+		notRun: [],
+		nextSteps: [],
+		doNot: [],
+	}, undefined, undefined, context);
+	assert.match(result.content[0].text, /Recorded, not delivered/);
+	const replacement = await registered.message_end(event("model-authored markdown is ignored"), context) as { message: { content: Array<{ text: string }> } };
+	const report = replacement.message.content[0].text;
+	assert.equal(validate("worker", report).ok, true, report);
+	assert.ok(proof.verifiedBy);
+	assert.ok(report.includes(proof.verifiedBy));
+	const verifiedSection = report.split("## Verified by\n")[1]?.split("\n## Next steps")[0] ?? "";
+	assert.doesNotMatch(verifiedSection, new RegExp(observation.id));
+	assert.ok(report.includes(`Observation \`${observation.id}\`: current, exit 1`));
+	assert.doesNotMatch(report, /model-authored markdown/);
+});
+
+it("replaces and persists the final report through the native extension runner and session manager", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "artifact-handoff-native-"));
+	const previousRole = process.env.PI_SUBAGENT_AGENT;
+	process.env.PI_SUBAGENT_AGENT = "implementation-engineer";
+	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+	try {
+		const settingsManager = SettingsManager.inMemory({}, { projectTrusted: false });
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: directory,
+			agentDir: directory,
+			settingsManager,
+			extensionFactories: [(pi) => {
+				pi.events.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
+					const request = record(value);
+					pi.events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, statusFrame(request.request_id, []));
+				});
+				registerHandoffHooks(pi);
+			}],
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
+			noContextFiles: true,
+		});
+		await resourceLoader.reload();
+		const modelRuntime = await ModelRuntime.create({ authPath: join(directory, "missing-auth.json"), modelsPath: null, refreshOnCreate: false });
+		const created = await createAgentSession({
+			cwd: directory,
+			agentDir: directory,
+			resourceLoader,
+			settingsManager,
+			modelRuntime,
+			sessionManager: SessionManager.inMemory(directory),
+			tools: ["read", "bash", "edit", "write", "submit_agent_result"],
+		});
+		session = created.session;
+		const runner = session.extensionRunner;
+		assert.ok(runner);
+		assert.ok(runner.getActiveTools().includes("submit_agent_result"));
+		const requestId = session.sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: "native scripted request" }], timestamp: Date.now() });
+		await runner.emit({ type: "agent_start", prompt: "native scripted request", messageType: "user" } as never);
+		const passed = evidence("'bun' 'test'", 0);
+		const definition = runner.getToolDefinition("submit_agent_result");
+		assert.ok(definition);
+		const result = await definition.execute("native-submit", {
+			status: "done", objective: "Native replacement", currentState: "Persisted by the session manager.",
+			decisions: [], proofIds: [passed.id], observationIds: [], notRun: [], nextSteps: [], doNot: [],
+		}, undefined, undefined, runner.createToolContext("native-submit", undefined));
+		assert.notEqual(result.isError, true);
+		assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /Recorded, not delivered/);
+		session.sessionManager.appendMessage({
+			role: "toolResult", toolCallId: "native-submit", toolName: "submit_agent_result", content: result.content,
+			isError: result.isError, timestamp: Date.now(), details: result.details,
+		} as never);
+		await session.bindExtensions({});
+		const finalMessage = message("ignored model prose");
+		const replaced = await runner.emitMessageEnd({ type: "message_end", message: finalMessage } as never);
+		assert.ok(replaced);
+		const persistedId = session.sessionManager.appendMessage(replaced as never);
+		const persisted = session.sessionManager.getEntry(persistedId);
+		assert.equal(persisted?.type, "message");
+		if (persisted?.type !== "message" || persisted.message.role !== "assistant") throw new Error("native final message was not persisted");
+		const rendered = persisted.message.content.filter((block) => block.type === "text").map((block) => block.text).join("");
+		assert.equal(validate("worker", rendered).ok, true, rendered);
+		assert.match(rendered, /Native replacement/);
+		assert.doesNotMatch(rendered, /ignored model prose/);
+		assert.ok(session.sessionManager.getBranch().some((entry) => entry.id === requestId));
+
+		const abandonedProof = evidence("'bun' 'test' 'abandoned-branch'");
+		const abandonedResult = await definition.execute("native-branch-submit", {
+			status: "done", objective: "Abandoned native branch", currentState: "Must not survive navigation.",
+			decisions: [], proofIds: [abandonedProof.id], observationIds: [], notRun: [], nextSteps: [], doNot: [],
+		}, undefined, undefined, runner.createToolContext("native-branch-submit", undefined));
+		session.sessionManager.appendMessage({
+			role: "toolResult", toolCallId: "native-branch-submit", toolName: "submit_agent_result", content: abandonedResult.content,
+			isError: abandonedResult.isError, timestamp: Date.now(), details: abandonedResult.details,
+		} as never);
+		const navigation = await session.navigateTree(persistedId, { summarize: false });
+		assert.equal(navigation.cancelled, false);
+		assert.match(verifiedByErrors(workerReply(abandonedProof.verifiedBy ?? "")).join("\n"), /was not found in this session/);
+		assert.equal(await runner.emitMessageEnd({ type: "message_end", message: message("ignored after navigation") } as never), undefined);
+	} finally {
+		session?.dispose();
+		if (previousRole === undefined) delete process.env.PI_SUBAGENT_AGENT;
+		else process.env.PI_SUBAGENT_AGENT = previousRole;
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+it("rejects unknown fields, oversized text, and foreign evidence IDs at structured submission", async () => {
+	const registered = hooks(worker, undefined, true);
+	const context = submissionContext("request-unknown");
+	registered.agent_start({} as never, context);
+	const tool = registered.tools.get("submit_agent_result") as unknown as SubmitTool;
+	const fields = {
+		status: "done", objective: "X", currentState: "Y", decisions: [], proofIds: [`verify_${"f".repeat(64)}`],
+		observationIds: [], notRun: [], nextSteps: [], doNot: [],
+	};
+	await assert.rejects(() => tool.execute("submit-1", { ...fields, invented: "field" }, undefined, undefined, context), /unknown field: invented/);
+	await assert.rejects(() => tool.execute("submit-2", { ...fields, currentState: "x".repeat(8001) }, undefined, undefined, context), /currentState: expected non-empty single-line text/);
+	await assert.rejects(() => tool.execute("submit-3", fields, undefined, undefined, context), /was not found in this child session/);
+});
 
 it.each(["'node' '-e' 'console.log(`ok`)'", "'printf' 'first\nsecond'"])("receipt-generated claims round-trip command %j", async (command) => {
 	const registered = hooks(worker);

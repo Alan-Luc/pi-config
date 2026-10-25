@@ -8,7 +8,7 @@ model: openai-codex/gpt-6-luna
 allow-model-override: false
 thinking: medium
 flags: --no-mcp
-tools: read,grep,find,inspect_context,inspect_change
+tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 skills: mr-babysit
 inject-skills: mr-babysit
 session-mode: lineage-only

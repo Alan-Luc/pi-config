@@ -10,7 +10,7 @@ thinking: low
 timeout: 30
 timeout-warn-threshold: false
 on-timeout: block-resume
-tools: read,grep,find,inspect_context,inspect_change
+tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 flags: --no-mcp
 deny-env: GITLAB_PERSONAL_ACCESS_TOKEN
 session-mode: lineage-only

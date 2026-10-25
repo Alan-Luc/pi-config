@@ -3,6 +3,8 @@ import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
 import { requestBackgroundTask, type BackgroundTaskSnapshot } from "./background-tasks.ts";
 import { AGENT_OUTPUT, DEFAULT_OUTPUT, SCHEMAS, type SchemaId } from "./schemas.ts";
 import { appendInstructions, renderTemplate } from "./render.ts";
+import { currentAssignment, sameAssignment, type AssignmentSnapshot } from "./assignment.ts";
+import { isResultSchemaId, renderResultSubmission, resultSubmissionFieldNames, resultSubmissionParameters, type ResultSubmissionRecord } from "./result-submission.ts";
 import { sectionBody, validate } from "./validate.ts";
 import { clearVerificationEvidence, invalidateVerificationEvidence, verificationClaimErrors } from "./verification-store.ts";
 import { pendingVerificationWork } from "./verification.ts";
@@ -62,11 +64,16 @@ export function replySchema(env: Environment): SchemaId | null {
 	return AGENT_OUTPUT[agent] === undefined ? DEFAULT_OUTPUT : AGENT_OUTPUT[agent];
 }
 
-export function replyInstructions(schemaId: SchemaId): string {
+export function replyInstructions(schemaId: SchemaId, structured = isResultSchemaId(schemaId)): string {
 	return [
 		"Your final reply must validate against this exact artifact contract.",
 		"Fill the template below; do not add, remove, or reorder its sections.",
-		...(SCHEMAS[schemaId].sections.some((section) => section.heading === "Verified by") ? [
+		...(structured && isResultSchemaId(schemaId) ? [
+			`Submit the complete result with submit_agent_result using these schema-defined fields: ${resultSubmissionFieldNames(schemaId).join(", ")}.`,
+			"The tool acknowledgement means recorded, not delivered. After successful submission, finish with a normal final assistant response; the runtime renders the submitted result and revalidates its evidence.",
+			"Do not write the report as Markdown or reconstruct evidence commands; proofIds and observationIds are local evidence IDs only.",
+			...(schemaId === "worker" ? ["Finish raw Bash/cleanup before final verification. Any later Bash, edit, or write invalidates earlier proof IDs."] : []),
+		] : SCHEMAS[schemaId].sections.some((section) => section.heading === "Verified by") ? [
 			"Use current native evidence.verifiedBy items verbatim under Verified by; do not reconstruct commands or shorten their quoting.",
 			"Finish raw Bash/cleanup before final verification. Even read-only Bash invalidates earlier receipts; use read/grep/find for inspection afterward.",
 		] : []),
@@ -166,20 +173,94 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 	let pending: PendingReply | undefined;
 	const verificationCalls = new Set<string>();
 	const writeCapableCalls = new Map<string, string>();
+	const structuredToolRegistered = isResultSchemaId(schemaId);
+	let assignment: AssignmentSnapshot | undefined;
+	let submission: ResultSubmissionRecord | undefined;
 
-	pi.on("before_agent_start", (event) => {
-		appendInstructions(event.systemPromptOptions, replyInstructions(schemaId));
-	});
-
-	pi.on("agent_start", () => {
+	function resetAssignmentState(next: AssignmentSnapshot | undefined): void {
+		assignment = next;
+		submission = undefined;
 		corrections = 0;
 		pending = undefined;
 		verificationCalls.clear();
 		writeCapableCalls.clear();
 		clearVerificationEvidence();
+	}
+
+	function synchronizeAssignment(context: { sessionManager?: Parameters<typeof currentAssignment>[0] } | undefined): boolean {
+		if (!context?.sessionManager) return false;
+		const next = currentAssignment(context.sessionManager);
+		const changed = assignment === undefined ? next !== undefined : next === undefined || !sameAssignment(assignment, next);
+		if (changed) resetAssignmentState(next);
+		else if (next) assignment = next;
+		return changed;
+	}
+
+	function structuredMode(): boolean {
+		return structuredToolRegistered && pi.getActiveTools().includes("submit_agent_result");
+	}
+
+	pi.on("before_agent_start", (event) => {
+		appendInstructions(event.systemPromptOptions, replyInstructions(schemaId, structuredMode()));
 	});
 
-	pi.on("tool_call", async (event) => {
+	if (isResultSchemaId(schemaId)) {
+		pi.registerTool({
+			name: "submit_agent_result",
+			label: "Submit agent result",
+			description: "Submit a structured result for deterministic final rendering. The schema and role are bound by the child runtime.",
+			parameters: resultSubmissionParameters(schemaId),
+			async execute(_toolCallId, params, _signal, _onUpdate, context) {
+				synchronizeAssignment(context);
+				if (!assignment) throw new Error("cannot record a result until the originating persisted user request is available");
+				if (!isRecord(params)) throw new Error("Result submission must be an object");
+				const rendered = renderResultSubmission(schemaId, params);
+				if (rendered.errors.length > 0) throw new Error(`Result submission rejected: ${rendered.errors.join("; ")}`);
+				submission = Object.freeze({
+					version: 1,
+					schemaId,
+					assignment: Object.freeze({
+						sessionId: assignment.sessionId,
+						requestEntryId: assignment.requestEntryId,
+						branchEntryIds: assignment.branchEntryIds,
+					}),
+					fields: Object.freeze({ ...params }),
+				});
+				return {
+					content: [{ type: "text", text: "Recorded, not delivered. Continue to a normal final assistant response; the runtime will render and revalidate this submission." }],
+					details: submission,
+				};
+			},
+		});
+	}
+
+	pi.on("session_start", (event, context) => {
+		const next = currentAssignment(context.sessionManager);
+		if (event.reason === "startup" && assignment && next && sameAssignment(assignment, next)) {
+			assignment = next;
+			return;
+		}
+		resetAssignmentState(next);
+	});
+
+	pi.on("session_tree", (event, context) => {
+		if (event.oldLeafId !== event.newLeafId) {
+			resetAssignmentState(currentAssignment(context.sessionManager));
+			return;
+		}
+		synchronizeAssignment(context);
+	});
+
+	pi.on("agent_start", (_event, context) => {
+		if (!context?.sessionManager) {
+			resetAssignmentState(undefined);
+			return;
+		}
+		synchronizeAssignment(context);
+	});
+
+	pi.on("tool_call", async (event, context) => {
+		synchronizeAssignment(context);
 		if (event.toolName === "caller_ping" || event.toolName === "subagent_done") {
 			const errors = await ownedWorkErrors(pi.events, verificationCalls.size);
 			if (errors.length > 0) {
@@ -208,11 +289,36 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 		invalidateVerificationEvidence(`${toolName} tool activity completed after verification`);
 	});
 
-	pi.on("message_end", async (event) => {
+	pi.on("message_end", async (event, context) => {
+		synchronizeAssignment(context);
 		const message = assistantMessage(event.message);
 		if (!message || message.stopReason === "aborted" || message.stopReason === "error") return;
 		const text = replyText(message);
 		if (text === undefined) return;
+		if (structuredMode() && message.stopReason !== "stop") return;
+		if (structuredMode() && isResultSchemaId(schemaId)) {
+			let errors = ["structured result missing; call submit_agent_result before the final assistant response"];
+			let renderedText: string | undefined;
+			if (submission && assignment && submission.assignment.sessionId === assignment.sessionId
+				&& submission.assignment.requestEntryId === assignment.requestEntryId) {
+				const rendered = renderResultSubmission(schemaId, submission.fields);
+				errors = [...rendered.errors];
+				if (errors.length === 0) {
+					const workErrors = await ownedWorkErrors(pi.events, verificationCalls.size);
+					errors.push(...workErrors);
+					if (errors.length === 0) renderedText = rendered.text;
+				}
+			}
+			if (renderedText !== undefined) {
+				pending = undefined;
+				return { message: { ...event.message, content: [{ type: "text", text: renderedText }] } };
+			}
+			pending = { errors, originalText: text };
+			if (corrections >= MAX_CORRECTIONS) {
+				return { message: { ...event.message, content: [{ type: "text", text: failureReport(errors, text, schemaId) }] } };
+			}
+			return;
+		}
 		let result = validate(schemaId, text);
 		if (result.ok && SCHEMAS[schemaId].sections.some((section) => section.heading === "Verified by")) {
 			const errors = verifiedByErrors(text);

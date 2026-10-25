@@ -7,7 +7,7 @@ auto-exit: true
 model: openai-codex/gpt-6-luna
 allow-model-override: false
 thinking: low
-tools: read,bash,grep,find,inspect_context,inspect_change,mcp__codesearch__search,mcp__codesearch__list_repositories,mcp__codesearch__fetch_content,mcp__codesearch__search_guide
+tools: read,bash,grep,find,inspect_context,inspect_change,mcp__codesearch__search,mcp__codesearch__list_repositories,mcp__codesearch__fetch_content,mcp__codesearch__search_guide,submit_agent_result
 deny-env: GITLAB_PERSONAL_ACCESS_TOKEN
 deny-tools: mcp,list_mcp_resources,list_mcp_resource_templates,read_mcp_resource
 skills: none
