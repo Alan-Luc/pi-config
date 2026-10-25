@@ -13,6 +13,7 @@ import {
 } from "../extensions/artifact-contracts/background-tasks.ts";
 import { renderTemplate } from "../extensions/artifact-contracts/render.ts";
 import { currentAssignment, sameAssignment } from "../extensions/artifact-contracts/assignment.ts";
+import { renderResultSubmission } from "../extensions/artifact-contracts/result-submission.ts";
 import { validate } from "../extensions/artifact-contracts/validate.ts";
 import {
 	createCandidateIdentity,
@@ -549,6 +550,37 @@ function submissionContext(requestId: string, branch: readonly unknown[] = [{
 }]) {
 	return { sessionManager: { getSessionId: () => "session-1", getBranch: () => branch } };
 }
+
+it("rejects semantic text that breaks the rendered review document contract", () => {
+	const result = renderResultSubmission("review", {
+		status: "done", verdict: "APPROVE", scope: "## Status",
+		critical: [], important: [], niceToHave: [], outOfScope: [],
+	});
+	assert.ok(result.errors.length > 0, "a duplicate heading must not be accepted as semantic text");
+	assert.equal(result.text, "");
+});
+
+it.each([false, true])("a length-limited structured final validates its submission (submitted=%s)", async (submitted) => {
+	const registered = hooks(worker, undefined, true);
+	const context = submissionContext("request-length");
+	registered.agent_start({} as never, context);
+	if (submitted) {
+		const tool = registered.tools.get("submit_agent_result") as unknown as SubmitTool;
+		await tool.execute("submit-length", {
+			status: "done", objective: "Length-limited result", currentState: "Recorded semantic result.",
+			decisions: [], proofIds: [], observationIds: [], notRun: ["No check required by this fixture."], nextSteps: [], doNot: [],
+		}, undefined, undefined, context);
+	}
+	const replacement = await registered.message_end(event("Unvalidated truncated prose", "length"), context) as { message: { content: Array<{ text: string }> } } | undefined;
+	if (submitted) {
+		assert.ok(replacement, "a recorded submission must render even when final prose reaches its token limit");
+		assert.equal(validate("worker", replacement.message.content[0].text).ok, true);
+		assert.doesNotMatch(replacement.message.content[0].text, /Unvalidated truncated prose/);
+	} else {
+		assert.equal(replacement, undefined);
+		assert.equal((registered.turn_end({} as never) as { continue?: boolean } | undefined)?.continue, true, "a missing submission must enter correction rather than bypass validation");
+	}
+});
 
 it("records structured data and replaces prose with a revalidated deterministic final", async () => {
 	const registered = hooks(worker, undefined, true);

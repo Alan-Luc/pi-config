@@ -295,7 +295,7 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 		if (!message || message.stopReason === "aborted" || message.stopReason === "error") return;
 		const text = replyText(message);
 		if (text === undefined) return;
-		if (structuredMode() && message.stopReason !== "stop") return;
+		if (structuredMode() && (message.stopReason === "toolUse" || message.stopReason === "tool_use")) return;
 		if (structuredMode() && isResultSchemaId(schemaId)) {
 			let errors = ["structured result missing; call submit_agent_result before the final assistant response"];
 			let renderedText: string | undefined;

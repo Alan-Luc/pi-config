@@ -7,6 +7,7 @@ import {
 	type ResultSchemaId,
 } from "./schemas.ts";
 import { getVerificationEvidence, verificationEvidenceErrors } from "./verification-store.ts";
+import { validate } from "./validate.ts";
 
 export type ResultFields = Readonly<Record<string, unknown>>;
 export type RenderedResult = Readonly<{ text: string; errors: readonly string[] }>;
@@ -228,5 +229,9 @@ export function renderResultSubmission(schemaId: ResultSchemaId, fields: ResultF
 		...sectionBody(schemaId, section, fields, observations),
 		"",
 	]).join("\n");
-	return { text, errors: [] };
+	const validation = validate(schemaId, text);
+	return validation.ok ? { text, errors: [] } : {
+		text: "",
+		errors: validation.errors.map((error) => `rendered ${schemaId} result: ${error}`),
+	};
 }
