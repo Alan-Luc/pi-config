@@ -31,10 +31,12 @@ test("Pi default discovery loads the renamed authored extensions", async () => {
 		const guardrails = extensions.get(resolve(import.meta.dir, "../extensions/guardrails/index.ts"));
 		const shortcuts = extensions.get(resolve(import.meta.dir, "../extensions/shortcuts.ts"));
 		const workLog = extensions.get(resolve(import.meta.dir, "../extensions/work-log/index.ts"));
+		const notifyUser = extensions.get(resolve(import.meta.dir, "../extensions/notify-user.ts"));
 
 		expect(guardrails?.handlers.has("tool_call")).toBe(true);
 		expect(shortcuts?.shortcuts.has("alt+p")).toBe(true);
 		expect(workLog?.tools.has("work_log")).toBe(true);
+		expect(notifyUser?.tools.has("notify_user")).toBe(true);
 	} finally {
 		await rm(cwd, { recursive: true, force: true });
 	}
