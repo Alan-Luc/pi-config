@@ -127,6 +127,17 @@ function validRequest(request: unknown): request is NormalizedPublicationRequest
 		&& /^TASK-[A-Za-z0-9._/-]+$/.test(request.branch);
 }
 
+async function followTagsEnabled(cwd: string): Promise<boolean> {
+	try {
+		const value = await git(cwd, ["config", "--type=bool", "--get", "push.followTags"]);
+		if (value !== "true" && value !== "false") throw new Error("invalid push.followTags value");
+		return value === "true";
+	} catch (error) {
+		if (isRecord(error) && error.code === 1) return false;
+		throw error;
+	}
+}
+
 async function outgoingObjects(cwd: string, remoteHead: string, head: string): Promise<{ commits: string[]; blobs: string[] }> {
 	if (!HASH.test(remoteHead) || !HASH.test(head)) throw new Error("invalid object identity");
 	const range = `${remoteHead}..${head}`;
@@ -175,6 +186,7 @@ export async function authorizeGitPublication(
 		if (await git(cwd, ["rev-parse", `refs/heads/${branch}`]) !== head) return deny("current branch ref does not match the checked-out candidate");
 		const pushUrls = pushUrlOutput.split("\n").filter(Boolean);
 		if (pushUrls.length !== 1 || pushUrls[0] !== grant.pushUrl) return deny("configured push URL does not match the explicit grant");
+		if (await followTagsEnabled(cwd)) return deny("effective push.followTags could publish unscanned annotated tags");
 		const candidate = await runtime.loadFrozenCandidate();
 		if (!candidate || !validCandidate(candidate)) return deny("trusted frozen candidate unavailable or invalid");
 		if (candidate.head !== head || candidate.tree !== tree || candidate.branch !== branch
@@ -201,16 +213,17 @@ export async function authorizeGitPublication(
 			|| scan.objectSetDigest !== objectSetDigest || !sameIds(scan.commitIds, sortedCommits) || !sameIds(scan.blobIds, blobs)) {
 			return deny("approved scanner did not attest the exact outgoing commit and blob sets");
 		}
-		const [headAfter, treeAfter, branchAfter, indexAfter, statusAfter, branchRefAfter, pushUrlsAfterOutput] = await Promise.all([
+		const [headAfter, treeAfter, branchAfter, indexAfter, statusAfter, branchRefAfter, pushUrlsAfterOutput, followTagsAfter] = await Promise.all([
 			git(cwd, ["rev-parse", "HEAD"]), git(cwd, ["rev-parse", "HEAD^{tree}"]),
 			git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]), git(cwd, ["write-tree"]),
 			git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"]),
 			git(cwd, ["rev-parse", `refs/heads/${branch}`]),
 			git(cwd, ["remote", "get-url", "--push", "--all", request.remote]),
+			followTagsEnabled(cwd),
 		]);
 		const pushUrlsAfter = pushUrlsAfterOutput.split("\n").filter(Boolean);
 		const targetAfter = await runtime.resolveTarget(pushUrls[0] ?? "", branch);
-		if (!(await runtime.isCandidateCurrent(candidate)) || headAfter !== head || treeAfter !== tree || branchAfter !== branch
+		if (followTagsAfter || !(await runtime.isCandidateCurrent(candidate)) || headAfter !== head || treeAfter !== tree || branchAfter !== branch
 			|| indexAfter !== indexTree || statusAfter !== status || branchRefAfter !== head || !sameIds(pushUrlsAfter, pushUrls) || !targetAfter
 			|| targetAfter.remoteHead !== target.remoteHead || targetAfter.instance !== target.instance
 			|| targetAfter.project !== target.project || targetAfter.protected !== target.protected) {

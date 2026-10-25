@@ -123,6 +123,12 @@ function registeredPushGuard(runtime: PublicationRuntime) {
 	return (command: string) => handlers.get("tool_call")?.({ toolName: "bash", toolCallId: "fixture-push", input: { command } } as never, { cwd: runtime.cwd } as never);
 }
 
+test.each(["command git push origin TASK-123-fix", "exec git push origin TASK-123-fix", "command -p git push origin TASK-123-fix", "exec -- git push origin TASK-123-fix", "command -p -- git push origin TASK-123-fix", "exec -c git push origin TASK-123-fix", "exec -a fixture-name git push origin TASK-123-fix", "command command -p git push origin TASK-123-fix"])("registered guard rejects wrapped pushes without invoking adapters: %s", async (command) => withFixture(async (fixture) => {
+	await expect(registeredPushGuard(fixture.runtime)(command)).rejects.toThrow("publication");
+	expect(fixture.requests).toHaveLength(0);
+	expect(fixture.scans).toHaveLength(0);
+}));
+
 test("registered guard consults trusted adapters without executing a push", async () => withFixture(async (fixture) => {
 	const before = { local: refs(fixture.repo), remote: refs(fixture.bare) };
 	await registeredPushGuard(fixture.runtime)(`git push origin ${branch}`);
@@ -150,8 +156,9 @@ test.each([
 	expect(refs(fixture.bare)).toBe(before.remote);
 }));
 
-test("registered guard leaves read-only env-wrapped Git outside publication authorization", async () => withFixture(async (fixture) => {
+test("registered guard leaves read-only Git wrapper queries outside publication authorization", async () => withFixture(async (fixture) => {
 	await registeredPushGuard(fixture.runtime)("env git show push");
+	await registeredPushGuard(fixture.runtime)("command -v git");
 	expect(fixture.requests).toHaveLength(0);
 	expect(fixture.scans).toHaveLength(0);
 }));
@@ -196,6 +203,32 @@ test("denies dirty source and changed frozen refs", async () => withFixture(asyn
 	rmSync(join(fixture.repo, "uncommitted.txt"));
 	git(fixture.repo, "update-ref", `refs/heads/${branch}`, fixture.base);
 	expect(await authorizeGitPublication(request, fixture.runtime)).toMatchObject({ allowed: false });
+}));
+
+test("rechecks push.followTags after scanner evaluation", async () => withFixture(async (fixture) => {
+	fixture.runtime.scan = async (scanRequest) => {
+		git(fixture.repo, "config", "push.followTags", "true");
+		return {
+			scannerId: fixture.grant.scannerId,
+			candidateFingerprint: scanRequest.candidateFingerprint,
+			commitIds: [...scanRequest.commitIds],
+			blobIds: [...scanRequest.blobIds],
+			objectSetDigest: scanRequest.objectSetDigest,
+			passed: true,
+		};
+	};
+	expect(await authorizeGitPublication(request, fixture.runtime)).toMatchObject({ allowed: false, reason: expect.stringContaining("changed during authorization") });
+}));
+
+test("denies effective push.followTags when it could publish a missing annotated tag", async () => withFixture(async (fixture) => {
+	git(fixture.repo, "tag", "-a", "TASK-123-release", "-m", "release", fixture.base);
+	git(fixture.repo, "config", "push.followTags", "true");
+	const before = { local: refs(fixture.repo), remote: refs(fixture.bare) };
+	const decision = await authorizeGitPublication(request, fixture.runtime);
+	expect(decision).toMatchObject({ allowed: false });
+	expect(fixture.scans).toHaveLength(0);
+	expect(refs(fixture.repo)).toBe(before.local);
+	expect(refs(fixture.bare)).toBe(before.remote);
 }));
 
 test("denies a remote ref advanced after the frozen candidate", async () => withFixture(async (fixture) => {

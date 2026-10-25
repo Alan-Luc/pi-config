@@ -266,6 +266,24 @@ function directGit(command: ShellCommand, allowGitIndexFile: boolean, workdir: s
 		}
 		index += 1;
 	}
+	while (command[index] === "command" || command[index] === "exec") {
+		const wrapper = command[index++];
+		while (command[index]?.startsWith("-")) {
+			const option = command[index++];
+			if (option === "--") break;
+			if (wrapper === "command") {
+				if (!/^-[pvV]+$/.test(option) || /[vV]/.test(option)) return undefined;
+			} else {
+				const nameOption = option.indexOf("a");
+				const flags = nameOption < 0 ? option.slice(1) : option.slice(1, nameOption);
+				if (option === "-" || !/^[cl]*$/.test(flags)) return undefined;
+				if (nameOption >= 0 && nameOption === option.length - 1) {
+					if (command[index] === undefined) return undefined;
+					index += 1;
+				}
+			}
+		}
+	}
 	if (basename(command[index] ?? "") === "env") {
 		const candidates = [command, ...command.flatMap((token) => tokenizeShell(token) ?? [])];
 		for (const candidate of candidates) {
