@@ -5,8 +5,9 @@ mode: background
 async: true
 auto-exit: true
 model: anthropic/claude-sonnet-5-5
-allow-model-override: false
-thinking: high
+allow-model-override: true
+allowed-models: opencode-go/deepseek-v4.1-flash
+thinking: low
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 flags: --no-mcp
 deny-env: GITLAB_PERSONAL_ACCESS_TOKEN

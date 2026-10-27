@@ -5,8 +5,9 @@ mode: background
 async: true
 auto-exit: true
 model: openai-codex/gpt-6-luna
-allow-model-override: false
-thinking: medium
+allow-model-override: true
+allowed-models: opencode-go/deepseek-v4.1-flash
+thinking: low
 flags: --no-mcp
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 skills: mr-babysit

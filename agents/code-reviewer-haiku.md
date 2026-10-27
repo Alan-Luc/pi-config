@@ -5,7 +5,8 @@ mode: background
 async: true
 auto-exit: true
 model: anthropic/claude-haiku-5-5
-allow-model-override: false
+allow-model-override: true
+allowed-models: opencode-go/deepseek-v4.1-flash
 thinking: low
 timeout: 30
 timeout-warn-threshold: false

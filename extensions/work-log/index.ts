@@ -52,6 +52,7 @@ type RecordParams = WorkParams | DecisionParams;
 const TEXT = { type: "string", minLength: 1 } as const;
 const LIST = { type: "array", items: TEXT, minItems: 1 } as const;
 const WORK_LOG_PARAMS = {
+	type: "object",
 	anyOf: [
 		{
 			type: "object",

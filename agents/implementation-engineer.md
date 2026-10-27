@@ -5,8 +5,9 @@ mode: background
 async: true
 auto-exit: true
 model: openai-codex/gpt-6-luna
-allow-model-override: false
-thinking: medium
+allow-model-override: true
+allowed-models: opencode-go/deepseek-v4.1-flash
+thinking: low
 tools: read,bash,edit,write,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate,submit_agent_result
 flags: --no-mcp
 deny-env: GITLAB_PERSONAL_ACCESS_TOKEN
