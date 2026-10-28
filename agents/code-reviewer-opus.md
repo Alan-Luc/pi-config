@@ -5,8 +5,7 @@ mode: background
 async: true
 auto-exit: true
 model: anthropic/claude-opus-5-5
-allow-model-override: true
-allowed-models: opencode-go/deepseek-v4-pro
+allow-model-override: false
 thinking: medium
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 flags: --no-mcp
