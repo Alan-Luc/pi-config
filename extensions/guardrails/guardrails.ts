@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
@@ -398,6 +399,21 @@ async function validateWorktree(args: string[], projectRoot: string, workdir: st
 
 const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which owns local commits and may push only with Alan's explicit authorization.";
 
+/** Publishing is limited to Alan's own personal repositories. */
+const PERSONAL_REMOTE_RE = /^git@github\.com:Alan-Luc\/[A-Za-z0-9._-]+$/;
+
+/** Elsewhere (e.g. work repos) only Alan's own alan/* branches may be pushed. */
+const ALAN_BRANCH_RE = /^alan\/(?!.*\.\.)[A-Za-z0-9._/-]+$/;
+
+function gitOutput(cwd: string, args: string[]): Promise<string> {
+	return new Promise((resolveResult, reject) => {
+		execFile("git", args, { cwd, encoding: "utf8", timeout: 10_000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+			if (error) reject(error);
+			else resolveResult(stdout.trim());
+		});
+	});
+}
+
 async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean, allowGitIndexFile = false, publication?: PublicationRuntime): Promise<void> {
 	const retargets = [...command.matchAll(/\b(?:export\s+)?(GIT_[A-Z0-9_]*)(\+?=)/g)];
 	if (retargets.some((match) => !allowGitIndexFile || match[1] !== "GIT_INDEX_FILE" || match[2] !== "=") && /\bgit\b/.test(command)) {
@@ -417,17 +433,26 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 		if (invocation.name === "commit" && hasCommitNoVerify(invocation.args)) throw new Error("Blocked direct Git commit containing -n (short for --no-verify)");
 		if (invocation.name === "push") {
 			validatePush(invocation.args);
-			if (!publication) throw new Error("Blocked publication gate disabled: trusted parent grant, target, candidate and scanner adapters are required.");
 			if (commands.length !== 1 || shellCommand.length !== 4 || shellCommand[0] !== "git" || shellCommand[1] !== "push"
 				|| invocation.args.length !== 2 || invocation.args[0] !== "origin") {
-				throw new Error("Blocked publication: only a standalone literal git push origin <task-branch> is supported; no companion command, wrapper or override.");
+				throw new Error("Blocked publication: only a standalone literal git push origin <branch> is supported; no companion command, wrapper or override.");
 			}
-			if (await realpath(invocation.workdir) !== await realpath(publication.cwd)) throw new Error("Blocked publication: trusted runtime belongs to another worktree.");
-			const decision = await authorizeGitPublication({
-				action: "push", remote: "origin", branch: invocation.args[1], isChild,
-				force: false, delete: false, mirror: false, prune: false, refspec: false, retarget: false, override: false,
-			}, publication);
-			if (!decision.allowed) throw new Error(`Blocked publication: ${decision.reason}`);
+			if (publication) {
+				if (await realpath(invocation.workdir) !== await realpath(publication.cwd)) throw new Error("Blocked publication: trusted runtime belongs to another worktree.");
+				const decision = await authorizeGitPublication({
+					action: "push", remote: "origin", branch: invocation.args[1], isChild,
+					force: false, delete: false, mirror: false, prune: false, refspec: false, retarget: false, override: false,
+				}, publication);
+				if (!decision.allowed) throw new Error(`Blocked publication: ${decision.reason}`);
+			} else {
+				const pushUrls = (await gitOutput(invocation.workdir, ["remote", "get-url", "--push", "--all", "origin"]))
+					.split("\n").map((line) => line.trim()).filter(Boolean);
+				const branch = invocation.args[1] ?? "";
+				const personal = pushUrls.length === 1 && PERSONAL_REMOTE_RE.test(pushUrls[0]!);
+				if (!personal && !ALAN_BRANCH_RE.test(branch)) {
+					throw new Error(`Blocked publication: 'origin' (${pushUrls.join(", ") || "missing"}) is not a personal git@github.com:Alan-Luc repository, so only alan/* branches may be pushed; got '${branch}'.`);
+				}
+			}
 		}
 		if (invocation.name === "worktree" && invocation.args[0] === "add") {
 			if (changedDirectory) throw new Error("Blocked direct git worktree add after cd; set the Bash workdir explicitly");

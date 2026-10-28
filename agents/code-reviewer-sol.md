@@ -5,7 +5,8 @@ mode: background
 async: true
 auto-exit: true
 model: openai-codex/gpt-6.1-sol
-allow-model-override: false
+allow-model-override: true
+allowed-models: opencode-go/deepseek-v4-pro
 thinking: high
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 flags: --no-mcp

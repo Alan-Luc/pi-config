@@ -153,6 +153,12 @@ test("registers one typed work_log tool", () => {
 	assert.match(registerWorkLog.toString(), /registerTool/);
 });
 
+test("exposes a top-level object schema to strict model providers", () => {
+	let tool: { parameters: { type?: string } } | undefined;
+	registerWorkLog({ registerTool: (definition: NonNullable<typeof tool>) => { tool = definition; } } as never);
+	assert.equal(tool?.parameters.type, "object");
+});
+
 test("serializes concurrent calls through the registered tool and native queue", async () => {
 	await withProject(async (root) => {
 		const { runner, tool } = await registeredWorkLog(root);
