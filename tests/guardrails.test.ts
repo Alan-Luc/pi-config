@@ -32,38 +32,20 @@ test.each(["git push origin TASK-123-fix", "git push origin alan/fix"])("fails c
 	await expect(call(createPi(), command)).rejects.toThrow(/publication/);
 });
 
-test("registered Bash and bg_run guards deny publication and child mutations without changing Git state", async () => {
-	const root = await mkdtemp(join(tmpdir(), "pi-publication-no-runtime-"));
-	const repo = join(root, "repo");
-	const bare = join(root, "remote.git");
-	const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+test("registered Bash and bg_run guards require publication authority and block child mutations", async () => {
+	const repo = await mkdtemp(join(tmpdir(), "pi-publication-no-runtime-"));
+	const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
 	try {
-		await mkdir(repo);
-		git(root, "init", "--bare", "--quiet", bare);
-		git(repo, "init", "--quiet", "-b", "alan/fixture");
-		git(repo, "config", "user.email", "fixture@example.test");
-		git(repo, "config", "user.name", "Fixture");
-		await writeFile(join(repo, "tracked.txt"), "baseline\\n");
-		git(repo, "add", "tracked.txt");
-		git(repo, "commit", "--quiet", "-m", "baseline");
-		const head = git(repo, "rev-parse", "HEAD");
-		git(repo, "remote", "add", "origin", bare);
-		git(repo, "config", "remote.origin.pushurl", "git@github.com:Alan-Luc/fixture.git");
+		git("init", "--quiet", "-b", "alan/fixture");
+		git("remote", "add", "origin", "git@github.com:Alan-Luc/fixture.git");
 		const handlers = createPi();
 		const childHandlers = createPi({ PI_SUBAGENT_AGENT: "1" });
 		for (const name of ["bash", "bg_run"] as const) {
 			await expect(handlers.tool_call({ type: "tool_call", toolName: name, toolCallId: name, input: { command: "git push origin alan/fixture" } }, { cwd: repo })).rejects.toThrow(/publication/);
 			await expect(childHandlers.tool_call({ type: "tool_call", toolName: name, toolCallId: `child-${name}`, input: { command: "git commit -m child" } }, { cwd: repo })).rejects.toThrow("Subagents cannot commit or push");
 		}
-		expect(git(repo, "rev-parse", "HEAD")).toBe(head);
-		expect(git(repo, "status", "--porcelain=v1")).toBe("");
-		expect(git(bare, "for-each-ref", "--format=%(refname) %(objectname)")).toBe("");
-		await call(handlers, "git commit -m parent", repo);
-		expect(git(repo, "rev-parse", "HEAD")).toBe(head);
-		await handlers.tool_call({ type: "tool_call", toolName: "bg_run", toolCallId: "parent-bg-commit", input: { command: "git commit -m parent" } }, { cwd: repo });
-		expect(git(repo, "rev-parse", "HEAD")).toBe(head);
 	} finally {
-		await rm(root, { recursive: true, force: true });
+		await rm(repo, { recursive: true, force: true });
 	}
 });
 

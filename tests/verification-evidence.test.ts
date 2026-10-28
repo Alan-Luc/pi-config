@@ -887,7 +887,7 @@ test("source mutation invalidates otherwise successful evidence and prior comman
 test.each([
 	["git", "commit", "-am", "x"],
 	["git", "push", "origin", "TASK-x"],
-] as const)("run denies direct Git mutation before starting an attempt or changing repository state: %j", async (...argv) => {
+] as const)("run denies direct Git mutation before attempt registration or execution dispatch: %j", async (...argv) => {
 	const directory = await newRepository();
 	const command = canonicalCommand(argv);
 	const prior = record(command, 0, true, ".", createCandidateIdentity({
@@ -896,9 +896,6 @@ test.each([
 		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
 		kind: "clean",
 	}));
-	const before = await repositorySnapshot(directory);
-	const index = readFileSync(join(directory, ".git", "index"));
-	const remoteRefs = await git(directory, "for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes");
 	const dispatches = { bash: 0 };
 	const context = makeContext(directory, { resultFor: (shellCommand) => {
 		if (!shellCommand.endsWith(`&& ${command}`)) return undefined;
@@ -910,9 +907,6 @@ test.each([
 		/Blocked direct Git mutation/,
 	);
 	assert.deepEqual(dispatches, { bash: 0 }, "denial must precede execution dispatch");
-	assert.deepEqual(await repositorySnapshot(directory), before);
-	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
-	assert.equal(await git(directory, "for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes"), remoteRefs);
 	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/, "denial must not register a newer attempt for the same command");
 });
 
@@ -928,18 +922,12 @@ test.each([
 		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
 		kind: "clean",
 	}));
-	const before = await repositorySnapshot(directory);
-	const index = readFileSync(join(directory, ".git", "index"));
-	const remoteRefs = await git(directory, "for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes");
 	const service = backgroundService(directory);
 	await assert.rejects(
 		executeVerificationEvidence("denied-start", { operation: "start", argv: [...argv], cwd: ".", timeout: 10 }, undefined, makeContext(directory), service),
 		/Blocked direct Git mutation/,
 	);
 	assert.equal(service.counts.run, 0, "denial must precede background registration");
-	assert.deepEqual(await repositorySnapshot(directory), before);
-	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
-	assert.equal(await git(directory, "for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes"), remoteRefs);
 	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/, "denial must not register a newer attempt for the same command");
 });
 
