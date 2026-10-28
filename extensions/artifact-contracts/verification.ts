@@ -42,6 +42,7 @@ import {
 
 import { createStagedSnapshot, type StagedSnapshot } from "./staged-verification.ts";
 import { parseWorkStatusRequest, VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE } from "../lib/work-status.ts";
+import { rejectGitMutations } from "../guardrails/guardrails.ts";
 
 const VERIFICATION_PROTOCOL_VERSION = 2;
 const MAX_TIMEOUT_SECONDS = 600;
@@ -854,6 +855,7 @@ export async function executeVerification(
 	const cwd = canonicalCwd(params.cwd);
 	const repository = await discoverRepository(nestedCandidateCommand(ctx), ctx.cwd, signal, params.repositoryRoot);
 	const workingDirectory = repositoryCwd(repository.root, cwd);
+	rejectGitMutations(params.argv, workingDirectory.absolute);
 	const attempt = beginVerificationAttempt(repository.root, command, workingDirectory.relative);
 	const runCandidateCommand = nestedCandidateCommand(ctx);
 	const before = await snapshotCandidate(runCandidateCommand, repository, signal, params.source);
@@ -898,6 +900,7 @@ async function executeVerificationStart(
 	const cwd = canonicalCwd(params.cwd);
 	const repository = await discoverRepository(nestedCandidateCommand(ctx), ctx.cwd, signal, params.repositoryRoot);
 	const workingDirectory = repositoryCwd(repository.root, cwd);
+	rejectGitMutations(params.argv, workingDirectory.absolute);
 	if (!events) throw new Error("verification_evidence background task service is unavailable");
 	const attempt = beginVerificationAttempt(repository.root, command, workingDirectory.relative);
 	const before = await snapshotCandidate(nestedCandidateCommand(ctx), repository, signal, params.source);

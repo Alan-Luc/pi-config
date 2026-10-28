@@ -243,7 +243,7 @@ test("invalid, missing, and tampered evidence fails closed", () => {
 type ProcessResult = { exitCode: number; output: string };
 type FakeBashOptions = {
 	omitExitFor?: (command: string) => boolean;
-	resultFor?: (command: string) => ProcessResult | undefined;
+	resultFor?: (command: string) => ProcessResult | undefined | Promise<ProcessResult | undefined>;
 	nativeExec?: { calls: number };
 };
 
@@ -307,7 +307,7 @@ function makeContext(directory: string, options: FakeBashOptions = {}): Verifica
 			if (typeof args !== "object" || args === null || Array.isArray(args)) throw new Error("invalid fake bash input");
 			const input = args as { command?: unknown; timeout?: unknown };
 			if (typeof input.command !== "string" || typeof input.timeout !== "number") throw new Error("invalid fake bash input");
-			const result = options.resultFor?.(input.command) ?? await runProcess(["bash", "-c", input.command], directory);
+			const result = await options.resultFor?.(input.command) ?? await runProcess(["bash", "-c", input.command], directory);
 			const structuredContent: Record<string, string | number | boolean> = {
 				output: result.output,
 				truncated: false,
@@ -884,13 +884,157 @@ test("source mutation invalidates otherwise successful evidence and prior comman
 	assert.match(verificationClaimErrors({ evidenceId: prior.id, command: prior.command, exitCode: 0 }).join("\n"), /stale: candidate changed during verification/);
 });
 
-test("ref-only HEAD mutation invalidates otherwise successful evidence", async () => {
+test.each([
+	["git", "commit", "-am", "x"],
+	["git", "push", "origin", "TASK-x"],
+] as const)("run denies direct Git mutation before starting an attempt or changing repository state: %j", async (...argv) => {
 	const directory = await newRepository();
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, ".", createCandidateIdentity({
+		repositoryRoot: directory,
+		head: await git(directory, "rev-parse", "HEAD"),
+		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const before = await repositorySnapshot(directory);
+	const index = readFileSync(join(directory, ".git", "index"));
+	const remoteRefs = await git(directory, "for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes");
+	const dispatches = { bash: 0 };
+	const context = makeContext(directory, { resultFor: (shellCommand) => {
+		if (!shellCommand.endsWith(`&& ${command}`)) return undefined;
+		dispatches.bash += 1;
+		return { exitCode: 0, output: "" };
+	} });
+	await assert.rejects(
+		executeVerification("denied-run", { operation: "run", argv: [...argv], cwd: ".", timeout: 10 }, context),
+		/Blocked direct Git mutation/,
+	);
+	assert.deepEqual(dispatches, { bash: 0 }, "denial must precede execution dispatch");
+	assert.deepEqual(await repositorySnapshot(directory), before);
+	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
+	assert.equal(await git(directory, "for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes"), remoteRefs);
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/, "denial must not register a newer attempt for the same command");
+});
+
+test.each([
+	["git", "commit", "-am", "x"],
+	["git", "push", "origin", "TASK-x"],
+] as const)("start denies direct Git mutation before attempt registration or background dispatch: %j", async (...argv) => {
+	const directory = await newRepository();
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, ".", createCandidateIdentity({
+		repositoryRoot: directory,
+		head: await git(directory, "rev-parse", "HEAD"),
+		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const before = await repositorySnapshot(directory);
+	const index = readFileSync(join(directory, ".git", "index"));
+	const remoteRefs = await git(directory, "for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes");
+	const service = backgroundService(directory);
+	await assert.rejects(
+		executeVerificationEvidence("denied-start", { operation: "start", argv: [...argv], cwd: ".", timeout: 10 }, undefined, makeContext(directory), service),
+		/Blocked direct Git mutation/,
+	);
+	assert.equal(service.counts.run, 0, "denial must precede background registration");
+	assert.deepEqual(await repositorySnapshot(directory), before);
+	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
+	assert.equal(await git(directory, "for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes"), remoteRefs);
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/, "denial must not register a newer attempt for the same command");
+});
+
+test.each(["run", "start"] as const)("%s denies Git -C mutation in an explicitly selected linked worktree and repository-relative cwd", async (operation) => {
+	const directory = await newRepository();
+	const container = mkdtempSync(join(tmpdir(), "verification-denial-linked-"));
+	runtimeRepositories.push(container);
+	const linked = join(container, "candidate");
+	await git(directory, "worktree", "add", "--quiet", "--detach", linked);
+	mkdirSync(join(linked, "nested"));
+	const argv = ["git", "-C", linked, "commit", "-am", "x"];
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, "nested", createCandidateIdentity({
+		repositoryRoot: linked,
+		head: await git(linked, "rev-parse", "HEAD"),
+		tree: await git(linked, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const before = await repositorySnapshot(linked);
+	const context = makeContext(directory);
+	const params = { operation, repositoryRoot: linked, argv, cwd: "nested", timeout: 10 } as const;
+	if (operation === "run") {
+		await assert.rejects(executeVerification("linked-denial", params, context), /Blocked direct Git mutation/);
+	} else {
+		const service = backgroundService(directory);
+		await assert.rejects(executeVerificationEvidence("linked-denial", params, undefined, context, service), /Blocked direct Git mutation/);
+		assert.equal(service.counts.run, 0);
+	}
+	assert.deepEqual(await repositorySnapshot(linked), before);
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/);
+});
+
+test.each(["run", "start"] as const)("%s denies an existing directGit command wrapper", async (operation) => {
+	const directory = await newRepository();
+	const argv = ["command", "git", "push", "origin", "TASK-x"];
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, ".", createCandidateIdentity({
+		repositoryRoot: directory,
+		head: await git(directory, "rev-parse", "HEAD"),
+		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const before = await repositorySnapshot(directory);
+	const context = makeContext(directory);
+	const params = { operation, argv, cwd: ".", timeout: 10 } as const;
+	if (operation === "run") await assert.rejects(executeVerification("wrapped-denial", params, context), /Blocked direct Git mutation/);
+	else {
+		const service = backgroundService(directory);
+		await assert.rejects(executeVerificationEvidence("wrapped-denial", params, undefined, context, service), /Blocked direct Git mutation/);
+		assert.equal(service.counts.run, 0);
+	}
+	assert.deepEqual(await repositorySnapshot(directory), before);
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/);
+});
+
+test.each(["run", "start"] as const)("%s denies direct worktree add without creating its destination", async (operation) => {
+	const directory = await newRepository();
+	const destination = join(directory, ".harness", "worktrees", "denied-child");
+	const argv = ["git", "worktree", "add", "--detach", destination];
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, ".", createCandidateIdentity({
+		repositoryRoot: directory,
+		head: await git(directory, "rev-parse", "HEAD"),
+		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const before = await repositorySnapshot(directory);
+	const context = makeContext(directory);
+	const params = { operation, argv, cwd: ".", timeout: 10 } as const;
+	if (operation === "run") await assert.rejects(executeVerification("worktree-denial", params, context), /Blocked direct Git mutation/);
+	else {
+		const service = backgroundService(directory);
+		await assert.rejects(executeVerificationEvidence("worktree-denial", params, undefined, context, service), /Blocked direct Git mutation/);
+		assert.equal(service.counts.run, 0);
+	}
+	assert.equal(existsSync(destination), false);
+	assert.deepEqual(await repositorySnapshot(directory), before);
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/);
+});
+
+test("ref drift outside the checked argv invalidates otherwise successful evidence", async () => {
+	const directory = await newRepository();
+	let movedHead = false;
+	const context = makeContext(directory, { resultFor: async (command) => {
+		if (!command.includes("'printf' 'ref-drift'")) return undefined;
+		await git(directory, "commit", "--allow-empty", "--quiet", "-m", "external ref drift");
+		movedHead = true;
+		return { exitCode: 0, output: "ref-drift" };
+	} });
 	const result = await executeVerification(
 		"ref-mutator",
-		{ operation: "run", argv: ["git", "commit", "--allow-empty", "--quiet", "-m", "move HEAD"], cwd: ".", timeout: 10 },
-		makeContext(directory),
+		{ operation: "run", argv: ["printf", "ref-drift"], cwd: ".", timeout: 10 },
+		context,
 	);
+	assert.equal(movedHead, true);
 	assert.equal(result.evidence.exitCode, 0);
 	assert.equal(result.evidence.valid, false);
 	assert.equal(result.evidence.invalidReason, "candidate changed during verification");

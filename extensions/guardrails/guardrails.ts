@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
@@ -326,6 +325,15 @@ function parseGit(tokens: string[], workdir: string): { name: string; args: stri
 	return undefined;
 }
 
+export function rejectGitMutations(argv: readonly string[], workdir: string): void {
+	const tokens = directGit([...argv], false, workdir);
+	const invocation = tokens ? parseGit(tokens, workdir) : undefined;
+	if (invocation?.name === "commit" || invocation?.name === "push"
+		|| (invocation?.name === "worktree" && invocation.args[0] === "add")) {
+		throw new Error("Blocked direct Git mutation: verification_evidence is check-only");
+	}
+}
+
 function hasCommitNoVerify(args: string[]): boolean {
 	const valueFlags = new Set(["C", "F", "c", "m"]);
 	for (let index = 0; index < args.length; index += 1) {
@@ -399,21 +407,6 @@ async function validateWorktree(args: string[], projectRoot: string, workdir: st
 
 const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which owns local commits and may push only with Alan's explicit authorization.";
 
-/** Publishing is limited to Alan's own personal repositories. */
-const PERSONAL_REMOTE_RE = /^git@github\.com:Alan-Luc\/[A-Za-z0-9._-]+$/;
-
-/** Elsewhere (e.g. work repos) only Alan's own alan/* branches may be pushed. */
-const ALAN_BRANCH_RE = /^alan\/(?!.*\.\.)[A-Za-z0-9._/-]+$/;
-
-function gitOutput(cwd: string, args: string[]): Promise<string> {
-	return new Promise((resolveResult, reject) => {
-		execFile("git", args, { cwd, encoding: "utf8", timeout: 10_000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
-			if (error) reject(error);
-			else resolveResult(stdout.trim());
-		});
-	});
-}
-
 async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean, allowGitIndexFile = false, publication?: PublicationRuntime): Promise<void> {
 	const retargets = [...command.matchAll(/\b(?:export\s+)?(GIT_[A-Z0-9_]*)(\+?=)/g)];
 	if (retargets.some((match) => !allowGitIndexFile || match[1] !== "GIT_INDEX_FILE" || match[2] !== "=") && /\bgit\b/.test(command)) {
@@ -445,13 +438,7 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 				}, publication);
 				if (!decision.allowed) throw new Error(`Blocked publication: ${decision.reason}`);
 			} else {
-				const pushUrls = (await gitOutput(invocation.workdir, ["remote", "get-url", "--push", "--all", "origin"]))
-					.split("\n").map((line) => line.trim()).filter(Boolean);
-				const branch = invocation.args[1] ?? "";
-				const personal = pushUrls.length === 1 && PERSONAL_REMOTE_RE.test(pushUrls[0]!);
-				if (!personal && !ALAN_BRANCH_RE.test(branch)) {
-					throw new Error(`Blocked publication: 'origin' (${pushUrls.join(", ") || "missing"}) is not a personal git@github.com:Alan-Luc repository, so only alan/* branches may be pushed; got '${branch}'.`);
-				}
+				throw new Error("Blocked publication gate disabled: trusted publication runtime unavailable");
 			}
 		}
 		if (invocation.name === "worktree" && invocation.args[0] === "add") {
@@ -477,12 +464,13 @@ export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string
 			await validateBoundedReview(event.input, ctx, pi.exec);
 			return;
 		}
-		if (event.toolName !== "bash" || !isRecord(event.input) || typeof event.input.command !== "string") return;
+		if (!["bash", "bg_run"].includes(event.toolName) || !isRecord(event.input) || typeof event.input.command !== "string") return;
 		const command = event.input.command;
 		const allowGitIndexFile = event.parentToolCallId !== undefined
 			&& verificationCalls.has(event.parentToolCallId)
 			&& isVerificationIndexCommand(command);
 		await validateGit(command, ctx.cwd, ctx.cwd, isChild, allowGitIndexFile, publication);
+		if (event.toolName !== "bash") return;
 		const normalized = normalize(command);
 		const blocker = infrastructureFailures.get(normalized);
 		if (blocker && !ALLOW_INFRA_RETRY_RE.test(command)) throw new Error(`Blocked repeat bash command after an unchanged DB/infrastructure failure in this session: ${normalized}\nPrevious blocker: ${blocker}\nIf the dependency state changed and you need one explicit retry, prefix the command with PI_ALLOW_INFRA_RETRY=1.`);
