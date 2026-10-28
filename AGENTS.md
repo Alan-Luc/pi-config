@@ -23,14 +23,26 @@ Act as a picky Staff Engineer. Reuse existing patterns, and make the smallest co
 
 - Ponytail owns deletion, reuse, YAGNI, and smallest-complete-change decisions; do not duplicate those rules.
 - Preflight the required runtime, command or script, and relevant network, authentication, database, or external-service identity before long work.
-| Tier | Selection and required work |
-|---|---|
-| Direct | Mechanical/docs, no behavior change or material trust/persistence/contract risk: direct consuming-surface check; no workflow ceremony. |
-| Small | Settled reversible behavior, one established owner, no material trust/persistence/public-contract/shared-lifecycle risk: recipe/tasks, focused tests, one independent correctness/noise reviewer, parent live success/edge proof for runtime changes. No separate advisory/live workers by default. |
-| Focused | Bounded integration beyond Small: recipe/tasks, focused/integration checks, correctness counterpart pair, parent live success/failure proof. Independent live lanes require named risk; reuse decisions, no new plan by default. |
-| Full | Consequential design, material security/data-loss/trust/persistence/contract risk or risky coordination: durable plan, recipe/tasks, correctness counterpart pair, independent success/attack live coverage. Structural/deslop pairs require distinct risks. |
+| Ceremony | Direct | Focused | Full |
+|---|---|---|---|
+| Selection | Mechanical/docs; no behavior or security/trust/persistence/contract semantic change. | Bounded integration. | Consequential, or any security/data-loss/trust/persistence/contract change (any size). |
+| Recipe/tasks | No | Yes | Yes |
+| Durable plan | Explicit planning; otherwise use a gated Direct brief. | Explicit planning, approval-gated work or governing prior plan. | Required. |
+| Human approval | ≥3 ownership seams, distributed boundary, explicit request. | Same. | Same + trust-boundary; not universal. |
+| Test-first | Consuming check; no red. | Behavior red; refactor characterize. | Same; meaningful failure paths. |
+| Mechanical deslop | Yes | Yes | Yes |
+| Haiku advisory | No | Risk-selected, fixed-profile. | Risk-selected, fixed-profile. |
+| Live verification | No unrelated runtime. | One read-only worker; distinct success/attack; owns ONE broad integration run. | Separate success/attack workers; success owns ONE broad integration run. |
+| Correctness review | No routine; explicit request binds. | Ordinary pair. | Required pair; Difficult if justified. |
+| Structural / whole-diff deslop | No | No automatic lanes. | Risk-selected pairs; distinct risks. |
+| Work-log entry | No | One completion record per slice/pass. | Same. |
+| Predictions (reserved) | Not implemented. | Not implemented. | Not implemented. |
+| Quiz (reserved) | Not implemented. | Not implemented. | Not implemented. |
+| Coordinator report | None routine; gates/blockers. | Gate attention; closure summary. | Same. |
+| Passing intent-sized commit | Yes | Yes | Yes. |
 
-- Risk and explicit approval outrank size. Reclassify only on changed evidence. Explicit planning writes a plan; deep review retains requested coverage. Mirrors/tests/docs add no ownership seams; read-only claims need relevant evidence.
+- State the tier and reason in preflight. Escalate on new evidence; downgrade only with Alan's approval. Risk and explicit approval outrank size.
+- Matrix owns gates. Full always requires a plan; approval remains conditional, and trust-boundary work is gated. Gated Focused needs a plan; gated Direct uses a bounded scope/checks brief unless explicit planning. Mirrors/tests/docs add no seams; read-only claims need evidence.
 - For ticket-shaped, resumed or related work, reuse the governing plan and relevant dated logs. First map ownership, callers, contracts, risks, and checks; stop reconnaissance once implementation is safe.
 - For non-Direct work, give BLUF slice updates. Record each completed implementation, review, or configuration slice once through `work_log`, using its returned topic path. Plans hold contracts/status/resume pointers; logs link material plan-decision anchors. Handoffs contain only remaining human actions.
 - Track multi-step work with live tasks. Briefs bound ownership/evidence; reports hold requested analysis; logs own milestones, checks, decisions, blockers and next state.

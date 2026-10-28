@@ -7,9 +7,9 @@ description: Create or resume durable `.harness/plans/`, and load prior plans or
 
 The plan file is the working memory and handoff contract. Chat is not the source of truth. Canonical project artifacts live under `.harness/`: plans under `.harness/plans/`, dated topic records under `.harness/YYYY/MM/DD/<plan-or-feature-key>.md`, and handoffs under `.harness/handoffs/YYYY/MM/DD/<session-id>-<task-slug>.md`. Runtime Pi sessions remain under `~/.pi/agent/sessions`.
 
-Use the canonical four-lane acceptance table in `AGENTS.md`; do not recreate it here. Small/Focused work uses recipes/tasks without a new full plan by default, but still reads governing decisions for resumed or related work. Full work, explicit planning and approval-gated work require a plan.
+Use the canonical Direct/Focused/Full acceptance matrix in `AGENTS.md`; do not recreate it here. Focused work uses recipes/tasks without a new plan unless explicitly planned, approval-gated, or governed by a prior plan. Full always requires a plan; explicit planning and approval-gated Focused work require one. Approval-gated Direct work uses a bounded scope/checks brief unless explicit planning is requested.
 
-Unless Alan explicitly requests planning, Direct work is exempt: do not create or load a plan, task list, work log, review, handoff, or report for an exact mechanical action and its direct consuming-surface check.
+Unless Alan explicitly requests planning, Direct work is exempt: do not create or load a plan, task list, work log, review, handoff, or report for an exact mechanical action and its direct consuming-surface check. Inherited approval triggers and blockers still bind; use the bounded brief required by `AGENTS.md` when a Direct task is gated.
 
 Canonical discovery uses `.harness` only. Historical `.opencode` records remain read-only; do not migrate, rewrite or delete them as routine task preparation.
 

@@ -1,6 +1,6 @@
 # Task recipe cards
 
-Copy the selected card's steps verbatim into live tasks for non-Direct work. Preserve every inapplicable step as `skipped: <reason>`. Direct work does not need recipe/task-copy ceremony. The canonical acceptance table in `AGENTS.md` selects independent coverage. Add a staged [Haiku/low advisory](../../deslop/SKILL.md) only for a named noise risk or explicit request; do not duplicate a correctness review's obvious-noise coverage. If selected, prepare the exact staged candidate and partition oversized diffs as directed; timeout is incomplete, non-blocking, and recorded as `deslop: timed out`. Never treat worktree review as staged review.
+Copy the selected card's steps verbatim into live tasks for non-Direct work. Preserve every inapplicable step as `skipped: <reason>`. Direct work does not need recipe/task-copy ceremony. The canonical tier matrix in `AGENTS.md` selects independent coverage. Add a staged [Haiku/low advisory](../../deslop/SKILL.md) only for a named noise risk or explicit request; do not duplicate a correctness review's obvious-noise coverage. If selected, prepare the exact staged candidate and partition oversized diffs as directed; timeout is incomplete, non-blocking, and recorded as `deslop: timed out`. Never treat worktree review as staged review.
 
 ## Bug fix
 
