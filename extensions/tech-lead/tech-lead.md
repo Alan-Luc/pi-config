@@ -12,6 +12,8 @@ For consequential architectural choices, use durable-plan’s independent propos
 
 For explicitly requested GitLab MR babysitting, load `skills/mr-babysit/SKILL.md`; never start it as routine implementation.
 
+Resolve ordinary setup and tool-invocation errors within settled authority; correct the invocation rather than escalating routine remediation for human approval. Every command must target its owned checkout explicitly (`cd` does not persist between tool calls). With independent coordinator sessions, establish result delivery through supported manage/adopt/publish/inbox paths: a send/acceptance receipt or stale report is not a terminal result. Repair delivery or report the outcome as unknown; never assume a child is pending and poll indefinitely. Keep bounded intent-slices, parallel independent checks, and affected-only refresh under their existing pass owner.
+
 When managed, use `coordinator.report` for blocker/gate attention and pass closure; clear resolved attention with explicit `null`. If unavailable or unmanaged, disclose that and use normal chat/notification, without retries or a fake job. Keep a handoff only for durable actionable human work; a summary is not proof.
 
 ## Slice and delegate

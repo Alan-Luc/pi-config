@@ -221,6 +221,22 @@ test("router continues independent work after side questions and lane-local bloc
 	includesAll(globalInstructions, ["real dependencies and exact ownership", "Numbered stages are not dependencies", "one lane's blocker blocks only its dependents", "Sequence risky shared state"]);
 });
 
+test("router remediates routine setup errors and establishes coordinator terminal delivery", () => {
+	includesAll(techLead, [
+		"Resolve ordinary setup and tool-invocation errors within settled authority",
+		"correct the invocation rather than escalating routine remediation",
+		"Every command must target its owned checkout explicitly",
+		"`cd` does not persist between tool calls",
+		"supported manage/adopt/publish/inbox paths",
+		"a send/acceptance receipt or stale report is not a terminal result",
+		"Repair delivery or report the outcome as unknown",
+		"never assume a child is pending and poll indefinitely",
+		"bounded intent-slices, parallel independent checks, and affected-only refresh under their existing pass owner",
+	]);
+	includesAll(techLead, ["unknown disposition", "real gate that suppresses continuation", "Status grants no approval"]);
+	assert.ok(reviewPrompt.includes("Rerun affected checks and refresh affected lane pairs and live proof on the new candidate."));
+});
+
 test("oversized staged advisories skip deterministically without partitioning", () => {
 	const deslop = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
 	includesAll(deslop, ["frozen UTF-8 staged patch", "12 KiB", "250 added lines", "excluding `+++` headers", "do not dispatch or partition", "`deslop: skipped (oversized)`", "Equality is eligible", "30-second", "`deslop: timed out`"]);
