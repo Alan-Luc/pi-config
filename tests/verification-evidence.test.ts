@@ -4,7 +4,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { afterEach, it, test } from "bun:test";
-import type { EventBus } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type EventBus } from "@earendil-works/pi-coding-agent";
+import { registerPublicationClearance } from "../extensions/artifact-contracts/publication-clearance.ts";
 import { registerHandoffHooks } from "../extensions/artifact-contracts/handoffs.ts";
 import {
 	BACKGROUND_TASK_REQUEST_CHANNEL,
@@ -29,11 +30,12 @@ import {
 	clearVerificationEvidence,
 	createCandidateIdentity,
 	invalidateVerificationEvidence,
+	sealedVerificationEvidenceErrors,
 	recordVerificationEvidence,
 	verificationClaimErrors,
 } from "../extensions/artifact-contracts/verification-store.ts";
 
-import { requestWorkStatus, VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE } from "../extensions/lib/work-status.ts";
+import { requestWorkStatus, VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE, DELEGATION_STATUS_REQUEST, DELEGATION_STATUS_RESPONSE } from "../extensions/lib/work-status.ts";
 
 const VERIFICATION_EXIT_SESSION = "verification-exit-parent";
 const root = mkdtempSync(join(tmpdir(), "verification-evidence-contract-"));
@@ -223,6 +225,15 @@ test("tool completion before recording invalidates an overlapping verification a
 	assert.match(verificationClaimErrors({ evidenceId: evidence.id, command, exitCode: 0 }).join("\n"), /stale: bash tool activity completed/);
 });
 
+test("sealed publication evidence survives ordinary generation invalidation but still pins its log", () => {
+	const evidence = record("'bun' 'test' 'sealed-proof'");
+	invalidateVerificationEvidence("read-only post-seal inspection");
+	assert.match(verificationClaimErrors({ evidenceId: evidence.id, command: evidence.command, exitCode: 0 }).join("\n"), /stale: read-only post-seal inspection/);
+	assert.deepEqual(sealedVerificationEvidenceErrors(evidence.id), [], "publication identity binding must not relax ordinary receipt freshness");
+	writeFileSync(evidence.logPath, "tampered sealed log");
+	assert.match(sealedVerificationEvidenceErrors(evidence.id).join("\n"), /log hash does not match/);
+});
+
 test("invalid, missing, and tampered evidence fails closed", () => {
 	const invalid = record("'bun' 'test' 'invalid'", 0, false);
 	assert.equal(invalid.verifiedBy, undefined, "invalid receipts do not supply a reportable item");
@@ -351,6 +362,7 @@ type FakeBackgroundService = EventBus & {
 
 function backgroundService(directory: string, options: {
 	status?: "running" | "completed" | "failed" | "killed";
+	sessionId?: string;
 	exitCode?: number | null;
 	omitExitCode?: boolean;
 	output?: string;
@@ -452,7 +464,7 @@ function backgroundService(directory: string, options: {
 			return;
 		}
 		if (request.operation === "work-status") {
-			assert.equal(request.payload?.sessionId, VERIFICATION_EXIT_SESSION);
+			assert.equal(request.payload?.sessionId, options.sessionId ?? VERIFICATION_EXIT_SESSION);
 			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
 				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
 				request_id: request.request_id,
@@ -460,7 +472,7 @@ function backgroundService(directory: string, options: {
 				ok: true,
 				result: {
 					schema_version: "pi-background-tasks.work-status.v1", version: 1,
-					sessionId: VERIFICATION_EXIT_SESSION, generation: "fixture-generation", revision: "a".repeat(64),
+					sessionId: options.sessionId ?? VERIFICATION_EXIT_SESSION, generation: "fixture-generation", revision: "a".repeat(64),
 					activeAdmissions: 0, shuttingDown: false, taskAdmissionsClosed: false,
 					terminalPublicationClosed: false, historyComplete: true, incompletenessReasons: [],
 					tasks: [...service.tasks.values()].map((task) => ({
@@ -1494,6 +1506,70 @@ test("reliability: exit cannot race a verification start still registering", asy
 		if (started.details.operation !== "start") throw new Error("expected start result");
 		await executeVerificationEvidence("registering-terminal", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
 	}
+});
+
+test("parent background collection survives unrelated Bash without becoming fresh publication proof", async () => {
+	const directory = await newRepository();
+	const output = "PARENT_CHECK_EXECUTED\n";
+	const sessionManager = SessionManager.inMemory(directory);
+	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false, output, sessionId: sessionManager.getSessionId() });
+	sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: "parent proof fixture" }], timestamp: Date.now() });
+	const context = { ...makeContext(directory, { nativeExec: { calls: 0 } }), sessionManager };
+	const verificationLifecycle: Record<string, (event: never, ctx: never) => unknown> = {};
+	registerVerificationEvidence({ events: service, registerTool() {}, on(name: string, handler: (event: never, ctx: never) => unknown) { verificationLifecycle[name] = handler; } } as never);
+	await verificationLifecycle.session_start({} as never, context as never);
+	service.on(DELEGATION_STATUS_REQUEST, (value) => {
+		if (typeof value !== "object" || value === null) throw new Error("invalid delegation status request");
+		service.emit(DELEGATION_STATUS_RESPONSE, { ...value, version: 1, generation: "fixture-delegation", revision: 1, runningChildIds: [], pendingResultIds: [] });
+	});
+	const lifecycle = new Map<string, (event: never, ctx: never) => unknown>();
+	type ClearanceTool = { execute: (id: string, params: Record<string, unknown>, signal: undefined, update: undefined, ctx: unknown) => Promise<unknown> };
+	let clearance: ClearanceTool | undefined;
+	registerPublicationClearance({ events: service, exec: runNativeExec,
+		on(name: string, handler: (event: never, ctx: never) => unknown) { lifecycle.set(name, handler); },
+		registerTool(tool: unknown) { clearance = tool as ClearanceTool; },
+	} as never);
+	lifecycle.get("session_start")?.({} as never, context as never);
+	const input = { operation: "start" as const, argv: ["node", "-e", "console.log('PARENT_CHECK_EXECUTED')"], cwd: ".", timeout: 10 };
+	lifecycle.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "parent-start", input } as never, context as never);
+	const started = await executeVerificationEvidence("parent-start", input, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected background start");
+	lifecycle.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "parent-start", details: started.details } as never, context as never);
+	const execution = runProcess(["bash", "-c", started.details.task.command], directory);
+	lifecycle.get("tool_call")?.({ toolName: "bash", toolCallId: "parent-inspection", input: { command: "git status --porcelain=v1" } } as never, context as never);
+	assert.equal(await git(directory, "status", "--porcelain=v1"), "");
+	lifecycle.get("tool_result")?.({ toolName: "bash", toolCallId: "parent-inspection" } as never, context as never);
+	const executed = await execution;
+	assert.equal(executed.exitCode, 0, executed.output);
+	assert.equal(executed.output, output);
+	service.complete();
+	const collect = { operation: "collect" as const, taskId: started.details.taskId };
+	lifecycle.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "parent-collect", input: collect } as never, context as never);
+	const collected = await executeVerificationEvidence("parent-collect", collect, undefined, context, service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected terminal collection");
+	lifecycle.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "parent-collect", details: collected.details } as never, context as never);
+	const proof = collected.details.evidence;
+	assert.equal(proof.valid, true);
+	assert.ok(proof.verifiedBy);
+	assert.deepEqual(verificationClaimErrors({ evidenceId: proof.id, command: proof.command, exitCode: 0 }), []);
+	assert.ok(clearance);
+	await assert.rejects(clearance.execute("old-parent-proof", { tier: "Direct", evidenceIds: [proof.id], lanes: [], adjudication: "An ordinary reportable receipt is not fresh publication proof." }, undefined, undefined, context), /fresh|activity/);
+	// Pi emits no tool_result when a later hook blocks a tool call.
+	lifecycle.get("tool_call")?.({ toolName: "bash", toolCallId: "guard-blocked", input: { command: "git push origin main" } } as never, context as never);
+	lifecycle.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "fresh-start", input } as never, context as never);
+	const freshStart = await executeVerificationEvidence("fresh-start", input, undefined, context, service);
+	if (freshStart.details.operation !== "start") throw new Error("expected fresh start");
+	lifecycle.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "fresh-start", details: freshStart.details } as never, context as never);
+	const freshExecution = await runProcess(["bash", "-c", freshStart.details.task.command], directory);
+	assert.equal(freshExecution.exitCode, 0, freshExecution.output);
+	assert.equal(freshExecution.output, output);
+	service.complete();
+	const freshInput = { operation: "collect" as const, taskId: freshStart.details.taskId };
+	lifecycle.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "fresh-collect", input: freshInput } as never, context as never);
+	const fresh = await executeVerificationEvidence("fresh-collect", freshInput, undefined, context, service);
+	if (fresh.details.operation !== "collect" || fresh.details.state !== "collected") throw new Error("expected fresh collection");
+	lifecycle.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "fresh-collect", details: fresh.details } as never, context as never);
+	assert.ok(await clearance.execute("fresh-parent-proof", { tier: "Direct", evidenceIds: [fresh.details.evidence.id], lanes: [], adjudication: "A fresh parent background check may seed a local seal." }, undefined, undefined, context));
 });
 
 test("background start and early terminal collect preserve the verification contract", { timeout: 30_000 }, async () => {

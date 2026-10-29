@@ -1123,7 +1123,7 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 			"A failed command or changed candidate is evidence of failure; do not mask either result.",
 			"Loaded verification protocol 2 reports protocolVersion in every result. A pending collect has no evidence: wait for terminal notification, then collect. Unknown task ownership is an error, not pending. Missing version leaves an old session's loaded protocol unproven; reconcile active work before reload.",
 			"Do not close a helper through caller_ping, subagent_done or a final reply while verification starts are registering, work is running or verification results remain uncollected. Cancel owned work deliberately if abandoning it, then reconcile/collect the terminal result.",
-			"Copy current evidence.verifiedBy verbatim into the handoff. Finish raw Bash/cleanup before final checks; even read-only Bash afterward invalidates earlier receipts. Inspect with read/grep/find afterward instead.",
+			"Copy current evidence.verifiedBy verbatim into the handoff. Finish raw Bash/cleanup before final checks; later Bash/edit/write invalidates child receipts and unsealed publication proof. Ordinary parent receipts retain candidate-based freshness. Inspect with read/grep/find afterward instead.",
 		],
 		parameters: VERIFICATION_EVIDENCE_PARAMETERS,
 		outputSchema: VERIFICATION_EVIDENCE_OUTPUT_SCHEMA,

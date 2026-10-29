@@ -25,10 +25,10 @@ async function artifact(): Promise<string> {
 }
 
 test("publication is disabled without trusted parent grant, target, candidate and scanner adapters", async () => {
-	await expect(call(createPi(), "git push origin TASK-123-fix")).rejects.toThrow(/publication.*disabled/);
+	await expect(call(createPi(), "git push origin alan/ENG-fixture")).rejects.toThrow(/publication.*disabled/);
 });
 
-test.each(["git push origin TASK-123-fix", "git push origin alan/fix"])("fails closed without runtime on a legacy-authorized branch: %s", async (command) => {
+test.each(["git push origin alan/ENG-fixture", "git push origin alan/fix"])("fails closed without runtime on a legacy-authorized branch: %s", async (command) => {
 	await expect(call(createPi(), command)).rejects.toThrow(/publication/);
 });
 
@@ -49,7 +49,7 @@ test("registered Bash and bg_run guards require publication authority and block 
 	}
 });
 
-test.each(["git push origin main", "git push --force origin feature", "git -C /tmp/repository push -f origin release", "command git push origin TASK-123-fix", "exec git push origin TASK-123-fix", "command -p git push origin TASK-123-fix", "exec -- git push origin TASK-123-fix", "command -p -- git push origin TASK-123-fix", "exec -c git push origin TASK-123-fix", "exec -a fixture-name git push origin TASK-123-fix", "command command -p git push origin TASK-123-fix", "builtin command git push origin TASK-123-fix", "/usr/bin/command git push origin TASK-123-fix", "time git push origin TASK-123-fix", "nohup git push origin TASK-123-fix"])("denies publication without runtime authority: %s", async (command) => {
+test.each(["git push origin main", "git push --force origin feature", "git -C /tmp/repository push -f origin release", "command git push origin alan/ENG-fixture", "exec git push origin alan/ENG-fixture", "command -p git push origin alan/ENG-fixture", "exec -- git push origin alan/ENG-fixture", "command -p -- git push origin alan/ENG-fixture", "exec -c git push origin alan/ENG-fixture", "exec -a fixture-name git push origin alan/ENG-fixture", "command command -p git push origin alan/ENG-fixture", "builtin command git push origin alan/ENG-fixture", "/usr/bin/command git push origin alan/ENG-fixture", "time git push origin alan/ENG-fixture", "nohup git push origin alan/ENG-fixture"])("denies publication without runtime authority: %s", async (command) => {
 	await expect(call(createPi(), command)).rejects.toThrow("publication");
 });
 
@@ -194,7 +194,7 @@ function createPiWithEnv(env: Record<string, string | undefined>) {
 test("children cannot commit or push; parents can commit on Bash and bg_run but publication stays disabled", async () => {
 	const key = "PI_SUBAGENT_AGENT";
 	const child = createPiWithEnv({ [key]: "1" });
-	for (const command of ["git commit -m x", "git push origin main", "git -C repo commit", "ls && git push origin main", "git --no-pager commit -m x", "git -C", "env git commit -m x", "env -S 'git push origin TASK-123-fix'"]) {
+	for (const command of ["git commit -m x", "git push origin main", "git -C repo commit", "ls && git push origin main", "git --no-pager commit -m x", "git -C", "env git commit -m x", "env -S 'git push origin alan/ENG-fixture'"]) {
 		await expect(call(child, command)).rejects.toThrow("Subagents cannot commit or push");
 	}
 	await call(child, "git status");

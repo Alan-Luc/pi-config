@@ -407,7 +407,9 @@ async function validateWorktree(args: string[], projectRoot: string, workdir: st
 
 const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which owns local commits and may push only with Alan's explicit authorization.";
 
-async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean, allowGitIndexFile = false, publication?: PublicationRuntime): Promise<void> {
+export type PublicationRuntimeProvider = (cwd: string) => Promise<PublicationRuntime | undefined>;
+
+async function validateGit(command: string, projectRoot: string, workdir: string, isChild: boolean, allowGitIndexFile = false, publication?: PublicationRuntime | PublicationRuntimeProvider): Promise<void> {
 	const retargets = [...command.matchAll(/\b(?:export\s+)?(GIT_[A-Z0-9_]*)(\+?=)/g)];
 	if (retargets.some((match) => !allowGitIndexFile || match[1] !== "GIT_INDEX_FILE" || match[2] !== "=") && /\bgit\b/.test(command)) {
 		throw new Error("Blocked direct Git invocation with GIT_* environment retargeting");
@@ -430,12 +432,13 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 				|| invocation.args.length !== 2 || invocation.args[0] !== "origin") {
 				throw new Error("Blocked publication: only a standalone literal git push origin <branch> is supported; no companion command, wrapper or override.");
 			}
-			if (publication) {
-				if (await realpath(invocation.workdir) !== await realpath(publication.cwd)) throw new Error("Blocked publication: trusted runtime belongs to another worktree.");
+			const runtime = typeof publication === "function" ? await publication(invocation.workdir) : publication;
+			if (runtime) {
+				if (await realpath(invocation.workdir) !== await realpath(runtime.cwd)) throw new Error("Blocked publication: trusted runtime belongs to another worktree.");
 				const decision = await authorizeGitPublication({
 					action: "push", remote: "origin", branch: invocation.args[1], isChild,
 					force: false, delete: false, mirror: false, prune: false, refspec: false, retarget: false, override: false,
-				}, publication);
+				}, runtime);
 				if (!decision.allowed) throw new Error(`Blocked publication: ${decision.reason}`);
 			} else {
 				throw new Error("Blocked publication gate disabled: trusted publication runtime unavailable");
@@ -451,7 +454,7 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 function normalize(command: string): string { return command.replace(ALLOW_INFRA_RETRY_RE, "").trim().replace(/\s+/g, " "); }
 function resultText(event: ToolResultEvent): string { return event.content.filter((item) => item.type === "text").map((item) => item.text).join("\n"); }
 
-export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string, string | undefined>> = process.env, publication?: PublicationRuntime): void {
+export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string, string | undefined>> = process.env, publication?: PublicationRuntime | PublicationRuntimeProvider): void {
 	const isChild = isSubagentChildEnvironment(env);
 	const infrastructureFailures = new Map<string, string>();
 	const verificationCalls = new Set<string>();
@@ -464,8 +467,9 @@ export function registerGuardrails(pi: ExtensionAPI, env: Readonly<Record<string
 			await validateBoundedReview(event.input, ctx, pi.exec);
 			return;
 		}
-		if (!["bash", "bg_run"].includes(event.toolName) || !isRecord(event.input) || typeof event.input.command !== "string") return;
-		const command = event.input.command;
+		const input: unknown = event.input;
+		if (!["bash", "bg_run"].includes(event.toolName) || !isRecord(input) || typeof input.command !== "string") return;
+		const command = input.command;
 		const allowGitIndexFile = event.parentToolCallId !== undefined
 			&& verificationCalls.has(event.parentToolCallId)
 			&& isVerificationIndexCommand(command);

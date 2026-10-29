@@ -17,7 +17,7 @@ import {
 const remoteUrl = "https://gitlab.example.test/group/project.git";
 const instance = "https://gitlab.example.test";
 const project = "group/project";
-const branch = "TASK-123-fix";
+const branch = "alan/ENG-fixture";
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 
 function git(cwd: string, ...args: string[]): string {
@@ -52,7 +52,7 @@ function makeFixture() {
 			instance,
 			project,
 			pushUrl: remoteUrl,
-			branchPrefix: "TASK-",
+			branchPrefix: "alan/ENG-",
 			actions: ["push"],
 			maxCommits: 4,
 			scannerId: "disposable-fixture-scanner-v1",
@@ -65,7 +65,9 @@ function makeFixture() {
 			resolveTarget: async (pushUrl, targetBranch): Promise<PublicationTarget | undefined> => {
 				requests.push(`${pushUrl} ${targetBranch}`);
 				if (pushUrl !== remoteUrl || targetBranch !== branch) return undefined;
-				return { instance, project, protected: false, remoteHead: git(bare, "rev-parse", `refs/heads/${branch}`) };
+				const advertisedRefs = git(bare, "for-each-ref", "--format=%(refname) %(objectname)").split("\n").filter(Boolean).map((row) => { const [ref, sha] = row.split(" "); return { ref: ref!, sha: sha! }; });
+				const head = advertisedRefs.find(({ ref }) => ref === `refs/heads/${targetBranch}`)?.sha;
+				return { instance, project, protected: false, branchState: head ? { state: "existing", head } : { state: "absent" }, advertisedRefs };
 			},
 			loadFrozenCandidate: async () => frozen,
 			isCandidateCurrent: async (candidate) => JSON.stringify(candidate) === JSON.stringify(currentCandidate(repo)),
@@ -123,10 +125,18 @@ function registeredPushGuard(runtime: PublicationRuntime) {
 	return (command: string) => handlers.get("tool_call")?.({ toolName: "bash", toolCallId: "fixture-push", input: { command } } as never, { cwd: runtime.cwd } as never);
 }
 
-test.each(["command git push origin TASK-123-fix", "exec git push origin TASK-123-fix", "command -p git push origin TASK-123-fix", "exec -- git push origin TASK-123-fix", "command -p -- git push origin TASK-123-fix", "exec -c git push origin TASK-123-fix", "exec -a fixture-name git push origin TASK-123-fix", "command command -p git push origin TASK-123-fix", "builtin command git push origin TASK-123-fix", "/usr/bin/command git push origin TASK-123-fix", "time git push origin TASK-123-fix", "nohup git push origin TASK-123-fix"])("registered guard rejects wrapped pushes without invoking adapters: %s", async (command) => withFixture(async (fixture) => {
+test.each(["command git push origin alan/ENG-fixture", "exec git push origin alan/ENG-fixture", "command -p git push origin alan/ENG-fixture", "exec -- git push origin alan/ENG-fixture", "command -p -- git push origin alan/ENG-fixture", "exec -c git push origin alan/ENG-fixture", "exec -a fixture-name git push origin alan/ENG-fixture", "command command -p git push origin alan/ENG-fixture", "builtin command git push origin alan/ENG-fixture", "/usr/bin/command git push origin alan/ENG-fixture", "time git push origin alan/ENG-fixture", "nohup git push origin alan/ENG-fixture"])("registered guard rejects wrapped pushes without invoking adapters: %s", async (command) => withFixture(async (fixture) => {
 	await expect(registeredPushGuard(fixture.runtime)(command)).rejects.toThrow("publication");
 	expect(fixture.requests).toHaveLength(0);
 	expect(fixture.scans).toHaveLength(0);
+}));
+
+test("only alan ENG branches match the explicit publication grant", async () => withFixture(async (fixture) => {
+	const accepted = await authorizeGitPublication(request, fixture.runtime);
+	expect(accepted.allowed).toBe(true);
+	for (const rejected of ["TASK-fixture", "alan/other-fixture", "alan/ENG-", "alan/ENG-bad..suffix", "main"]) {
+		expect((await authorizeGitPublication({ ...request, branch: rejected }, fixture.runtime)).allowed).toBe(false);
+	}
 }));
 
 test("registered guard consults trusted adapters without executing a push", async () => withFixture(async (fixture) => {
@@ -158,7 +168,7 @@ test.each([
 
 test("registered guard leaves read-only Git wrapper queries outside publication authorization", async () => withFixture(async (fixture) => {
 	await registeredPushGuard(fixture.runtime)("env git show push");
-	for (const command of ["command -v git", "builtin command -v git push", "/usr/bin/command -v git push", "printf '%s\\n' 'git push origin TASK-123-fix'", "rg 'git push' file.ts"]) await registeredPushGuard(fixture.runtime)(command);
+	for (const command of ["command -v git", "builtin command -v git push", "/usr/bin/command -v git push", "printf '%s\\n' 'git push origin alan/ENG-fixture'", "rg 'git push' file.ts"]) await registeredPushGuard(fixture.runtime)(command);
 	expect(fixture.requests).toHaveLength(0);
 	expect(fixture.scans).toHaveLength(0);
 }));
@@ -186,10 +196,10 @@ test.each([
 		const aliasUrl = "git@github.com:group/project.git";
 		git(fixture.repo, "remote", "set-url", "origin", aliasUrl);
 		fixture.grant.pushUrl = aliasUrl;
-		fixture.runtime.resolveTarget = async () => ({ instance: "https://github.com", project, protected: false, remoteHead: fixture.base });
+		fixture.runtime.resolveTarget = async () => ({ instance: "https://github.com", project, protected: false, branchState: { state: "existing", head: fixture.base }, advertisedRefs: [{ ref: `refs/heads/${branch}`, sha: fixture.base }] });
 	}],
-	["protected project branch", (fixture: ReturnType<typeof makeFixture>) => { fixture.runtime.resolveTarget = async () => ({ instance, project, protected: true, remoteHead: fixture.base }); }],
-	["wrong project", (fixture: ReturnType<typeof makeFixture>) => { fixture.runtime.resolveTarget = async () => ({ instance, project: "other/project", protected: false, remoteHead: fixture.base }); }],
+	["protected project branch", (fixture: ReturnType<typeof makeFixture>) => { fixture.runtime.resolveTarget = async () => ({ instance, project, protected: true, branchState: { state: "existing", head: fixture.base }, advertisedRefs: [{ ref: `refs/heads/${branch}`, sha: fixture.base }] }); }],
+	["wrong project", (fixture: ReturnType<typeof makeFixture>) => { fixture.runtime.resolveTarget = async () => ({ instance, project: "other/project", protected: false, branchState: { state: "existing", head: fixture.base }, advertisedRefs: [{ ref: `refs/heads/${branch}`, sha: fixture.base }] }); }],
 	["multiple push URLs", (fixture: ReturnType<typeof makeFixture>) => { git(fixture.repo, "remote", "set-url", "--add", "--push", "origin", "https://github.com/group/project.git"); }],
 ] as const)("denies %s", async (_name, setup) => withFixture(async (fixture) => {
 	setup(fixture);
@@ -203,6 +213,17 @@ test("denies dirty source and changed frozen refs", async () => withFixture(asyn
 	rmSync(join(fixture.repo, "uncommitted.txt"));
 	git(fixture.repo, "update-ref", `refs/heads/${branch}`, fixture.base);
 	expect(await authorizeGitPublication(request, fixture.runtime)).toMatchObject({ allowed: false });
+}));
+
+test.each([
+	["destination mapping", "remote.origin.push", `refs/heads/${branch}:refs/heads/other`],
+	["submodule recursion", "push.recurseSubmodules", "only"],
+] as const)("rechecks %s after scanner evaluation", async (_name, key, value) => withFixture(async (fixture) => {
+	fixture.runtime.scan = async (scanRequest) => {
+		git(fixture.repo, "config", key, value);
+		return { scannerId: fixture.grant.scannerId, candidateFingerprint: scanRequest.candidateFingerprint, commitIds: [...scanRequest.commitIds], blobIds: [...scanRequest.blobIds], objectSetDigest: scanRequest.objectSetDigest, passed: true };
+	};
+	expect(await authorizeGitPublication(request, fixture.runtime)).toMatchObject({ allowed: false, reason: expect.stringContaining("changed during authorization") });
 }));
 
 test("rechecks push.followTags after scanner evaluation", async () => withFixture(async (fixture) => {
@@ -220,8 +241,24 @@ test("rechecks push.followTags after scanner evaluation", async () => withFixtur
 	expect(await authorizeGitPublication(request, fixture.runtime)).toMatchObject({ allowed: false, reason: expect.stringContaining("changed during authorization") });
 }));
 
+test.each([
+	["configured destination refspec", "remote.origin.push", `refs/heads/${branch}:refs/heads/other`],
+	["recursive submodule publication", "push.recurseSubmodules", "on-demand"],
+	["submodule recursion fallback", "submodule.recurse", "true"],
+] as const)("denies %s", async (_name, key, value) => withFixture(async (fixture) => {
+	git(fixture.repo, "config", "--add", key, value);
+	const decision = await authorizeGitPublication(request, fixture.runtime);
+	expect(decision).toMatchObject({ allowed: false });
+	expect(fixture.scans).toHaveLength(0);
+}));
+
+test("allows the explicit check-only submodule mode", async () => withFixture(async (fixture) => {
+	git(fixture.repo, "config", "push.recurseSubmodules", "check");
+	expect(await authorizeGitPublication(request, fixture.runtime)).toMatchObject({ allowed: true });
+}));
+
 test("denies effective push.followTags when it could publish a missing annotated tag", async () => withFixture(async (fixture) => {
-	git(fixture.repo, "tag", "-a", "TASK-123-release", "-m", "release", fixture.base);
+	git(fixture.repo, "tag", "-a", "alan/ENG-release", "-m", "release", fixture.base);
 	git(fixture.repo, "config", "push.followTags", "true");
 	const before = { local: refs(fixture.repo), remote: refs(fixture.bare) };
 	const decision = await authorizeGitPublication(request, fixture.runtime);
@@ -231,11 +268,33 @@ test("denies effective push.followTags when it could publish a missing annotated
 	expect(refs(fixture.bare)).toBe(before.remote);
 }));
 
+test("reports an accurate denial when there are no outgoing task commits", async () => withFixture(async (fixture) => {
+	const head = git(fixture.repo, "rev-parse", "HEAD");
+	git(fixture.bare, "fetch", "--quiet", fixture.repo, head);
+	git(fixture.bare, "update-ref", `refs/heads/${branch}`, head);
+	const decision = await authorizeGitPublication(request, fixture.runtime);
+	expect(decision).toMatchObject({ allowed: false, reason: "no outgoing task commits" });
+}));
+
+test("allows first ENG branch creation after subtracting advertised repository history", async () => withFixture(async (fixture) => {
+	git(fixture.bare, "update-ref", "-d", `refs/heads/${branch}`);
+	const decision = await authorizeGitPublication(request, fixture.runtime);
+	expect(decision).toMatchObject({ allowed: true, commitIds: [fixture.base, git(fixture.repo, "rev-parse", "HEAD")].sort() });
+}));
+
+test("subtracts all locally available advertised histories when creating a task branch", async () => withFixture(async (fixture) => {
+	git(fixture.bare, "update-ref", "-d", `refs/heads/${branch}`);
+	git(fixture.bare, "update-ref", "refs/heads/main", fixture.base);
+	const decision = await authorizeGitPublication(request, fixture.runtime);
+	expect(decision).toMatchObject({ allowed: true, commitIds: [git(fixture.repo, "rev-parse", "HEAD")] });
+	expect(fixture.scans[0]?.commitIds).toEqual(decision.allowed ? decision.commitIds : []);
+}));
+
 test("denies a remote ref advanced after the frozen candidate", async () => withFixture(async (fixture) => {
 	const head = git(fixture.repo, "rev-parse", "HEAD");
 	git(fixture.bare, "fetch", "--quiet", fixture.repo, head);
 	git(fixture.bare, "update-ref", `refs/heads/${branch}`, head);
-	expect(await authorizeGitPublication(request, fixture.runtime)).toMatchObject({ allowed: false, reason: expect.stringContaining("commit count") });
+	expect(await authorizeGitPublication(request, fixture.runtime)).toMatchObject({ allowed: false, reason: "no outgoing task commits" });
 }));
 
 test("includes secret-bearing intermediate commits and blobs despite a clean net diff", async () => withFixture(async (fixture) => {

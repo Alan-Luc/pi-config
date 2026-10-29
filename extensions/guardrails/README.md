@@ -6,6 +6,8 @@ These checks reduce mistakes by otherwise well-intentioned agents; they are not 
 
 The guard checks literal Git mutations on supported `bash` and `bg_run` command surfaces, including nested tool calls. It blocks child-agent commits and pushes, restricts parent pushes to the explicit publication gate, and keeps `verification_evidence` check-only by rejecting recognized direct Git mutations before execution. Preserve the existing recognized rejection cases; this document does not expand command parsing or promise coverage for every way to invoke Git.
 
+Publication branches must start with literal `alan/ENG-` and have a nonempty Git-valid suffix, under an exact matching project/push grant. `TASK-` and other `alan/*` branches are not publication targets.
+
 ## Outside the guarantee
 
 Shell wrappers, obfuscation, other execution paths, or hostile same-account code may bypass command inspection. Same-account processes may also inherit ambient SSH keys, credential helpers, or access to servers; this guard does not remove credentials or enforce server-side branch policy. Server protections and withholding child credentials must be established independently where required, not inferred from these checks.

@@ -8,6 +8,8 @@ import { isResultSchemaId, renderResultSubmission, resultSubmissionFieldNames, r
 import { sectionBody, validate } from "./validate.ts";
 import { clearVerificationEvidence, invalidateVerificationEvidence, verificationClaimErrors } from "./verification-store.ts";
 import { pendingVerificationWork } from "./verification.ts";
+import { registerResultFinalizer } from "./publication-clearance.ts";
+import { requestWorkStatus } from "../lib/work-status.ts";
 
 const CORRECTION_TYPE = "artifact-contract-correction";
 const MAX_CORRECTIONS = 3;
@@ -138,7 +140,7 @@ function taskLabel(task: Pick<BackgroundTaskSnapshot, "id" | "name">): string {
 	return label.length <= MAX_TASK_LABEL_LENGTH ? label : `${label.slice(0, MAX_TASK_LABEL_LENGTH - 1)}…`;
 }
 
-async function ownedWorkErrors(events: EventBus, activeVerificationCalls: number, sessionId: string | undefined): Promise<string[]> {
+export async function ownedWorkErrors(events: EventBus, activeVerificationCalls: number, sessionId: string | undefined, requireDelegation = false): Promise<string[]> {
 	const pending = pendingVerificationWork(events);
 	const errors: string[] = [];
 	if (activeVerificationCalls > 0) errors.push(`verification tool calls still running: ${activeVerificationCalls}`);
@@ -149,6 +151,14 @@ async function ownedWorkErrors(events: EventBus, activeVerificationCalls: number
 		errors.push(`uncollected verification results: ${shown.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}`);
 	}
 	if (!sessionId) return [...errors, "background task status owner session is unavailable"];
+	if (requireDelegation) {
+		const verification = requestWorkStatus(events, "verification", sessionId);
+		const delegation = requestWorkStatus(events, "delegation", sessionId);
+		if (!verification) errors.push("verification status capability unavailable");
+		else if (verification.starting > 0 || verification.uncollectedTaskIds.length > 0) errors.push("verification owner has pending work");
+		if (!delegation) errors.push("delegation status capability unavailable");
+		else if (delegation.runningChildIds.length > 0 || delegation.pendingResultIds.length > 0) errors.push("delegation owner has pending work");
+	}
 	try {
 		const status = await requestBackgroundTask(events, "work-status", { sessionId });
 		if (status.activeAdmissions > 0) errors.push(`background task admissions still registering: ${status.activeAdmissions}`);
@@ -190,6 +200,7 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 	const structuredToolRegistered = isResultSchemaId(schemaId);
 	let assignment: AssignmentSnapshot | undefined;
 	let submission: ResultSubmissionRecord | undefined;
+	registerResultFinalizer(pi, () => ({ assignment, submission, activeVerificationCalls: verificationCalls.size }));
 
 	function resetAssignmentState(next: AssignmentSnapshot | undefined): void {
 		assignment = next;

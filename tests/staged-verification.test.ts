@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { afterEach, test } from "bun:test";
 import type { CandidateExec } from "../extensions/artifact-contracts/verification.ts";
 import { createStagedSnapshot } from "../extensions/artifact-contracts/staged-verification.ts";
+import { createHash } from "node:crypto";
+import { createCandidateIdentity, recordVerificationEvidence } from "../extensions/artifact-contracts/verification-store.ts";
+import { publicationEvidenceErrors } from "../extensions/artifact-contracts/publication-clearance.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -78,6 +81,26 @@ test("runtime inputs must be ignored and pin file and directory contents", async
   unlinkSync(join(root, "source.txt")); await git(root, "add", "-u");
   writeFileSync(join(root, "source.txt"), "must not overlay staged deletion\n");
   await assert.rejects(createStagedSnapshot(exec, root, ".", ["source.txt"]), /overlaps staged tracked source/);
+});
+
+test.each(["file", "directory", "mode"])("publication pins retain canonical %s manifest semantics", async (change) => {
+  const root = await fixture();
+  writeFileSync(join(root, ".gitignore"), "/deps.json\n/vendor/\n/proof.log\n");
+  await git(root, "add", ".gitignore"); await git(root, "commit", "--quiet", "-m", "ignore runtime inputs");
+  writeFileSync(join(root, "deps.json"), "dependency\n");
+  mkdirSync(join(root, "vendor")); writeFileSync(join(root, "vendor", "module.js"), "module\n");
+  const snapshot = await createStagedSnapshot(exec, root, ".", ["deps.json", "vendor"]);
+  try {
+    const candidate = createCandidateIdentity({ repositoryRoot: root, head: snapshot.head, tree: snapshot.tree, kind: "clean", source: "staged", runtimeInputs: snapshot.runtimeInputs });
+    const logPath = join(root, "proof.log"); writeFileSync(logPath, "verified\n");
+    const proof = recordVerificationEvidence({ command: "'fixture-check'", argv: ["fixture-check"], cwd: ".", candidate, exitCode: 0, logPath,
+      logSha256: createHash("sha256").update("verified\n").digest("hex"), valid: true });
+    assert.deepEqual(publicationEvidenceErrors([proof.id], candidate), [], "unchanged canonical pins must validate, including directory manifests");
+    if (change === "file") writeFileSync(join(root, "deps.json"), "changed\n");
+    else if (change === "directory") writeFileSync(join(root, "vendor", "extra.js"), "extra\n");
+    else chmodSync(join(root, "vendor", "module.js"), 0o755);
+    assert.match(publicationEvidenceErrors([proof.id], candidate).join("; "), /runtime input|input pin/, "publication must reject changed content, directory members, or modes");
+  } finally { snapshot.cleanup(); }
 });
 
 test("runtime input replacement by an identical-byte external symlink is rejected", async () => {

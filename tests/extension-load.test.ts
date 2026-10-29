@@ -54,7 +54,7 @@ test("Pi default discovery loads and parent-mode guard denies legacy publication
 		const callbacks = guardrails?.handlers.get("tool_call");
 		expect(callbacks).toBeDefined();
 		expect(callbacks?.length).toBeGreaterThan(0);
-		await expect(Promise.all((callbacks ?? []).map((callback) => callback({ type: "tool_call", toolName: "bash", toolCallId: "loaded-push", input: { command: "git push origin alan/fixture" } }, { cwd })))).rejects.toThrow(/publication gate disabled/);
+		await expect(Promise.all((callbacks ?? []).map((callback) => callback({ type: "tool_call", toolName: "bash", toolCallId: "loaded-push", input: { command: "git push origin alan/fixture" } }, { cwd })))).rejects.toThrow(/publication.*(?:gate disabled|grant unavailable|not an allowed parent push shape)/);
 		expect(shortcuts?.shortcuts.has("alt+p")).toBe(true);
 		expect(workLog?.tools.has("work_log")).toBe(true);
 		expect(notifyUser?.tools.has("notify_user")).toBe(true);

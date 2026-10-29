@@ -10,7 +10,7 @@ export type PublicationGrant = {
 	instance: string;
 	project: string;
 	pushUrl: string;
-	branchPrefix: "TASK-" | `TASK-${string}`;
+	branchPrefix: "alan/ENG-";
 	actions: readonly ["push"];
 	maxCommits: number;
 	scannerId: string;
@@ -39,11 +39,14 @@ export type FrozenPublicationCandidate = {
 	inputDigest: string;
 };
 
+export type AdvertisedPublicationRef = { ref: string; sha: string };
+export type PublicationBranchState = { state: "existing"; head: string } | { state: "absent" };
 export type PublicationTarget = {
 	instance: string;
 	project: string;
 	protected: boolean;
-	remoteHead: string;
+	branchState: PublicationBranchState;
+	advertisedRefs: readonly AdvertisedPublicationRef[];
 };
 
 export type PublicationScanRequest = {
@@ -112,7 +115,7 @@ function validGrant(grant: unknown): grant is PublicationGrant {
 	return grant.enabled === true && typeof grant.instance === "string" && /^https:\/\//.test(grant.instance)
 		&& typeof grant.project === "string" && grant.project.length > 0
 		&& typeof grant.pushUrl === "string" && grant.pushUrl.length > 0
-		&& typeof grant.branchPrefix === "string" && /^TASK-[A-Za-z0-9._/-]*$/.test(grant.branchPrefix)
+		&& grant.branchPrefix === "alan/ENG-"
 		&& Array.isArray(grant.actions) && grant.actions.length === 1 && grant.actions[0] === "push"
 		&& typeof grant.maxCommits === "number" && Number.isSafeInteger(grant.maxCommits)
 		&& grant.maxCommits > 0 && grant.maxCommits <= 100
@@ -124,7 +127,30 @@ function validRequest(request: unknown): request is NormalizedPublicationRequest
 	return request.action === "push" && request.remote === "origin" && typeof request.branch === "string"
 		&& typeof request.isChild === "boolean" && !request.isChild
 		&& [request.force, request.delete, request.mirror, request.prune, request.refspec, request.retarget, request.override].every((value) => value === false)
-		&& /^TASK-[A-Za-z0-9._/-]+$/.test(request.branch);
+		&& request.branch.startsWith("alan/ENG-") && request.branch.length > "alan/ENG-".length;
+}
+
+async function configValues(cwd: string, key: string): Promise<string[]> {
+	try {
+		const output = await git(cwd, ["config", "--null", "--get-all", key]);
+		return output.split("\0").slice(0, -1);
+	} catch (error) {
+		if (isRecord(error) && error.code === 1) return [];
+		throw error;
+	}
+}
+
+async function submodulePublicationEnabled(cwd: string): Promise<boolean> {
+	const pushModes = await configValues(cwd, "push.recurseSubmodules");
+	if (pushModes.length > 0) return !["no", "check"].includes(pushModes[pushModes.length - 1] ?? "");
+	try {
+		const value = await git(cwd, ["config", "--type=bool", "--get", "submodule.recurse"]);
+		if (value !== "true" && value !== "false") throw new Error("invalid submodule.recurse value");
+		return value === "true";
+	} catch (error) {
+		if (isRecord(error) && error.code === 1) return false;
+		throw error;
+	}
 }
 
 async function followTagsEnabled(cwd: string): Promise<boolean> {
@@ -138,12 +164,17 @@ async function followTagsEnabled(cwd: string): Promise<boolean> {
 	}
 }
 
-async function outgoingObjects(cwd: string, remoteHead: string, head: string): Promise<{ commits: string[]; blobs: string[] }> {
-	if (!HASH.test(remoteHead) || !HASH.test(head)) throw new Error("invalid object identity");
-	const range = `${remoteHead}..${head}`;
-	const commitsOutput = await git(cwd, ["rev-list", "--reverse", range]);
+async function outgoingObjects(cwd: string, advertisedRefs: readonly AdvertisedPublicationRef[], head: string): Promise<{ commits: string[]; blobs: string[] }> {
+	if (!HASH.test(head) || advertisedRefs.some(({ ref, sha }) => !ref.startsWith("refs/") || !HASH.test(sha))) throw new Error("invalid advertised object identity");
+	const available: string[] = [];
+	for (const { sha } of advertisedRefs) {
+		if (await git(cwd, ["cat-file", "-e", `${sha}^{commit}`]).then(() => true, () => false)) available.push(sha);
+	}
+	const args = ["rev-list", "--reverse", head, ...(available.length ? ["--not", ...available] : [])];
+	const commitsOutput = await git(cwd, args);
 	const commits = commitsOutput ? commitsOutput.split("\n") : [];
-	const objectsOutput = await git(cwd, ["rev-list", "--objects", "--no-object-names", range]);
+	const objectArgs = ["rev-list", "--objects", "--no-object-names", head, ...(available.length ? ["--not", ...available] : [])];
+	const objectsOutput = await git(cwd, objectArgs);
 	const objects = [...new Set(objectsOutput.split("\n").filter(Boolean))];
 	if (objects.some((object) => !HASH.test(object))) throw new Error("invalid object listing");
 	if (objects.length === 0) return { commits, blobs: [] };
@@ -172,6 +203,7 @@ export async function authorizeGitPublication(
 		const grant = await runtime.loadGrant();
 		if (!validGrant(grant)) return deny("explicit publication grant unavailable or invalid");
 		const cwd = await realpath(resolve(runtime.cwd));
+		await git(cwd, ["check-ref-format", "--branch", request.branch]);
 		const top = await realpath(await git(cwd, ["rev-parse", "--show-toplevel"]));
 		if (top !== cwd) return deny("Git worktree root does not match the frozen candidate root");
 		const [head, tree, branch, indexTree, status, pushUrlOutput] = await Promise.all([
@@ -187,6 +219,11 @@ export async function authorizeGitPublication(
 		const pushUrls = pushUrlOutput.split("\n").filter(Boolean);
 		if (pushUrls.length !== 1 || pushUrls[0] !== grant.pushUrl) return deny("configured push URL does not match the explicit grant");
 		if (await followTagsEnabled(cwd)) return deny("effective push.followTags could publish unscanned annotated tags");
+		const [pushMappings, recurseSubmodules] = await Promise.all([
+			configValues(cwd, "remote.origin.push"), submodulePublicationEnabled(cwd),
+		]);
+		if (pushMappings.length > 0) return deny("configured remote.origin.push could retarget the publication destination");
+		if (recurseSubmodules) return deny("effective submodule recursion could publish unscanned objects");
 		const candidate = await runtime.loadFrozenCandidate();
 		if (!candidate || !validCandidate(candidate)) return deny("trusted frozen candidate unavailable or invalid");
 		if (candidate.head !== head || candidate.tree !== tree || candidate.branch !== branch
@@ -195,17 +232,25 @@ export async function authorizeGitPublication(
 		if (branch !== request.branch || !branch.startsWith(grant.branchPrefix)) return deny("branch does not match the explicit task grant");
 		const target = await runtime.resolveTarget(pushUrls[0] ?? "", branch);
 		if (!target || target.instance !== grant.instance || target.project !== grant.project || target.protected
-			|| !HASH.test(target.remoteHead)) return deny("confirmed project or branch protection identity unavailable or mismatched");
-		const ancestor = await git(cwd, ["merge-base", "--is-ancestor", target.remoteHead, head]).then(() => true, () => false);
-		if (!ancestor) return deny("remote branch is not an ancestor of the frozen candidate");
-		const { commits, blobs } = await outgoingObjects(cwd, target.remoteHead, head);
-		if (commits.length === 0 || commits.length > grant.maxCommits) return deny("outgoing commit count exceeds the explicit grant");
+			|| !Array.isArray(target.advertisedRefs)
+			|| target.advertisedRefs.some(({ ref, sha }, index) => !ref.startsWith("refs/") || !HASH.test(sha)
+				|| (index > 0 && target.advertisedRefs[index - 1]!.ref >= ref))) return deny("confirmed project or branch protection identity unavailable or mismatched");
+		const remoteRef = `refs/heads/${branch}`;
+		const advertisedBranch = target.advertisedRefs.find(({ ref }) => ref === remoteRef);
+		if (target.branchState.state === "existing") {
+			if (!HASH.test(target.branchState.head) || advertisedBranch?.sha !== target.branchState.head) return deny("confirmed remote branch state is inconsistent");
+			const ancestor = await git(cwd, ["merge-base", "--is-ancestor", target.branchState.head, head]).then(() => true, () => false);
+			if (!ancestor) return deny("remote branch is not an ancestor of the frozen candidate");
+		} else if (target.branchState.state !== "absent" || advertisedBranch) return deny("confirmed remote branch state is inconsistent");
+		const { commits, blobs } = await outgoingObjects(cwd, target.advertisedRefs, head);
+		if (commits.length === 0) return deny("no outgoing task commits");
+		if (commits.length > grant.maxCommits) return deny("outgoing commit count exceeds the explicit grant");
 		const sortedCommits = [...commits].sort();
 		const objectSetDigest = digest({ commits: sortedCommits, blobs });
 		const candidateFingerprint = digest({
 			cwd, branch, head, tree, indexTree, statusDigest: candidate.statusDigest,
 			inputDigest: candidate.inputDigest, instance: target.instance, project: target.project,
-			pushUrl: pushUrls[0], remoteHead: target.remoteHead, commits: sortedCommits, blobs,
+			pushUrl: pushUrls[0], branchState: target.branchState, advertisedRefs: target.advertisedRefs, commits: sortedCommits, blobs,
 		});
 		const scanRequest: PublicationScanRequest = { candidateFingerprint, commitIds: sortedCommits, blobIds: blobs, objectSetDigest };
 		const scan = await runtime.scan(scanRequest);
@@ -213,20 +258,23 @@ export async function authorizeGitPublication(
 			|| scan.objectSetDigest !== objectSetDigest || !sameIds(scan.commitIds, sortedCommits) || !sameIds(scan.blobIds, blobs)) {
 			return deny("approved scanner did not attest the exact outgoing commit and blob sets");
 		}
-		const [headAfter, treeAfter, branchAfter, indexAfter, statusAfter, branchRefAfter, pushUrlsAfterOutput, followTagsAfter] = await Promise.all([
+		const [headAfter, treeAfter, branchAfter, indexAfter, statusAfter, branchRefAfter, pushUrlsAfterOutput, followTagsAfter, pushMappingsAfter, recurseSubmodulesAfter] = await Promise.all([
 			git(cwd, ["rev-parse", "HEAD"]), git(cwd, ["rev-parse", "HEAD^{tree}"]),
 			git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]), git(cwd, ["write-tree"]),
 			git(cwd, ["status", "--porcelain=v1", "--untracked-files=all"]),
 			git(cwd, ["rev-parse", `refs/heads/${branch}`]),
 			git(cwd, ["remote", "get-url", "--push", "--all", request.remote]),
-			followTagsEnabled(cwd),
+			followTagsEnabled(cwd), configValues(cwd, "remote.origin.push"), submodulePublicationEnabled(cwd),
 		]);
 		const pushUrlsAfter = pushUrlsAfterOutput.split("\n").filter(Boolean);
 		const targetAfter = await runtime.resolveTarget(pushUrls[0] ?? "", branch);
-		if (followTagsAfter || !(await runtime.isCandidateCurrent(candidate)) || headAfter !== head || treeAfter !== tree || branchAfter !== branch
+		if (followTagsAfter || pushMappingsAfter.length > 0 || recurseSubmodulesAfter !== recurseSubmodules
+			|| JSON.stringify(pushMappingsAfter) !== JSON.stringify(pushMappings)
+			|| !(await runtime.isCandidateCurrent(candidate)) || headAfter !== head || treeAfter !== tree || branchAfter !== branch
 			|| indexAfter !== indexTree || statusAfter !== status || branchRefAfter !== head || !sameIds(pushUrlsAfter, pushUrls) || !targetAfter
-			|| targetAfter.remoteHead !== target.remoteHead || targetAfter.instance !== target.instance
-			|| targetAfter.project !== target.project || targetAfter.protected !== target.protected) {
+			|| JSON.stringify(targetAfter.branchState) !== JSON.stringify(target.branchState)
+			|| JSON.stringify(targetAfter.advertisedRefs) !== JSON.stringify(target.advertisedRefs)
+			|| targetAfter.instance !== target.instance || targetAfter.project !== target.project || targetAfter.protected !== target.protected) {
 			return deny("frozen candidate, remote ref, or protection identity changed during authorization");
 		}
 		return { allowed: true, candidateFingerprint, commitIds: sortedCommits, blobIds: blobs, scannerId: scan.scannerId };

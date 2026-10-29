@@ -106,6 +106,17 @@ export function verificationEvidenceErrors(id: string): string[] {
 }
 
 export function verificationClaimErrors(claim: VerificationClaim): string[] {
+	return claimErrors(claim, true);
+}
+
+// A publication seal has its own source/input binding; ordinary receipts still use generation freshness.
+export function sealedVerificationEvidenceErrors(id: string): string[] {
+	const evidence = evidenceById.get(id);
+	if (!evidence) return [`publication evidence ${id} was not found in this session`];
+	return claimErrors({ evidenceId: id, command: evidence.command, exitCode: evidence.exitCode }, false);
+}
+
+function claimErrors(claim: VerificationClaim, requireCurrentGeneration: boolean): string[] {
 	const evidence = evidenceById.get(claim.evidenceId);
 	if (!evidence) return [`Verified by: evidence ${claim.evidenceId} was not found in this session`];
 
@@ -120,7 +131,7 @@ export function verificationClaimErrors(claim: VerificationClaim): string[] {
 	} else if (latestByCommand.get(key) !== evidence.id) {
 		errors.push(`Verified by: evidence ${claim.evidenceId} is obsolete; only the latest result for the repository, command, and cwd is reportable`);
 	}
-	if (evidenceGenerationById.get(evidence.id) !== currentGeneration) {
+	if (requireCurrentGeneration && evidenceGenerationById.get(evidence.id) !== currentGeneration) {
 		errors.push(`Verified by: evidence ${claim.evidenceId} is stale: ${latestInvalidationReason}`);
 	}
 	if (!evidence.valid) errors.push(`Verified by: evidence ${claim.evidenceId} is invalid: ${evidence.invalidReason ?? "verification failed"}`);

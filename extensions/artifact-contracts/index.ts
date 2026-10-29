@@ -4,6 +4,7 @@ import { registerDocumentHooks } from "./documents.ts";
 import { registerReviewPreparation } from "./review-preparation.ts";
 import { registerHandoffHooks } from "./handoffs.ts";
 import { registerVerificationEvidence } from "./verification.ts";
+import { registerPublicationClearance } from "./publication-clearance.ts";
 import { ARTIFACT_CAPABILITY_VERSION } from "./schemas.ts";
 
 export const ARTIFACT_CAPABILITY_REQUEST_CHANNEL = "artifact-contracts:capability-request";
@@ -24,4 +25,5 @@ export default function artifactContracts(pi: ExtensionAPI): void {
 	registerBriefHook(pi);
 	registerHandoffHooks(pi);
 	registerVerificationEvidence(pi);
+	registerPublicationClearance(pi);
 }

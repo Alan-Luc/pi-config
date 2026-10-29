@@ -31,7 +31,7 @@ async function git(exec: CandidateExec, root: string, argv: string[], privateInd
 }
 type RuntimeEntry = Readonly<{ path: string; kind: "directory" | "file"; mode: number; sha256?: string }>;
 
-function runtimeManifest(root: string, input: string, destination?: string): string {
+export function runtimeManifest(root: string, input: string, destination?: string): string {
   const source = resolve(root, input);
   if (!within(root, source)) throw new Error(`runtime input escapes repository: ${input}`);
   const entries: RuntimeEntry[] = [];

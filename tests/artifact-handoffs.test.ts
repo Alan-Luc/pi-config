@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, it, test } from "bun:test";
@@ -15,10 +15,18 @@ import { renderTemplate } from "../extensions/artifact-contracts/render.ts";
 import { currentAssignment, sameAssignment } from "../extensions/artifact-contracts/assignment.ts";
 import { renderResultSubmission } from "../extensions/artifact-contracts/result-submission.ts";
 import { validate } from "../extensions/artifact-contracts/validate.ts";
+import * as publicationClearance from "../extensions/artifact-contracts/publication-clearance.ts";
 import {
+	beginVerificationAttempt,
 	createCandidateIdentity,
+	getVerificationEvidence,
 	recordVerificationEvidence,
+	verificationEvidenceErrors,
 } from "../extensions/artifact-contracts/verification-store.ts";
+import { captureCandidateWithExec, type CandidateExec } from "../extensions/artifact-contracts/verification.ts";
+import { FINALIZE_RESULT_REQUEST, FINALIZE_RESULT_RESPONSE, FINALIZED_RESULT_ENTRY, LAUNCH_BINDING_ENV, PUBLICATION_CLEARANCE_REQUEST, PUBLICATION_CLEARANCE_RESPONSE, DELEGATION_RESULT_REQUEST, DELEGATION_RESULT_RESPONSE, registerPublicationClearance, registerResultFinalizer } from "../extensions/artifact-contracts/publication-clearance.ts";
+import { VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE, DELEGATION_STATUS_REQUEST, DELEGATION_STATUS_RESPONSE } from "../extensions/lib/work-status.ts";
+import { createStagedSnapshot } from "../extensions/artifact-contracts/staged-verification.ts";
 
 const child = { PI_SUBAGENT_AGENT: "code-explorer" };
 const worker = { PI_SUBAGENT_AGENT: "other" };
@@ -308,6 +316,346 @@ function workStatusFrame(requestId: unknown, sessionId: unknown, result: Record<
 		},
 	};
 }
+
+function eventBus() {
+	const listeners = new Map<string, Set<(value: unknown) => void>>();
+	return {
+		on(channel: string, listener: (value: unknown) => void) {
+			const channelListeners = listeners.get(channel) ?? new Set();
+			channelListeners.add(listener);
+			listeners.set(channel, channelListeners);
+			return () => channelListeners.delete(listener);
+		},
+		emit(channel: string, value: unknown) { for (const listener of listeners.get(channel) ?? []) listener(value); },
+	};
+}
+
+async function nativeExec(file: string, args: string[], options: Parameters<CandidateExec>[2]) {
+	const childProcess = Bun.spawn([file, ...args], { cwd: options?.cwd, stdout: "pipe", stderr: "pipe" });
+	const [stdout, stderr, code] = await Promise.all([
+		new Response(childProcess.stdout).text(), new Response(childProcess.stderr).text(), childProcess.exited,
+	]);
+	return { code: code ?? -1, stdout, stderr, killed: false };
+}
+
+function attachFinalizerStatus(events: ReturnType<typeof eventBus>) {
+	let verificationStarting = 0;
+	for (const [requestChannel, responseChannel, owner] of [
+		[VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE, "verification"],
+		[DELEGATION_STATUS_REQUEST, DELEGATION_STATUS_RESPONSE, "delegation"],
+	] as const) {
+		events.on(requestChannel, (value) => {
+			const request = record(value);
+			events.emit(responseChannel, {
+				version: 1, requestId: request.requestId, sessionId: request.sessionId, generation: `${owner}-generation`,
+				...(owner === "verification" ? { starting: verificationStarting, uncollectedTaskIds: [] } : { revision: 1, runningChildIds: [], pendingResultIds: [] }),
+			});
+		});
+	}
+	events.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
+		const request = record(value);
+		if (request.operation !== "work-status") return;
+		const payload = record(request.payload);
+		events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, workStatusFrame(request.request_id, payload.sessionId));
+	});
+	return (starting: number) => { verificationStarting = starting; };
+}
+
+it("finalizes a persisted successful worker result against its launch assignment", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "artifact-finalizer-"));
+	const previousBinding = process.env[LAUNCH_BINDING_ENV];
+	let session: SessionManager | undefined;
+	try {
+		session = SessionManager.create(directory, join(directory, "sessions"));
+		const sessionFile = session.getSessionFile();
+		assert.ok(sessionFile);
+		appendUser(session, "fresh child assignment");
+		const canonicalSessionFile = realpathSync(sessionFile);
+		const assignment = currentAssignment(session);
+		assert.ok(assignment);
+		const candidate = await captureCandidateWithExec(nativeExec, process.cwd());
+		const output = "finalizer proof output";
+		const logPath = join(directory, "proof.log");
+		writeFileSync(logPath, output, { mode: 0o600 });
+		const proof = recordVerificationEvidence({
+			command: "'bun' 'test' 'finalizer-proof'", argv: ["bun", "test", "finalizer-proof"], cwd: ".", candidate,
+			exitCode: 0, logPath, logSha256: createHash("sha256").update(output).digest("hex"), valid: true,
+		});
+		const fields = {
+			status: "done", objective: "Finalize fresh result", currentState: "The persisted worker completed.",
+			decisions: [], proofIds: [proof.id], observationIds: [], notRun: [], nextSteps: [], doNot: [],
+		};
+		const rendered = renderResultSubmission("worker", fields);
+		assert.deepEqual(rendered.errors, []);
+		const finalAssistantEntryId = session.appendMessage({
+			role: "assistant", content: [{ type: "text", text: rendered.text }], stopReason: "stop", timestamp: Date.now(),
+		} as never);
+		const finalAssignment = currentAssignment(session);
+		assert.ok(finalAssignment);
+		const submission = { version: 1 as const, schemaId: "worker" as const, assignment, fields };
+		const binding = {
+			parentSessionId: "parent-session", parentLeafIdAtLaunch: "parent-leaf", launchToolCallId: "launch-call",
+			childId: "child-1", incarnationId: "incarnation-1", canonicalSessionFile, entryFloor: 1,
+		};
+		process.env[LAUNCH_BINDING_ENV] = JSON.stringify(binding);
+		const events = eventBus();
+		const setVerificationStarting = attachFinalizerStatus(events);
+		const entries: Array<{ type: string; data: unknown }> = [];
+		const handlers = new Map<string, (event: never, context?: never) => unknown>();
+		const pi = {
+			events,
+			on(name: string, handler: (event: never, context?: never) => unknown) { handlers.set(name, handler); },
+			appendEntry(type: string, data: unknown) { entries.push({ type, data }); session!.appendCustomEntry(type, data); },
+			exec: nativeExec,
+		};
+		registerResultFinalizer(pi as never, () => ({ assignment, submission, activeVerificationCalls: 0 }));
+		const context = { cwd: process.cwd(), sessionManager: session };
+		handlers.get("session_start")?.({} as never, context as never);
+		let response: Record<string, unknown> | undefined;
+		events.on(FINALIZE_RESULT_RESPONSE, (value) => { response = record(value); });
+		events.emit(FINALIZE_RESULT_REQUEST, {
+			version: 1, requestId: "finalize-1", childSessionId: session.getSessionId(), incarnationId: binding.incarnationId,
+			expectedLeafId: finalAssistantEntryId, context,
+		});
+		assert.ok(response, "the root must synchronously provide the correlated finalization capability");
+		const result = await (response.finalize as () => Promise<Record<string, unknown>>)();
+		assert.equal(result.state, "finalized", JSON.stringify(result));
+		assert.equal(entries.length, 1);
+		assert.equal(entries[0].type, FINALIZED_RESULT_ENTRY);
+		const envelope = record(entries[0].data);
+		assert.equal(envelope.finalAssistantEntryId, finalAssistantEntryId);
+		assert.deepEqual(envelope.assignment, finalAssignment, "the envelope binds the final assistant's actual ancestry");
+		assert.deepEqual(envelope.proofs, [proof]);
+		assert.ok(readFileSync(sessionFile, "utf8").includes(FINALIZED_RESULT_ENTRY));
+
+		const requestFinalize = async (incarnationId: string, expectedLeafId: string) => {
+			response = undefined;
+			events.emit(FINALIZE_RESULT_REQUEST, {
+				version: 1, requestId: `retry-${incarnationId}`, childSessionId: session!.getSessionId(), incarnationId,
+				expectedLeafId, context,
+			});
+			assert.ok(response);
+			return (response.finalize as () => Promise<Record<string, unknown>>)();
+		};
+		const afterSuccess = session.getLeafId();
+		assert.equal((await requestFinalize("wrong-incarnation", afterSuccess!)).state, "unavailable", "a different launch incarnation cannot reuse the capability");
+		assert.equal((await requestFinalize(binding.incarnationId, "not-the-current-leaf")).state, "unavailable", "a different leaf cannot finalize the assignment");
+		assert.equal(entries.length, 1, "rejected finalization must not append an entry");
+
+		process.env[LAUNCH_BINDING_ENV] = JSON.stringify({ ...binding, entryFloor: 100 });
+		const inherited = await requestFinalize(binding.incarnationId, afterSuccess!);
+		assert.equal(inherited.state, "unavailable", "an inherited request before the launch floor cannot be finalized");
+		assert.match(String(inherited.reason), /inherited request/);
+		process.env[LAUNCH_BINDING_ENV] = JSON.stringify(binding);
+
+		setVerificationStarting(1);
+		const pending = await requestFinalize(binding.incarnationId, afterSuccess!);
+		assert.equal(pending.state, "unavailable", "registering verification work must prevent finalization");
+		assert.match(String(pending.reason), /verification.*pending/i);
+		assert.equal(entries.length, 1);
+		setVerificationStarting(0);
+
+		writeFileSync(logPath, "tampered after successful finalization");
+		const tamperedLog = await requestFinalize(binding.incarnationId, afterSuccess!);
+		assert.equal(tamperedLog.state, "unavailable", "a changed proof log cannot support another finalization");
+		assert.match(String(tamperedLog.reason), /log hash|log.*changed/i);
+		assert.equal(entries.length, 1);
+	} finally {
+		if (previousBinding === undefined) delete process.env[LAUNCH_BINDING_ENV];
+		else process.env[LAUNCH_BINDING_ENV] = previousBinding;
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+async function runGit(directory: string, ...args: string[]): Promise<string> {
+	const childProcess = Bun.spawn(["git", ...args], { cwd: directory, stdout: "pipe", stderr: "pipe" });
+	const [stdout, stderr, code] = await Promise.all([
+		new Response(childProcess.stdout).text(), new Response(childProcess.stderr).text(), childProcess.exited,
+	]);
+	assert.equal(code, 0, stderr);
+	return stdout.trim();
+}
+
+it("seals current postcommit evidence, permits reads, and revokes on failure, source change, or restart", async () => {
+	const directory = realpathSync(mkdtempSync(join(tmpdir(), "artifact-seal-")));
+	const logDirectory = mkdtempSync(join(tmpdir(), "artifact-seal-logs-"));
+	try {
+		await runGit(directory, "init", "--quiet");
+		await runGit(directory, "config", "user.email", "seal@example.test");
+		await runGit(directory, "config", "user.name", "Seal test");
+		writeFileSync(join(directory, "source.txt"), "committed source\n");
+		writeFileSync(join(directory, ".gitignore"), "/runtime-input.json\n");
+		await runGit(directory, "add", "source.txt", ".gitignore");
+		await runGit(directory, "commit", "--quiet", "-m", "base");
+		const inputPath = join(directory, "runtime-input.json");
+		const inputBytes = "pinned runtime input\n";
+		writeFileSync(inputPath, inputBytes);
+		const runtimeSnapshot = await createStagedSnapshot(nativeExec, directory, ".", ["runtime-input.json"]);
+		const runtimeInput = runtimeSnapshot.runtimeInputs[0];
+		runtimeSnapshot.cleanup();
+		assert.ok(runtimeInput, "the repository-relative ignored input must produce a manifest pin");
+		const candidate = await captureCandidateWithExec(nativeExec, directory);
+		const evidenceCandidate = createCandidateIdentity({
+			repositoryRoot: candidate.repositoryRoot, head: candidate.head, tree: candidate.tree, kind: candidate.kind, source: "staged",
+			runtimeInputs: [runtimeInput],
+		});
+		const output = "successful current proof";
+		const logPath = join(logDirectory, "proof.log");
+		writeFileSync(logPath, output, { mode: 0o600 });
+		const proofInput = {
+			command: "'bun' 'test' 'seal'", argv: ["bun", "test", "seal"], cwd: ".", candidate: evidenceCandidate,
+			exitCode: 0, logPath, logSha256: createHash("sha256").update(output).digest("hex"), valid: true,
+		};
+		const session = nativeSession();
+		appendUser(session, "authorize local seal fixture");
+		const context = { cwd: directory, sessionManager: session };
+		const events = eventBus();
+		events.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
+			const request = record(value);
+			if (request.operation === "work-status") events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, workStatusFrame(request.request_id, record(request.payload).sessionId));
+		});
+		for (const [requestChannel, responseChannel, owner] of [
+			[VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE, "verification"],
+			[DELEGATION_STATUS_REQUEST, DELEGATION_STATUS_RESPONSE, "delegation"],
+		] as const) {
+			events.on(requestChannel, (value) => {
+				const request = record(value);
+				events.emit(responseChannel, {
+					version: 1, requestId: request.requestId, sessionId: request.sessionId, generation: `${owner}-generation`,
+					...(owner === "verification" ? { starting: 0, uncollectedTaskIds: [] } : { revision: 1, runningChildIds: [], pendingResultIds: [] }),
+				});
+			});
+		}
+		const registered = new Map<string, (event: never, ctx: never) => unknown>();
+		type ClearanceTool = { execute: (id: string, params: Record<string, unknown>, signal: undefined, update: undefined, ctx: unknown) => Promise<unknown> };
+		let clearanceTool: ClearanceTool | undefined;
+		const pi = {
+			events, exec: nativeExec,
+			on(name: string, handler: (event: never, ctx: never) => unknown) { registered.set(name, handler); },
+			registerTool(tool: unknown) { clearanceTool = tool as ClearanceTool; },
+		};
+		registerPublicationClearance(pi as never);
+		registered.get("session_start")?.({} as never, context as never);
+		assert.ok(clearanceTool);
+		registered.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "background-start", input: { operation: "start" } } as never, context as never);
+		const backgroundCommand = "'bun' 'test' 'background-before-inspection'";
+		const backgroundAttempt = beginVerificationAttempt(directory, backgroundCommand, ".");
+		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "background-start", details: { protocolVersion: 2, operation: "start", taskId: "background-proof" } } as never, context as never);
+		registered.get("tool_call")?.({ toolName: "bash", toolCallId: "background-inspection", input: { command: "git status --porcelain=v1" } } as never, context as never);
+		await runGit(directory, "status", "--porcelain=v1");
+		registered.get("tool_result")?.({ toolName: "bash", toolCallId: "background-inspection" } as never, context as never);
+		registered.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "background-collect", input: { operation: "collect", taskId: "background-proof" } } as never, context as never);
+		const backgroundProof = recordVerificationEvidence({ ...proofInput, command: backgroundCommand }, backgroundAttempt);
+		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "background-collect", details: { protocolVersion: 2, operation: "collect", state: "collected", evidence: backgroundProof } } as never, context as never);
+		assert.equal(backgroundProof.valid, true, "unrelated parent tool activity must not invalidate a background receipt");
+		assert.deepEqual(verificationEvidenceErrors(backgroundProof.id), []);
+		await assert.rejects(clearanceTool.execute("old-background-proof", { tier: "Direct", evidenceIds: [backgroundProof.id], lanes: [], adjudication: "A reportable receipt is not necessarily fresh publication proof." }, undefined, undefined, context), /fresh|activity/);
+		registered.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "primary-proof", input: { operation: "run" } } as never, context as never);
+		const proof = recordVerificationEvidence(proofInput);
+		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "primary-proof", details: { protocolVersion: 2, operation: "run", evidence: proof } } as never, context as never);
+		await clearanceTool.execute("seal", { tier: "Direct", evidenceIds: [proof.id], lanes: [], adjudication: "Local acceptance fixture." }, undefined, undefined, context);
+		const query = async () => {
+			const responses: Record<string, unknown>[] = [];
+			const off = events.on(PUBLICATION_CLEARANCE_RESPONSE, (value) => responses.push(record(value)));
+			events.emit(PUBLICATION_CLEARANCE_REQUEST, { version: 1, requestId: "seal-query", cwd: directory });
+			off();
+			assert.equal(responses.length, 1);
+			return (responses[0].loadFrozenCandidate as () => Promise<unknown>)();
+		};
+		assert.ok(await query(), "a valid seal must expose the same frozen candidate");
+		registered.get("tool_call")?.({ toolName: "bash", toolCallId: "inspection", input: { command: "git status --porcelain=v1" } } as never, context as never);
+		await runGit(directory, "status", "--porcelain=v1");
+		registered.get("tool_result")?.({ toolName: "bash", toolCallId: "inspection" } as never, context as never);
+		assert.deepEqual(verificationEvidenceErrors(proof.id), [], "publication must not change ordinary parent receipt freshness");
+		assert.ok(await query(), "read-only Git inspection must not revoke the seal");
+		writeFileSync(inputPath, "changed runtime input\n");
+		assert.equal(await query(), undefined, "a pinned ignored input mutation must make the seal unavailable");
+		writeFileSync(inputPath, inputBytes);
+		assert.ok(await query(), "restoring the exact pinned input preserves the seal identity");
+
+		recordVerificationEvidence({
+			command: proof.command, argv: proof.argv, cwd: proof.cwd, candidate: evidenceCandidate, exitCode: 1, logPath,
+			logSha256: createHash("sha256").update(output).digest("hex"), valid: true,
+		});
+		assert.equal(await query(), undefined, "a superseding failed check must revoke the seal");
+
+		const repairedOutput = "fresh post-failure proof";
+		const repairedLog = join(logDirectory, "repaired-proof.log");
+		writeFileSync(repairedLog, repairedOutput, { mode: 0o600 });
+		registered.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "repaired-proof", input: { operation: "run" } } as never, context as never);
+		const repairedProof = recordVerificationEvidence({
+			command: "'bun' 'test' 'seal-repaired'", argv: ["bun", "test", "seal-repaired"], cwd: ".", candidate: evidenceCandidate,
+			exitCode: 0, logPath: repairedLog, logSha256: createHash("sha256").update(repairedOutput).digest("hex"), valid: true,
+		});
+		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "repaired-proof", details: { protocolVersion: 2, operation: "run", evidence: repairedProof } } as never, context as never);
+		await clearanceTool.execute("reseal", { tier: "Direct", evidenceIds: [repairedProof.id], lanes: [], adjudication: "Local acceptance fixture." }, undefined, undefined, context);
+		assert.ok(await query(), "fresh successful evidence must permit a replacement seal");
+		const slots = ["correctness-primary", "correctness-counterpart", "live-success", "live-attack"] as const;
+		const selections = slots.map((slot, index) => ({ slot, childId: `child-${index}`, incarnationId: `invocation-${index}` }));
+		const parentLeaf = session.getLeafId();
+		assert.ok(parentLeaf);
+		registered.get("tool_call")?.({ toolName: "subagent", toolCallId: "lane-launch" } as never, context as never);
+		registered.get("tool_result")?.({ toolName: "subagent", toolCallId: "lane-launch", isError: false, details: { children: selections.map(({ childId }) => ({ id: childId })) } } as never, context as never);
+		let resultGeneration = "result-owner-generation";
+		const resolved = selections.map((selection, index) => {
+			const review = selection.slot.startsWith("correctness");
+			const fields = review
+				? { status: "done", verdict: "APPROVE", scope: "Frozen fixture source", critical: [], important: [], niceToHave: [], outOfScope: [] }
+				: { status: "done", objective: "Independent fixture proof", currentState: "Verified frozen fixture source", decisions: [], proofIds: [repairedProof.id], observationIds: [], notRun: [], nextSteps: [], doNot: [] };
+			const envelope = { version: 1, launchBinding: { parentSessionId: session.getSessionId(), parentLeafIdAtLaunch: parentLeaf, launchToolCallId: "lane-launch", childId: selection.childId,
+				incarnationId: selection.incarnationId, canonicalSessionFile: `/fixture/child-${index}.jsonl`, entryFloor: 1 }, rootGeneration: `child-generation-${index}`,
+				assignment: { sessionId: `child-session-${index}`, requestEntryId: `request-${index}`, branchEntryIds: [`request-${index}`, `assistant-${index}`] }, finalAssistantEntryId: `assistant-${index}`,
+				resultSchemaId: review ? "review" : "worker", validatedFields: fields, renderedSha256: "a".repeat(64), candidate,
+				inputPins: review ? [] : [runtimeInput], proofs: review ? [] : [repairedProof] };
+			const ref = { state: "finalized", entryId: `finalization-${index}`, envelopeSha256: createHash("sha256").update(JSON.stringify(envelope)).digest("hex"),
+				childSessionId: envelope.assignment.sessionId, rootGeneration: envelope.rootGeneration, incarnationId: selection.incarnationId };
+			return { selection, envelope, ref };
+		});
+		events.on(DELEGATION_RESULT_REQUEST, (value) => {
+			const request = record(value);
+			const result = resolved.find(({ selection }) => selection.childId === request.childId);
+			if (result) events.emit(DELEGATION_RESULT_RESPONSE, { ...request, generation: resultGeneration, revision: 1, state: "completed", status: "completed", launchBinding: result.envelope.launchBinding, envelope: result.envelope, ref: result.ref });
+		});
+		await assert.rejects(clearanceTool.execute("missing-lane", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections.slice(0, 3), adjudication: "Missing attack lane." }, undefined, undefined, context), /complete distinct selected lanes/);
+		await clearanceTool.execute("joined-lanes", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections, adjudication: "All four owner-bound fixture lanes approved." }, undefined, undefined, context);
+		assert.ok(await query(), "complete authoritative lane results must join the parent seal");
+		resultGeneration = "restarted-result-owner";
+		assert.equal(await query(), undefined, "a replaced result-owner generation cannot authorize an existing seal");
+		await clearanceTool.execute("source-control", { tier: "Direct", evidenceIds: [repairedProof.id], lanes: [], adjudication: "Isolate the source mutation control." }, undefined, undefined, context);
+		assert.ok(await query());
+		writeFileSync(join(directory, "source.txt"), "mutated after seal\n");
+		assert.equal(await query(), undefined, "a source mutation must make the frozen candidate unavailable");
+
+		registered.get("session_start")?.({} as never, context as never);
+		assert.equal(await query(), undefined, "session restart must discard process-local publication authority");
+		assert.ok(getVerificationEvidence(repairedProof.id), "session restart must not erase ordinary receipt history");
+		await assert.rejects(clearanceTool.execute("replay-prior-proof", { tier: "Direct", evidenceIds: [repairedProof.id], lanes: [], adjudication: "A restarted owner needs fresh publication proof." }, undefined, undefined, context), /fresh|activity/);
+		appendUser(session, "a new parent assignment");
+		registered.get("agent_start")?.({} as never, context as never);
+		assert.ok(getVerificationEvidence(repairedProof.id), "a new parent assignment must not erase ordinary receipts");
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+		rmSync(logDirectory, { recursive: true, force: true });
+	}
+}, 30_000);
+
+test("publication proof rejects a reportable nonzero result instead of trusting valid", () => {
+	const check: unknown = (publicationClearance as Readonly<Record<string, unknown>>).publicationEvidenceErrors;
+	assert.equal(typeof check, "function", "publication must validate successful proof at its owner");
+	if (typeof check !== "function") throw new Error("publication evidence validator unavailable");
+	const run = evidence("'false'", 1);
+	assert.equal(run.valid, true);
+	assert.match(check([run.id], run.candidate).join("; "), /nonzero|exit 1/);
+});
+
+test("publication proof rejects evidence from another candidate", () => {
+	const check: unknown = (publicationClearance as Readonly<Record<string, unknown>>).publicationEvidenceErrors;
+	assert.equal(typeof check, "function", "publication must validate candidate binding at its owner");
+	if (typeof check !== "function") throw new Error("publication evidence validator unavailable");
+	const run = evidence("'true'");
+	const other = createCandidateIdentity({ repositoryRoot: "/other", head: "a".repeat(40), tree: "b".repeat(40), kind: "clean" });
+	assert.match(check([run.id], other).join("; "), /candidate/);
+});
 
 test("selects schemas and does nothing outside children or for null schemas", () => {
 	assert.equal(replySchema({}), null);
