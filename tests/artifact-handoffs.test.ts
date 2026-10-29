@@ -184,7 +184,8 @@ function record(value: unknown): Record<string, unknown> {
 
 type HookRegistry = Record<string, Handler> & { tools: Map<string, unknown> };
 
-function hooks(env: Record<string, string | undefined>, statusResponse?: StatusResponse, structuredToolActive = false): HookRegistry {
+function hooks(env: Record<string, string | undefined>, statusResponse?: StatusResponse, structuredToolActive = false, workStatusOverrides: Record<string, unknown> = {}): HookRegistry {
+	const session = nativeSession();
 	const previous = { ...process.env };
 	for (const key of Object.keys(process.env)) delete process.env[key];
 	Object.assign(process.env, env);
@@ -204,6 +205,16 @@ function hooks(env: Record<string, string | undefined>, statusResponse?: StatusR
 	};
 	events.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
 		const request = record(value);
+		if (request.operation === "work-status") {
+			const payload = record(request.payload);
+			assert.equal(typeof payload.sessionId, "string");
+			const frame = statusResponse?.(request.request_id) ?? statusFrame(request.request_id, []);
+			const result = frame.ok === true ? record(frame.result) : undefined;
+			events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, result === undefined
+				? { ...frame, operation: "work-status" }
+				: workStatusFrame(request.request_id, payload.sessionId, result, workStatusOverrides));
+			return;
+		}
 		assert.equal(request.operation, "status");
 		assert.deepEqual(request.payload, {});
 		events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, statusResponse?.(request.request_id) ?? {
@@ -214,8 +225,18 @@ function hooks(env: Record<string, string | undefined>, statusResponse?: StatusR
 			result: { tasks: [] },
 		});
 	});
+	let lastContext: unknown;
 	registerHandoffHooks({
-		on: (name: string, handler: Handler) => { registered[name] = handler; return () => undefined; },
+		on: (name: string, handler: Handler) => {
+			registered[name] = (event, context) => {
+				if (context !== undefined) lastContext = context;
+				if (context === undefined && (name === "tool_call" || name === "message_end")) {
+					context = lastContext === undefined ? { sessionManager: session } : lastContext;
+				}
+				return handler(event, context);
+			};
+			return () => undefined;
+		},
 		registerTool: (tool: { name: string }) => registered.tools.set(tool.name, tool),
 		getActiveTools: () => structuredToolActive ? ["submit_agent_result"] : [],
 		events,
@@ -267,6 +288,27 @@ function statusFrame(requestId: unknown, tasks: readonly unknown[]): Record<stri
 	};
 }
 
+function workStatusFrame(requestId: unknown, sessionId: unknown, result: Record<string, unknown> = { tasks: [] }, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA, request_id: requestId, operation: "work-status", ok: true,
+		result: {
+			schema_version: "pi-background-tasks.work-status.v1", version: 1,
+			sessionId, generation: "generation-1", revision: "a".repeat(64),
+			activeAdmissions: 0, shuttingDown: false, taskAdmissionsClosed: false,
+			terminalPublicationClosed: false, historyComplete: true, incompletenessReasons: [],
+			...result,
+			tasks: Array.isArray(result.tasks) ? result.tasks.map((value: unknown) => {
+				const task = record(value);
+				const running = task.status === "running";
+				return { task, terminalPublicationState: running ? "pending" : "delivered",
+					terminalPublished: !running, terminalPublishInFlight: false, terminalEmitInFlight: false,
+					notificationInFlight: false, notificationState: task.notifyOnCompletion === false ? "not-requested" : running ? "pending" : "delivered" };
+			}) : result.tasks,
+			...overrides,
+		},
+	};
+}
+
 test("selects schemas and does nothing outside children or for null schemas", () => {
 	assert.equal(replySchema({}), null);
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: "code-explorer" }), "explorer");
@@ -294,6 +336,57 @@ test("appends the template without dropping the prior prompt", () => {
 	const unset = { systemPromptOptions: {} as { appendSystemPrompt?: string } };
 	registered.before_agent_start(unset as never);
 	assert.equal(unset.systemPromptOptions.appendSystemPrompt, replyInstructions("explorer"));
+});
+
+it.each(["caller_ping", "subagent_done"])("%s rejects an admission before a task exists instead of falling back to legacy emptiness", async (toolName) => {
+	const registered = hooks(worker, (requestId) => statusFrame(requestId, []), false, { activeAdmissions: 1 });
+	const result = await registered.tool_call({ toolName, toolCallId: "registering", input: {} } as never) as { block?: boolean; reason?: string } | undefined;
+	assert.equal(result?.block, true);
+	assert.match(result.reason ?? "", /background.*admission/i);
+});
+
+it.each([
+	{ historyComplete: false, incompletenessReasons: ["history_pruned"] },
+	{ taskAdmissionsClosed: true, historyComplete: false, incompletenessReasons: ["task_admissions_closed"] },
+])("final replies reject incomplete background history %j", async (overrides) => {
+	const registered = hooks(child, undefined, false, overrides);
+	await registered.message_end(event(valid));
+	const correction = registered.turn_end({} as never) as { continue?: boolean; entries?: Array<{ content: string }> } | undefined;
+	assert.equal(correction?.continue, true);
+	assert.match(correction.entries?.[0].content ?? "", /background.*(?:incomplete|closed)/i);
+});
+
+it.each([
+	{ terminalPublicationState: "pending" },
+	{ terminalPublicationState: "abandoned", terminalPublished: false },
+	{ terminalPublished: "unknown" },
+	{ terminalPublishInFlight: true },
+	{ terminalEmitInFlight: "unknown" },
+	{ notificationInFlight: true },
+	{ notificationState: "pending" },
+	{ notificationState: "unknown" },
+])("closing waits for terminal reconciliation %j", async (overrides) => {
+	const entry = { task: backgroundTask("unsettled", "completed"), terminalPublicationState: "delivered",
+		terminalPublished: true, terminalPublishInFlight: false, terminalEmitInFlight: false,
+		notificationInFlight: false, notificationState: "delivered", ...overrides };
+	const registered = hooks(worker, undefined, false, { tasks: [entry] });
+	const result = await registered.tool_call({ toolName: "caller_ping", toolCallId: "terminal-pending", input: {} } as never) as { block?: boolean; reason?: string } | undefined;
+	assert.equal(result?.block, true);
+	assert.match(result.reason ?? "", /terminal results not settled.*unsettled/);
+});
+
+it.each(["completed", "failed", "killed"] as const)("settled %s jobs remain truthfully reportable without requested notification", async (status) => {
+	const registered = hooks(worker, (requestId) => statusFrame(requestId, [
+		{ ...backgroundTask("settled", status), notifyOnCompletion: false, notified: false },
+	]));
+	assert.equal(await registered.tool_call({ toolName: "caller_ping", toolCallId: "settled", input: {} } as never), undefined);
+});
+
+test("closing without a background owner session fails closed", async () => {
+	const registered = hooks(worker);
+	const result = await registered.tool_call({ toolName: "caller_ping", toolCallId: "missing-owner", input: {} } as never, {}) as { block?: boolean; reason?: string } | undefined;
+	assert.equal(result?.block, true);
+	assert.match(result.reason ?? "", /session|owner/i);
 });
 
 test("valid replies query status once while invalid and non-final replies do not", async () => {
@@ -626,7 +719,7 @@ it("replaces and persists the final report through the native extension runner a
 			extensionFactories: [(pi) => {
 				pi.events.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
 					const request = record(value);
-					pi.events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, statusFrame(request.request_id, []));
+					pi.events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, workStatusFrame(request.request_id, record(request.payload).sessionId));
 				});
 				registerHandoffHooks(pi);
 			}],

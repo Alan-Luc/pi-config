@@ -490,7 +490,8 @@ type CandidateCommand = (
 
 export type CandidateExec = Pick<ExtensionAPI, "exec">["exec"];
 
-function nestedCandidateCommand(ctx: VerificationToolContext): CandidateCommand {
+function candidateCommand(ctx: VerificationToolContext): CandidateCommand {
+	if (ctx.exec) return directCandidateCommand(ctx.exec);
 	return async (cwd, argv, timeout, signal) => {
 		const command = argv[0] === "env" && argv[1]?.startsWith("GIT_INDEX_FILE=")
 			? `cd ${shellQuote(cwd)} && GIT_INDEX_FILE=${shellQuote(argv[1].slice("GIT_INDEX_FILE=".length))} ${argv.slice(2).join(" ")}`
@@ -776,7 +777,7 @@ export async function captureCandidate(
 	repositoryRoot?: string,
 	source?: "staged",
 ): Promise<CandidateIdentity> {
-	return captureCandidateWithRunner(nestedCandidateCommand(ctx), ctx.cwd, signal, repositoryRoot, source);
+	return captureCandidateWithRunner(candidateCommand(ctx), ctx.cwd, signal, repositoryRoot, source);
 }
 
 export async function captureCandidateWithExec(
@@ -853,11 +854,11 @@ export async function executeVerification(
 	const command = canonicalCommand(params.argv);
 	validateTimeout(params.timeout);
 	const cwd = canonicalCwd(params.cwd);
-	const repository = await discoverRepository(nestedCandidateCommand(ctx), ctx.cwd, signal, params.repositoryRoot);
+	const repository = await discoverRepository(candidateCommand(ctx), ctx.cwd, signal, params.repositoryRoot);
 	const workingDirectory = repositoryCwd(repository.root, cwd);
 	rejectGitMutations(params.argv, workingDirectory.absolute);
 	const attempt = beginVerificationAttempt(repository.root, command, workingDirectory.relative);
-	const runCandidateCommand = nestedCandidateCommand(ctx);
+	const runCandidateCommand = candidateCommand(ctx);
 	const before = await snapshotCandidate(runCandidateCommand, repository, signal, params.source);
 	const stagedSnapshot = await prepareStagedCheck(ctx, params, before, cwd, signal);
 	try {
@@ -898,12 +899,12 @@ async function executeVerificationStart(
 	const command = canonicalCommand(params.argv);
 	validateTimeout(params.timeout);
 	const cwd = canonicalCwd(params.cwd);
-	const repository = await discoverRepository(nestedCandidateCommand(ctx), ctx.cwd, signal, params.repositoryRoot);
+	const repository = await discoverRepository(candidateCommand(ctx), ctx.cwd, signal, params.repositoryRoot);
 	const workingDirectory = repositoryCwd(repository.root, cwd);
 	rejectGitMutations(params.argv, workingDirectory.absolute);
 	if (!events) throw new Error("verification_evidence background task service is unavailable");
 	const attempt = beginVerificationAttempt(repository.root, command, workingDirectory.relative);
-	const before = await snapshotCandidate(nestedCandidateCommand(ctx), repository, signal, params.source);
+	const before = await snapshotCandidate(candidateCommand(ctx), repository, signal, params.source);
 	const stagedSnapshot = await prepareStagedCheck(ctx, params, before, cwd, signal);
 	const candidate = candidateWithRuntimeInputs(before, stagedSnapshot);
 	const eventState = verificationEventState(events);
@@ -1117,7 +1118,7 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 		promptSnippet: "Capture, run, or start/collect bounded verification evidence",
 		promptGuidelines: [
 			"Use capture before coordinating checks and run only one exact argument vector with a repository-relative cwd.",
-			"Use source: staged to check an isolated real-index snapshot; declare required ignored files/directories as runtimeInputs. Receipts pin their manifests; changed HEAD/index/source/inputs invalidate them. Missing snapshot prerequisites never fall back to live working files.",
+			"Use source: staged to check an isolated real-index snapshot; runtimeInputs requires that staged mode. Working-tree checks omit both fields; bind ignored inputs with an explicit before/after hash manifest in the check command. Receipts pin staged manifests; changed HEAD/index/source/inputs invalidate them. Missing snapshot prerequisites never fall back to live working files.",
 			"Default to start, automatic terminal notification without polling, then collect with the exact task id. Use synchronous run only when the background service is unavailable, the user explicitly requests it, or a stated concrete correctness or lifecycle constraint requires same-turn completion; expected lack of parallel work is not sufficient.",
 			"A failed command or changed candidate is evidence of failure; do not mask either result.",
 			"Loaded verification protocol 2 reports protocolVersion in every result. A pending collect has no evidence: wait for terminal notification, then collect. Unknown task ownership is an error, not pending. Missing version leaves an old session's loaded protocol unproven; reconcile active work before reload.",

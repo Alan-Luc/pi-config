@@ -227,6 +227,7 @@ test("router remediates routine setup errors and establishes coordinator termina
 		"correct the invocation rather than escalating routine remediation",
 		"Every command must target its owned checkout explicitly",
 		"`cd` does not persist between tool calls",
+		"A brief is not a path sandbox: launch writers from the owned checkout or keep writes local",
 		"supported manage/adopt/publish/inbox paths",
 		"a send/acceptance receipt or stale report is not a terminal result",
 		"Repair delivery or report the outcome as unknown",

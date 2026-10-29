@@ -138,7 +138,7 @@ function taskLabel(task: Pick<BackgroundTaskSnapshot, "id" | "name">): string {
 	return label.length <= MAX_TASK_LABEL_LENGTH ? label : `${label.slice(0, MAX_TASK_LABEL_LENGTH - 1)}…`;
 }
 
-async function ownedWorkErrors(events: EventBus, activeVerificationCalls: number): Promise<string[]> {
+async function ownedWorkErrors(events: EventBus, activeVerificationCalls: number, sessionId: string | undefined): Promise<string[]> {
 	const pending = pendingVerificationWork(events);
 	const errors: string[] = [];
 	if (activeVerificationCalls > 0) errors.push(`verification tool calls still running: ${activeVerificationCalls}`);
@@ -148,15 +148,29 @@ async function ownedWorkErrors(events: EventBus, activeVerificationCalls: number
 		const remaining = pending.uncollectedTaskIds.length - shown.length;
 		errors.push(`uncollected verification results: ${shown.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}`);
 	}
+	if (!sessionId) return [...errors, "background task status owner session is unavailable"];
 	try {
-		const { tasks } = await requestBackgroundTask(events, "status", {});
-		const running = tasks
+		const status = await requestBackgroundTask(events, "work-status", { sessionId });
+		if (status.activeAdmissions > 0) errors.push(`background task admissions still registering: ${status.activeAdmissions}`);
+		if (!status.historyComplete) errors.push("background work history incomplete or closed");
+		const running = status.tasks.map((entry) => entry.task)
 			.filter((task) => task.status === "running")
 			.toSorted((left, right) => left.id.localeCompare(right.id) || (left.name ?? "").localeCompare(right.name ?? ""));
 		if (running.length > 0) {
 			const shown = running.slice(0, MAX_TASKS_IN_ERROR).map(taskLabel);
 			const remaining = running.length - shown.length;
 			errors.push(`background tasks still running: ${shown.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}`);
+		}
+		const unsettled = status.tasks.filter((entry) => entry.task.status !== "running" && (
+			entry.terminalPublicationState !== "delivered" || entry.terminalPublished !== true
+			|| entry.terminalPublishInFlight !== false || entry.terminalEmitInFlight !== false
+			|| entry.notificationInFlight !== false
+			|| entry.notificationState !== (entry.task.notifyOnCompletion ? "delivered" : "not-requested")
+		));
+		if (unsettled.length > 0) {
+			const shown = unsettled.slice(0, MAX_TASKS_IN_ERROR).map((entry) => taskLabel(entry.task));
+			const remaining = unsettled.length - shown.length;
+			errors.push(`background task terminal results not settled: ${shown.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}`);
 		}
 		return errors;
 	} catch (error) {
@@ -262,7 +276,7 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event, context) => {
 		synchronizeAssignment(context);
 		if (event.toolName === "caller_ping" || event.toolName === "subagent_done") {
-			const errors = await ownedWorkErrors(pi.events, verificationCalls.size);
+			const errors = await ownedWorkErrors(pi.events, verificationCalls.size, context?.sessionManager?.getSessionId());
 			if (errors.length > 0) {
 				return { block: true, reason: `Cannot close helper: ${errors.join("; ")}. Wait for terminal notification and collect verification results, or cancel owned work and reconcile its terminal state before exiting.` };
 			}
@@ -304,7 +318,7 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 				const rendered = renderResultSubmission(schemaId, submission.fields);
 				errors = [...rendered.errors];
 				if (errors.length === 0) {
-					const workErrors = await ownedWorkErrors(pi.events, verificationCalls.size);
+					const workErrors = await ownedWorkErrors(pi.events, verificationCalls.size, context?.sessionManager?.getSessionId());
 					errors.push(...workErrors);
 					if (errors.length === 0) renderedText = rendered.text;
 				}
@@ -325,7 +339,7 @@ export function registerHandoffHooks(pi: ExtensionAPI): void {
 			if (errors.length > 0) result = { ok: false, errors };
 		}
 		if (result.ok) {
-			const errors = await ownedWorkErrors(pi.events, verificationCalls.size);
+			const errors = await ownedWorkErrors(pi.events, verificationCalls.size, context?.sessionManager?.getSessionId());
 			result = errors.length === 0 ? { ok: true, errors: [] } : { ok: false, errors };
 		}
 		if (result.ok) {

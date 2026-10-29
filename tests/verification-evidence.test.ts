@@ -35,6 +35,7 @@ import {
 
 import { requestWorkStatus, VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE } from "../extensions/lib/work-status.ts";
 
+const VERIFICATION_EXIT_SESSION = "verification-exit-parent";
 const root = mkdtempSync(join(tmpdir(), "verification-evidence-contract-"));
 let sequence = 0;
 const candidate = createCandidateIdentity({
@@ -448,6 +449,28 @@ function backgroundService(directory: string, options: {
 			};
 			if (options.beforeRunResponse) void options.beforeRunResponse().then(respond);
 			else respond();
+			return;
+		}
+		if (request.operation === "work-status") {
+			assert.equal(request.payload?.sessionId, VERIFICATION_EXIT_SESSION);
+			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+				request_id: request.request_id,
+				operation: "work-status",
+				ok: true,
+				result: {
+					schema_version: "pi-background-tasks.work-status.v1", version: 1,
+					sessionId: VERIFICATION_EXIT_SESSION, generation: "fixture-generation", revision: "a".repeat(64),
+					activeAdmissions: 0, shuttingDown: false, taskAdmissionsClosed: false,
+					terminalPublicationClosed: false, historyComplete: true, incompletenessReasons: [],
+					tasks: [...service.tasks.values()].map((task) => ({
+						task, terminalPublicationState: task.status === "running" ? "pending" : "delivered",
+						terminalPublished: task.status !== "running", terminalPublishInFlight: false,
+						terminalEmitInFlight: false, notificationInFlight: false,
+						notificationState: !task.notifyOnCompletion ? "not-requested" : task.notified ? "delivered" : "pending",
+					})),
+				},
+			});
 			return;
 		}
 		if (request.operation === "status") {
@@ -1122,6 +1145,51 @@ test("node --test records the failing staged test from a skip-worktree index wit
 	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index, "native snapshot execution preserves real index flags");
 });
 
+it.each([undefined, "staged"] as const)("background start and collect use native identity reads without Bash exit metadata (source=%s)", async (source) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const nativeExec = { calls: 0 };
+	let bashCalls = 0;
+	const context = makeContext(directory, { nativeExec, omitExitFor: () => { bashCalls++; return true; } });
+	const started = await executeVerificationEvidence("native-identity-start", {
+		operation: "start", ...(source === undefined ? {} : { source }), argv: ["true"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const collected = await executeVerificationEvidence("native-identity-collect", {
+		operation: "collect", taskId: started.details.taskId,
+	}, undefined, context, service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collected result");
+	assert.ok(nativeExec.calls > 0);
+	assert.equal(bashCalls, 0, "trusted Git identity reads must not require Bash result metadata");
+	assert.equal(service.counts.run, 1);
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(collected.details.evidence.exitCode, 0);
+});
+
+test("failed native identity reads do not fall back to another execution owner", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	let bashCalls = 0;
+	const context = {
+		...makeContext(directory),
+		exec: async () => { throw new Error("native identity read failed"); },
+		executeTool: async () => { bashCalls++; throw new Error("unexpected Bash fallback"); },
+	};
+	await assert.rejects(executeVerificationEvidence("failed-native-identity", {
+		operation: "start", argv: ["true"], cwd: ".", timeout: 10,
+	}, undefined, context, service), /native identity read failed/);
+	assert.equal(bashCalls, 0);
+	assert.equal(service.counts.run, 0);
+});
+
+test("native identity reads do not manufacture a synchronous check exit code", async () => {
+	const directory = await newRepository();
+	const context = makeContext(directory, { nativeExec: { calls: 0 }, omitExitFor: () => true });
+	await assert.rejects(executeVerification("missing-check-exit", {
+		operation: "run", argv: ["true"], cwd: ".", timeout: 10,
+	}, context), /missing structured exit_code/);
+});
+
 test("staged start uses the native exec path", async () => {
 	const directory = await newRepository();
 	const service = backgroundService(directory);
@@ -1327,7 +1395,11 @@ function verificationExitHooks(events: EventBus): Record<string, (event: never) 
 			events,
 			registerTool: () => undefined,
 			getActiveTools: () => [],
-			on(name: string, handler: (event: never) => unknown) { registered[name] = handler; },
+			on(name: string, handler: (event: never, context: { sessionManager: { getSessionId(): string; getBranch(): readonly never[] } }) => unknown) {
+				registered[name] = (event) => handler(event, {
+					sessionManager: { getSessionId: () => VERIFICATION_EXIT_SESSION, getBranch: () => [] },
+				});
+			},
 		} as never);
 	} finally {
 		if (previous === undefined) delete process.env.PI_SUBAGENT_AGENT;
