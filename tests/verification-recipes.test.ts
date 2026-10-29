@@ -9,7 +9,7 @@ type VerificationConfig = { recipes: Recipe[] };
 const root = join(import.meta.dir, "..");
 const config = JSON.parse(readFileSync(join(root, "verification.json"), "utf8")) as VerificationConfig;
 const ownedTests = readdirSync(join(root, "tests"))
-	.filter((name) => /\.test\.(?:ts|mjs)$/.test(name) && name !== "extension-load.test.ts")
+	.filter((name) => /\.test\.(?:ts|mjs)$/.test(name))
 	.sort()
 	.map((name) => `tests/${name}`);
 
@@ -25,13 +25,13 @@ test("verification recipes use direct safe argv from the repository root", () =>
 	}
 });
 
-test("the integration recipe lists every portable owned test exactly once", () => {
+test("the integration recipe lists every owned test exactly once", () => {
 	const integration = config.recipes.find((recipe) => recipe.command[0] === "bun");
 	assert.ok(integration);
 	assert.deepEqual(integration.command.slice(0, 2), ["bun", "test"]);
 	assert.deepEqual(integration.command.slice(2), ownedTests);
 	assert.equal(new Set(integration.command.slice(2)).size, ownedTests.length);
-	assert.ok(!integration.command.includes("tests/extension-load.test.ts"));
+	assert.ok(integration.command.includes("tests/extension-load.test.ts"));
 	assert.ok(integration.command.every((argument) => !argument.includes("*")));
 });
 

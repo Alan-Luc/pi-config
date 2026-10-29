@@ -5,7 +5,7 @@ Act as a picky Staff Engineer. Reuse existing patterns, and make the smallest co
 ## Authorization and Git
 
 - The parent may create coherent passing local commits during implementation. Never push without Alan's explicit authorization. Children never commit.
-- Commit a coherent, passing intent-sized slice when it is ready, rather than waiting until task end. Keep behavior and its tests together; keep experiment or model configuration separate. Use one terse imperative subject, with no invented ticket, body, or coauthor trailer. Do not commit failing checkpoints.
+- Commit each coherent, passing intent-sized slice when ready; keep behavior/tests together and experiment/model configuration separate. Use one terse imperative subject, with no ticket, body or coauthor trailer. Never commit failing checkpoints.
 - Keep experiments on `benchmark/<run-id>`, never `main`; promote only an approved final diff as a fresh, clean commit.
 - After the final task commit, inspect the exact base-to-HEAD patch for unintended changes; do not independently rereview an unchanged patch.
 
@@ -44,17 +44,18 @@ Act as a picky Staff Engineer. Reuse existing patterns, and make the smallest co
 - State the tier and reason in preflight. Escalate on new evidence; downgrade only with Alan's approval. Risk and explicit approval outrank size.
 - Matrix owns gates. Full always requires a plan; approval remains conditional, and trust-boundary work is gated. Gated Focused needs a plan; gated Direct uses a bounded scope/checks brief unless explicit planning. Mirrors/tests/docs add no seams; read-only claims need evidence.
 - For ticket-shaped, resumed or related work, reuse the governing plan and relevant dated logs. First map ownership, callers, contracts, risks, and checks; stop reconnaissance once implementation is safe.
-- For non-Direct work, give BLUF slice updates. Record each completed implementation, review, or configuration slice once through `work_log`, using its returned topic path. Plans hold contracts/status/resume pointers; logs link material plan-decision anchors. Handoffs contain only remaining human actions.
-- Track multi-step work with live tasks. Briefs bound ownership/evidence; reports hold requested analysis; logs own milestones, checks, decisions, blockers and next state.
-- Slice only real dependencies and keep unrelated work outside scope. Prefer concurrent work when disjoint slices can make progress or avoid blocking; sequence dependencies and risky shared writes. Background long work; record outcomes after completion. Run focused checks while iterating; inspect the stable patch and remediation deltas. Non-Direct work closes through the policy-selected adversarial pass; run broad integration once when applicable.
-- Before final candidate capture, reconcile or stop task-owned jobs. Bind checks to the candidate with `verification_evidence` and capture again afterward. Failure, source mutation, stale evidence, or candidate mismatch invalidates the claim. Reuse source/input-bound checks/reviews across metadata-only commits with proved content equivalence; pin ignored/nested inputs.
-- Run reportable checks through `verification_evidence` with exact argv, repository-relative cwd, and timeout. Tie claims to its evidence; report unavailable checks as `Not run: <reason>`. Final answers contain only verified results, actual checks, blockers, and remaining human actions. Default to background `start`/`collect`; synchronous `run` requires an unavailable background service, explicit request, or concrete lifecycle/correctness need—not merely no parallel work.
-- Dogfood purpose-built tools using `extensions/extension-dogfooding.md`. Set `inspect_change` targets to `{}` for uncommitted work and explicit `base`/`head` for committed work; an empty worktree packet cannot exclude committed task changes.
-- Direct is a tier; direct execution versus delegation and solo are separate topology choices. Solo removes delegation machinery and reports unavailable independent coverage, never weaker rigor. Orchestrator policy is mode-specific.
+- For non-Direct work, give BLUF slice updates and record each implementation, review or configuration slice once through `work_log`; plans own contracts/status, logs own milestones/checks/decisions, and handoffs only durable human actions. Track multi-step work with live tasks; briefs bound ownership/evidence and reports hold requested analysis.
+- Where managed, report blocker/gate attention and pass closure through `coordinator.report`; clear resolved attention with explicit `null`. If unavailable/unmanaged, disclose and use normal chat/notification without retries or a fake job. Summaries are not proof.
+- Derive the ready set from real dependencies and exact ownership. Continue independent ready work before yielding; only shared writes, actual dependencies, capacity or unavailable outcomes defer it. Numbered stages are not dependencies, and one lane's blocker blocks only its dependents. Sequence risky shared state. Keep focused checks during iteration; close non-Direct work through selected adversarial coverage and one broad integration run where applicable.
+- Before final capture, reconcile/stop task-owned jobs and bind checks to the candidate. Failure, mutation, stale evidence or mismatch invalidates claims; reuse checks only with proved content equivalence and pinned inputs. Run reportable checks via `verification_evidence` with exact argv/cwd/timeout; default to background `start`/`collect`. Use synchronous `run` only if the service is unavailable, explicitly requested or needed for lifecycle/correctness. Report unavailable checks as `Not run: <reason>`; claim only verified results.
+- Dogfood purpose-built tools using `extensions/extension-dogfooding.md`; use `{}` for uncommitted `inspect_change`, explicit `base`/`head` for committed work.
+- Direct is a tier; execution, delegation and solo are separate topology choices. Solo removes delegation machinery and reports missing independent coverage, never weaker rigor. Orchestrator policy is mode-specific.
+
+- The [guardrails threat model](extensions/guardrails/README.md) owns the supported command surface and out-of-model boundary; reviewers explicitly dismiss only out-of-model inputs with that reason.
 
 ## Web Search
 
-- Use Kagi MCP when web search is needed. Search with a specific query and small result set first; reuse relevant results, and broaden only when they do not answer the question. Search usage is billed.
+- Use Kagi MCP for web search. Start with a specific query and few results; reuse them and broaden only if needed. Searches are billed.
 
 ## Implementation
 

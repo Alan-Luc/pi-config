@@ -46,7 +46,7 @@ const deliveryOwners = [
 	{
 		invariantName: "dependency slicing",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Slice only real dependencies and keep unrelated work outside scope.",
+		requiredMarker: "Derive the ready set from real dependencies and exact ownership.",
 	},
 	{
 		invariantName: "worker boundaries",
@@ -56,7 +56,7 @@ const deliveryOwners = [
 	{
 		invariantName: "focused checks",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Run focused checks while iterating",
+		requiredMarker: "Keep focused checks during iteration",
 	},
 	{
 		invariantName: "exact review artifact and hash",
@@ -81,7 +81,7 @@ const deliveryOwners = [
 	{
 		invariantName: "background-first verification",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Default to background `start`/`collect`; synchronous `run` requires",
+		requiredMarker: "default to background `start`/`collect`",
 	},
 	{
 		invariantName: "authorization",
@@ -96,7 +96,7 @@ const deliveryOwners = [
 	{
 		invariantName: "finish records",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Record each completed implementation, review, or configuration slice once through `work_log`",
+		requiredMarker: "record each implementation, review or configuration slice once through `work_log`",
 
 	},
 	{
@@ -142,12 +142,12 @@ test("AGENTS owns each required ceremony row and its conditional gates", () => {
 	includesAll(row("Quiz (reserved)"), ["Not implemented"]);
 	includesAll(row("Coordinator report"), ["gates/blockers", "Gate attention", "closure summary"]);
 	includesAll(row("Passing intent-sized commit"), ["Yes"]);
-	includesAll(globalInstructions, ["State the tier and reason in preflight", "Escalate on new evidence", "downgrade only with Alan's approval", "Full always requires a plan", "approval remains conditional", "Gated Focused needs a plan", "bounded scope/checks brief unless explicit planning"]);
+	includesAll(globalInstructions, ["State the tier and reason in preflight", "Escalate on new evidence", "downgrade only with Alan's approval", "Full always requires a plan", "approval remains conditional", "Gated Focused needs a plan", "bounded scope/checks brief unless explicit planning", "extensions/guardrails/README.md", "coordinator.report", "explicit `null`", "Summaries are not proof"]);
 	assert.doesNotMatch(globalInstructions, /^\| Small \|/m);
 	for (const consumer of [techLead, durablePlan, taskRecipe, recipeCards, reviewPrompt, agents["live-verifier"], agents["code-reviewer"]]) {
 		assert.doesNotMatch(consumer, /^\| (?:Direct|Small|Focused|Full) \|/m, "consumers link to the one policy owner instead of defining a tier table");
 	}
-	includesAll(techLead, ["canonical matrix in `AGENTS.md` during preflight", "Escalate on new evidence", "downgrade only with Alan's approval", "Status grants no approval"]);
+	includesAll(techLead, ["Classify once from `AGENTS.md`", "state tier/reason in preflight", "escalate on evidence", "downgrade only with Alan's approval", "Status grants no approval"]);
 	includesAll(durablePlan, ["canonical Direct/Focused/Full acceptance matrix in `AGENTS.md`", "approval-gated Focused work require one"]);
 	includesAll(taskRecipe, ["tier matrix in `AGENTS.md`", "recipe selection and copy semantics"]);
 	includesAll(recipeCards, ["canonical tier matrix in `AGENTS.md`"]);
@@ -155,6 +155,12 @@ test("AGENTS owns each required ceremony row and its conditional gates", () => {
 	includesAll(agents["code-reviewer"], ["12 combined `read`, `grep`, and `find` calls for Focused review", "24 for Difficult review"]);
 	assert.doesNotMatch(agents["code-reviewer"], /\bSmall\b/);
 	includesAll(reviewPrompt, ["canonical Direct/Focused/Full matrix in `AGENTS.md`", "Focused combines its success and attack observations in one read-only live worker", "Full uses separate workers"]);
+});
+
+test("guardrails threat-model boundary has a linked owner and explicit dismissal reason", () => {
+	const threatModel = readFileSync(new URL("../extensions/guardrails/README.md", import.meta.url), "utf8");
+	includesAll(globalInstructions, ["guardrails threat model", "reviewers explicitly dismiss only out-of-model inputs with that reason"]);
+	includesAll(threatModel, ["Shell wrappers, obfuscation", "outside the supported literal command surface", "state that reason explicitly", "A literal recognized mutation", "remains in model"]);
 });
 
 test("startup policy reports its aggregate word target without obscuring instructions", () => {
@@ -185,22 +191,13 @@ test("temporary dogfooding reuses evidence and records friction without ceremoni
 	]);
 });
 
-test("one recipe skill owns preparation and six checkable cards without a second router", () => {
-	includesAll(techLead, ["For non-Direct work, load `task-recipe`", "select its matching card", "Side questions do not pause approved work", "pause/stop", "a real gate suppresses automatic continuation"]);
+test("one recipe skill owns card selection and six checkable cards without a second router", () => {
+	includesAll(techLead, ["For non-Direct work, load `task-recipe`", "select its matching card", "Side questions do not pause approved work", "pause/stop", "a real gate that suppresses continuation"]);
 	includesAll(taskRecipe, [
 		"sole authority", "steps verbatim into live tasks", "skipped: <reason>",
 		"Direct work is exempt", "whether or not it is committed",
-		"ready set across the remaining approved slices", "independent read-only discovery or test preparation",
-		"Start all unblocked, disjoint work together", "then yield",
-		"Implementation order does not block independent preparation",
-		"Defer only for a named dependency", "shared-state/write conflict",
-		"Do not create a scheduler or require scouts", "shared mutable state", "Instructions are not a lock",
-		"rerun or interruption", "retain the currently loaded role defaults",
-		"After answering a steering or status question", "reconcile live tasks and pending child/check results",
-		"next unblocked approved action in the same turn", "Do not wait for another continue instruction",
-		"Yield only for an active async result", "explicit stop", "not task completion",
-		"Questions do not cancel independent work", "planning/read-only and approval boundaries still apply",
-		"live verification belong at the pass, not after each commit", "Commit only passing checked inputs",
+		"router owns scheduling, resumption and continuation", "selection and copy semantics only",
+		"retain the currently loaded role defaults", "live proof belong at the pass",
 	]);
 	assert.deepEqual([...recipeCards.matchAll(/^## (.+)$/gm)].map((match) => match[1]), [
 		"Bug fix", "Feature", "Refactor", "Investigation", "Review", "Harness change",
@@ -219,16 +216,16 @@ test("one recipe skill owns preparation and six checkable cards without a second
 	}
 });
 
-test("large staged advisories partition bounded Haiku work without changing the review gate", () => {
+test("router continues independent work after side questions and lane-local blockers", () => {
+	includesAll(techLead, ["Side questions do not pause approved work", "reconcile current input", "then take the next authorized action", "Continue independent ready work before yielding", "a lane blocker affects only its dependents", "unknown disposition", "Status grants no approval"]);
+	includesAll(globalInstructions, ["real dependencies and exact ownership", "Numbered stages are not dependencies", "one lane's blocker blocks only its dependents", "Sequence risky shared state"]);
+});
+
+test("oversized staged advisories skip deterministically without partitioning", () => {
 	const deslop = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
-	includesAll(deslop, [
-		"cannot fit one 30-second run", "fresh Haiku/low instances",
-		"non-overlapping paths or hunks", "cover the entire staged diff",
-		"same frozen staged candidate", "bounded patch excerpt",
-		"eight-live-child cap", "join every slice result",
-		"Do not retry the same oversized brief", "whole-diff pass remains stronger",
-	]);
-	assert.ok(recipeCards.includes("../../deslop/SKILL.md"), "recipes route advisory partitioning to its canonical owner");
+	includesAll(deslop, ["frozen UTF-8 staged patch", "12 KiB", "250 added lines", "excluding `+++` headers", "do not dispatch or partition", "`deslop: skipped (oversized)`", "Equality is eligible", "30-second", "`deslop: timed out`"]);
+	assert.doesNotMatch(deslop, /partition it among|fresh Haiku\/low instances|non-overlapping paths or hunks/);
+	assert.ok(recipeCards.includes("../../deslop/SKILL.md"), "recipes link to the advisory owner");
 });
 
 test("task effort follows actual uncertainty within explicit locked-role capability", () => {
@@ -246,12 +243,12 @@ test("task effort follows actual uncertainty within explicit locked-role capabil
 
 test("the router preserves direct, planning, and approval controls", () => {
 	includesAll(techLead, [
-		"canonical matrix in `AGENTS.md` during preflight",
+		"Classify once from `AGENTS.md`",
 		"`plan with me`",
 		"`brief plan`",
 		"`take over`",
 		"load `durable-plan`",
-		"approval triggers owned by the `AGENTS.md` matrix before writers",
+		"preserve its baseline and matrix gates",
 	]);
 	includesAll(globalInstructions, [
 		"The parent may create coherent passing local commits during implementation",
@@ -263,7 +260,7 @@ test("the router preserves direct, planning, and approval controls", () => {
 
 test("the router preserves lifecycle ownership without leaking delegation manuals", () => {
 	includesAll(techLead, [
-		"Delegate only across a real ownership or expertise seam",
+		"delegate only across real ownership/expertise seams",
 		"use its tool-owned delegation guidance and validated brief contract",
 	]);
 	includesAll(techLead, ["prompts/eviscerate-diff.md", "matrix-selected independent acceptance in `AGENTS.md`", "do not recreate a heavier topology"]);
@@ -440,10 +437,12 @@ test("global instructions retain Alan-specific conventions", () => {
 		"progress checkpoint before continuing",
 		"Alan can interrupt at any time",
 		"Honor explicit pause/stop requests",
-		"Prefer concurrent work when disjoint slices can make progress or avoid blocking",
-		"sequence dependencies and risky shared writes",
-		"record outcomes after completion",
-		"Non-Direct work closes through the policy-selected adversarial pass",
+		"Continue independent ready work before yielding",
+		"one lane's blocker blocks only its dependents",
+		"Numbered stages are not dependencies",
+		"Sequence risky shared state",
+		"record each implementation, review or configuration slice once",
+		"close non-Direct work through selected adversarial coverage",
 		"do not independently rereview an unchanged patch",
 		"Label artifact links",
 		"Quiz Alan only when explicitly asked",

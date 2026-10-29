@@ -1,6 +1,6 @@
 # Task recipe cards
 
-Copy the selected card's steps verbatim into live tasks for non-Direct work. Preserve every inapplicable step as `skipped: <reason>`. Direct work does not need recipe/task-copy ceremony. The canonical tier matrix in `AGENTS.md` selects independent coverage. Add a staged [Haiku/low advisory](../../deslop/SKILL.md) only for a named noise risk or explicit request; do not duplicate a correctness review's obvious-noise coverage. If selected, prepare the exact staged candidate and partition oversized diffs as directed; timeout is incomplete, non-blocking, and recorded as `deslop: timed out`. Never treat worktree review as staged review.
+Copy selected card steps verbatim into Focused/Full live tasks; retain inapplicable steps as `skipped: <reason>`. Direct work needs no recipe/task-copy ceremony. The canonical tier matrix in `AGENTS.md` selects coverage. A staged [Haiku/low advisory](../../deslop/SKILL.md) is risk-selected; oversized patches are skipped, and timeouts are incomplete (`deslop: timed out`). Never treat worktree review as staged review.
 
 ## Bug fix
 
@@ -33,8 +33,8 @@ Copy the selected card's steps verbatim into live tasks for non-Direct work. Pre
 ## Review
 
 1. Freeze the exact candidate and identify task-owned scope, callers, contracts, and available evidence.
-2. Follow [the full adversarial review procedure](../../../prompts/eviscerate-diff.md), including risk-selected complete lanes, candidate freshness, and autonomous remediation through clean/input-needed closure; do not substitute a partial review.
-3. **Done:** every required lane and check has a result, findings are fixed or dismissed with evidence and reason in the pass summary, and required proof covers the final candidate. Report any blocker or coverage gap.
+2. Follow [the full adversarial review procedure](../../../prompts/eviscerate-diff.md); report unresolved blockers or coverage gaps.
+3. **Done:** selected lanes and checks are accounted for, findings are fixed or dismissed with evidence and reason in the pass summary, and required proof covers the final candidate.
 
 ## Harness change
 
