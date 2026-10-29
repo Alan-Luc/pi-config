@@ -656,8 +656,10 @@ test("uses only live Pi context for session metadata", () => {
 
 test("work-log policy records milestones without logging Direct work", () => {
 	const common = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
-	assert.match(common, /\| Direct \| Mechanical\/docs, no behavior change or material trust\/persistence\/contract risk: direct consuming-surface check; no workflow ceremony/);
-	assert.match(common, /For non-Direct work[\s\S]*Record each completed implementation, review, or configuration slice once through `work_log`, using its returned topic path/);
+	const row = common.split("\n").find((line) => line.startsWith("| Work-log entry |"));
+	assert.ok(row);
+	assert.deepEqual(row.split("|").slice(2, 5).map((cell) => cell.trim()), ["No", "One completion record per slice/pass.", "Same."]);
+	assert.match(common, /For non-Direct work[^\n]*record each implementation, review or configuration slice once through `work_log`, using its returned topic path/);
 	assert.match(common, /logs own milestones, checks, decisions, blockers and next state/);
 });
 

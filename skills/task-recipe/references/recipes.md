@@ -34,7 +34,7 @@ Copy selected card steps verbatim into Focused/Full live tasks; retain inapplica
 
 1. Freeze the exact candidate and identify task-owned scope, callers, contracts, and available evidence.
 2. Follow [the full adversarial review procedure](../../../prompts/eviscerate-diff.md); report unresolved blockers or coverage gaps.
-3. **Done:** selected lanes and checks are accounted for, findings are fixed or dismissed with evidence and reason in the pass summary, and required proof covers the final candidate.
+3. **Done:** complete selected review, integration and live clearance cover the final candidate; selected lanes/checks are accounted for and findings are fixed or dismissed with evidence and reason in the pass summary. Otherwise report the explicit prerequisite, authorization or tooling blocker.
 
 ## Harness change
 

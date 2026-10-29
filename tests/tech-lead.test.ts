@@ -442,6 +442,9 @@ test("global instructions retain Alan-specific conventions", () => {
 		"Numbered stages are not dependencies",
 		"Sequence risky shared state",
 		"record each implementation, review or configuration slice once",
+		"Keep unrelated work outside scope", "background long work",
+		"Child results and review findings are intermediate events, not task completion",
+		"Yield only for an active async result, real gate or explicit stop",
 		"close non-Direct work through selected adversarial coverage",
 		"do not independently rereview an unchanged patch",
 		"Label artifact links",
@@ -512,7 +515,8 @@ it.each([
 });
 
 test("dismissed material findings keep evidence-based reasons in the pass summary", () => {
-	includesAll(reviewPrompt, ["dismissed material findings", "evidence-based reasons", "pass summary, not a separate artifact"]);
+	includesAll(reviewPrompt, ["dismissed material findings", "evidence-based reasons", "pass summary, not a separate artifact", "never parent-only self-review", "silently defer a blocker", "retry until green", "trust-boundary validation", "data-loss protection", "cancellation"]);
+	assert.ok(recipeCards.includes("complete selected review, integration and live clearance cover the final candidate"));
 	assert.ok(recipeCards.includes("dismissed with evidence and reason in the pass summary"));
 });
 

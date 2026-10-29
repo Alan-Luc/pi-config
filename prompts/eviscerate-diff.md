@@ -21,7 +21,7 @@ The canonical Direct/Focused/Full matrix in `AGENTS.md` owns ticket-close covera
 
 Ordinary pair: `code-reviewer` + `code-reviewer-sonnet`. Difficult pair: `code-reviewer-sol` + `code-reviewer-opus`. Use persisted model/effort; no inferred overrides. Start a fresh selected reviewer-profile session per delta; never resume one for changed-source review. Capacity is eight live children, not a target worker count; reserve complete pairs and required live lanes. Launch every selected ready lane together.
 
-Explicit `/eviscerate-diff` retains the requested independent coverage. Solo mode, a missing counterpart or unavailable live prerequisite leaves coverage incomplete, never parent-only swarm clearance. When independent live workers are not selected, the parent owns required real-interface proof.
+Explicit `/eviscerate-diff` retains the requested independent coverage, never parent-only self-review. Solo mode, a missing counterpart or unavailable live prerequisite leaves coverage incomplete. When independent live workers are not selected, the parent owns required real-interface proof.
 
 ## Freeze and dispatch
 
@@ -39,6 +39,6 @@ For accepted behavioral findings, use the exact triggering input/state to establ
 
 Live success proves promised effects; attack exercises bounded failure/malicious-input/boundary/retry/cancellation cases and negative effects. Use owned local/test resources, never production/customer effects. The success worker runs the relevant broad integration recipe once against the frozen candidate; the attack worker does not duplicate that run. Recapture candidate/input identity and collect exact verification receipts; tests and live effects do not replace each other.
 
-Stop only when the final candidate has complete selected review, integration and live clearance, or a concrete authorization/prerequisite/tooling gap requires input. Do not stop at findings or request another continue. Reassess repeated failed premises; never weaken safety, useful errors, accessibility or cleanup. After the final commit, inspect the complete task-base-to-HEAD patch; do not independently rereview an unchanged patch.
+Stop only when the final candidate has complete selected review, integration and live clearance, or a concrete authorization/prerequisite/tooling gap requires input. Do not stop at findings, silently defer a blocker, retry until green or request another continue. Reassess repeated failed premises; never weaken trust-boundary validation, data-loss protection, cancellation, useful errors, accessibility or cleanup. After the final commit, inspect the complete task-base-to-HEAD patch; do not independently rereview an unchanged patch.
 
 Report each lane/profile/candidate/disposition/findings and actual evidence/gaps. Clean completed lanes may report zero; skipped/missing is not zero. List dismissed material findings with evidence-based reasons in the pass summary, not a separate artifact.
