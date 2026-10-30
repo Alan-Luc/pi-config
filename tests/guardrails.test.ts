@@ -37,13 +37,99 @@ test("registered Bash and bg_run guards require publication authority and block 
 	const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
 	try {
 		git("init", "--quiet", "-b", "alan/fixture");
-		git("remote", "add", "origin", "git@github.com:Alan-Luc/fixture.git");
+		git("remote", "add", "origin", "git@gitlab.com:Alan-Luc/fixture.git");
 		const handlers = createPi();
 		const childHandlers = createPi({ PI_SUBAGENT_AGENT: "1" });
 		for (const name of ["bash", "bg_run"] as const) {
 			await expect(handlers.tool_call({ type: "tool_call", toolName: name, toolCallId: name, input: { command: "git push origin alan/fixture" } }, { cwd: repo })).rejects.toThrow(/publication/);
 			await expect(childHandlers.tool_call({ type: "tool_call", toolName: name, toolCallId: `child-${name}`, input: { command: "git commit -m child" } }, { cwd: repo })).rejects.toThrow("Subagents cannot commit or push");
 		}
+	} finally {
+		await rm(repo, { recursive: true, force: true });
+	}
+});
+
+test.each([
+	"https://github.com/Alan-Luc/fixture.git",
+	"git@github.com:Alan-Luc/fixture.git",
+	"ssh://git@github.com/Alan-Luc/fixture.git",
+])("allows parent GitHub pushes without publication adapters: %s", async (url) => {
+	const repo = await mkdtemp(join(tmpdir(), "pi-github-push-"));
+	const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+	try {
+		git("init", "--quiet");
+		git("remote", "add", "origin", url);
+		for (const toolName of ["bash", "bg_run"]) {
+			for (const command of ["git push origin main", "git push -u origin feature", `cd '${repo}' && git push --set-upstream origin feature`, `git -C '${repo}' push origin feature`]) {
+				await expect(createPi().tool_call({ type: "tool_call", toolName, input: { command } }, { cwd: repo })).resolves.toBeUndefined();
+			}
+		}
+		await expect(call(createPi({ PI_SUBAGENT_AGENT: "1" }), "git push origin main", repo)).rejects.toThrow("Subagents cannot commit or push");
+		for (const command of ["git push --force origin main", "git push --delete origin main", "git push --mirror origin main", "git -c remote.origin.mirror=true push origin main", "git push origin +main", "git push origin main:release"]) {
+			await expect(call(createPi(), command, repo)).rejects.toThrow();
+		}
+	} finally {
+		await rm(repo, { recursive: true, force: true });
+	}
+});
+
+test.each([
+	"https://github.com.evil.example/owner/repo.git",
+	"https://github.com@evil.example/owner/repo.git",
+	"git@evil.example:github.com/owner/repo.git",
+	"git@gitlab.com:owner/repo.git",
+])("does not bypass publication for non-GitHub destinations: %s", async (url) => {
+	const repo = await mkdtemp(join(tmpdir(), "pi-github-reject-"));
+	try {
+		execFileSync("git", ["init", "--quiet"], { cwd: repo });
+		execFileSync("git", ["remote", "add", "origin", url], { cwd: repo });
+		await expect(call(createPi(), "git push origin main", repo)).rejects.toThrow("publication");
+	} finally {
+		await rm(repo, { recursive: true, force: true });
+	}
+});
+
+test("does not confuse subshell cd or environment overrides with a plain push", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-github-checkout-"));
+	const github = join(root, "github");
+	const gitlab = join(root, "gitlab");
+	try {
+		for (const [repo, host] of [[github, "github.com"], [gitlab, "gitlab.com"]]) {
+			await mkdir(repo);
+			execFileSync("git", ["init", "--quiet"], { cwd: repo });
+			execFileSync("git", ["remote", "add", "origin", `git@${host}:owner/repo.git`], { cwd: repo });
+		}
+		for (const operator of ["|", "&", "||"]) {
+			await expect(call(createPi(), `cd '${github}' ${operator} git push origin main`, gitlab)).rejects.toThrow("publication");
+		}
+		for (const command of [`env -C '${gitlab}' git push origin main`, `HOME='${root}' git push origin main`, `XDG_CONFIG_HOME='${root}' git push origin main`]) {
+			await expect(call(createPi(), command, github)).rejects.toThrow("publication");
+		}
+		await expect(call(createPi(), `cd '${gitlab}' && git push origin main`, github)).rejects.toThrow("publication");
+		await expect(call(createPi(), `git -C '${gitlab}' push origin main`, github)).rejects.toThrow("publication");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("checks effective push URLs and rejects unsafe configured push behavior", async () => {
+	const repo = await mkdtemp(join(tmpdir(), "pi-github-config-"));
+	const git = (...args: string[]) => execFileSync("git", args, { cwd: repo });
+	try {
+		git("init", "--quiet");
+		git("remote", "add", "origin", "https://github.com/owner/repo.git");
+		git("config", "remote.origin.pushurl", "git@gitlab.com:owner/repo.git");
+		await expect(call(createPi(), "git push origin main", repo)).rejects.toThrow("publication");
+		git("config", "--add", "remote.origin.pushurl", "git@github.com:owner/repo.git");
+		await expect(call(createPi(), "git push origin main", repo)).rejects.toThrow("publication");
+		git("config", "--unset-all", "remote.origin.pushurl");
+		for (const key of ["remote.origin.mirror", "submodule.recurse", "push.recurseSubmodules"]) {
+			git("config", key, "true");
+			await expect(call(createPi(), "git push origin main", repo)).rejects.toThrow("publication");
+			git("config", "--unset", key);
+		}
+		git("config", "url.https://gitlab.com/.pushInsteadOf", "https://github.com/");
+		await expect(call(createPi(), "git push origin main", repo)).rejects.toThrow("publication");
 	} finally {
 		await rm(repo, { recursive: true, force: true });
 	}
