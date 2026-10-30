@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enabled", "instance", "project", "pushUrl", "branchPrefix", "actions", "maxCommits", "gitlabTokenEnv", "scanner"],
+  "properties": {
+    "enabled": { "type": "boolean", "default": false },
+    "instance": { "type": "string" },
+    "project": { "type": "string" },
+    "pushUrl": { "type": "string" },
+    "branchPrefix": { "type": "string" },
+    "actions": { "type": "array", "const": ["push"] },
+    "maxCommits": { "type": "integer" },
+    "gitlabTokenEnv": { "type": "string" },
+    "scanner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executable", "version", "configPath", "configSha256", "scannerId"],
+      "properties": {
+        "executable": { "type": "string" },
+        "version": { "type": "string" },
+        "configPath": { "type": "string" },
+        "configSha256": { "type": "string" },
+        "scannerId": { "type": "string" }
+      }
+    }
+  },
+  "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+  "then": {
+    "properties": {
+      "instance": { "type": "string", "pattern": "^https://.+$" },
+      "project": { "type": "string", "minLength": 1 },
+      "pushUrl": { "type": "string", "minLength": 1 },
+      "branchPrefix": { "type": "string", "const": "alan/ENG-" },
+      "maxCommits": { "type": "integer", "minimum": 1, "maximum": 100 },
+      "gitlabTokenEnv": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+      "scanner": {
+        "properties": {
+          "executable": { "minLength": 1 },
+          "version": { "minLength": 1 },
+          "configPath": { "minLength": 1 },
+          "configSha256": { "pattern": "^[a-f0-9]{64}$" },
+          "scannerId": { "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  }
+}

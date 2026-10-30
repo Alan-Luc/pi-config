@@ -1,0 +1,17 @@
+{
+  "enabled": false,
+  "instance": "",
+  "project": "",
+  "pushUrl": "",
+  "branchPrefix": "alan/ENG-",
+  "actions": ["push"],
+  "maxCommits": 0,
+  "gitlabTokenEnv": "",
+  "scanner": {
+    "executable": "",
+    "version": "",
+    "configPath": "",
+    "configSha256": "",
+    "scannerId": ""
+  }
+}

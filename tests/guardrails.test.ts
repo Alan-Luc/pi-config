@@ -1,14 +1,16 @@
 import { createHash } from "node:crypto";
 import { test, expect } from "bun:test";
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { registerGuardrails, REVIEW_ARTIFACT_ROOT } from "../extensions/guardrails/guardrails.ts";
+import { AGENT_OUTPUT } from "../extensions/artifact-contracts/schemas.ts";
 
 type Handler = (event: Record<string, unknown>, ctx: { cwd: string }) => unknown;
-function createPi() {
+function createPi(env: Record<string, string | undefined> = {}) {
 	const handlers: Record<string, Handler> = {};
-	registerGuardrails({ on: (name: string, handler: Handler) => { handlers[name] = handler; return () => undefined; } } as never, {});
+	registerGuardrails({ on: (name: string, handler: Handler) => { handlers[name] = handler; return () => undefined; } } as never, env);
 	return handlers;
 }
 function call(handlers: Record<string, Handler>, command: string, cwd = "/tmp/project") {
@@ -22,8 +24,33 @@ async function artifact(): Promise<string> {
 	return path;
 }
 
- test.each(["git push origin main", "git push --force origin feature", "git -C /tmp/repository push -f origin release"])("allows explicit push: %s", async (command) => {
-	await call(createPi(), command);
+test("publication is disabled without trusted parent grant, target, candidate and scanner adapters", async () => {
+	await expect(call(createPi(), "git push origin alan/ENG-fixture")).rejects.toThrow(/publication.*disabled/);
+});
+
+test.each(["git push origin alan/ENG-fixture", "git push origin alan/fix"])("fails closed without runtime on a legacy-authorized branch: %s", async (command) => {
+	await expect(call(createPi(), command)).rejects.toThrow(/publication/);
+});
+
+test("registered Bash and bg_run guards require publication authority and block child mutations", async () => {
+	const repo = await mkdtemp(join(tmpdir(), "pi-publication-no-runtime-"));
+	const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+	try {
+		git("init", "--quiet", "-b", "alan/fixture");
+		git("remote", "add", "origin", "git@github.com:Alan-Luc/fixture.git");
+		const handlers = createPi();
+		const childHandlers = createPi({ PI_SUBAGENT_AGENT: "1" });
+		for (const name of ["bash", "bg_run"] as const) {
+			await expect(handlers.tool_call({ type: "tool_call", toolName: name, toolCallId: name, input: { command: "git push origin alan/fixture" } }, { cwd: repo })).rejects.toThrow(/publication/);
+			await expect(childHandlers.tool_call({ type: "tool_call", toolName: name, toolCallId: `child-${name}`, input: { command: "git commit -m child" } }, { cwd: repo })).rejects.toThrow("Subagents cannot commit or push");
+		}
+	} finally {
+		await rm(repo, { recursive: true, force: true });
+	}
+});
+
+test.each(["git push origin main", "git push --force origin feature", "git -C /tmp/repository push -f origin release", "command git push origin alan/ENG-fixture", "exec git push origin alan/ENG-fixture", "command -p git push origin alan/ENG-fixture", "exec -- git push origin alan/ENG-fixture", "command -p -- git push origin alan/ENG-fixture", "exec -c git push origin alan/ENG-fixture", "exec -a fixture-name git push origin alan/ENG-fixture", "command command -p git push origin alan/ENG-fixture", "builtin command git push origin alan/ENG-fixture", "/usr/bin/command git push origin alan/ENG-fixture", "time git push origin alan/ENG-fixture", "nohup git push origin alan/ENG-fixture"])("denies publication without runtime authority: %s", async (command) => {
+	await expect(call(createPi(), command)).rejects.toThrow("publication");
 });
 
 test.each([
@@ -116,6 +143,21 @@ test("requires bounded existing review artifacts for single and child launches",
 	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { children: [{ agent: "code-reviewer", task: `${metadata}\nPatch artifact: ${outside}\nReview paths: /tmp/project/src/example.ts` }] } }, { cwd: "/tmp/project" })).rejects.toThrow("lexically contained");
 });
 
+test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-haiku"] as const)("enforces bounded metadata for registered reviewer profile %s", async (agent) => {
+	expect(AGENT_OUTPUT[agent]).toBe("review");
+	const path = await artifact();
+	const metadata = `Candidate: candidate_${"a".repeat(64)}\nPatch SHA-256: ${createHash("sha256").update("diff\n").digest("hex")}\nExcluded pre-dirty paths: []`;
+	const task = `${metadata}\nPatch artifact: ${path}\nReview paths: /tmp/project/src/example.ts`;
+	const handlers = createPi();
+	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { agent, task } }, { cwd: "/tmp/project" });
+	await handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "review", input: { children: [{ agent, task }] } }, { cwd: "/tmp/project" });
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "bad", input: { agent, task: "" } }, { cwd: "/tmp/project" })).rejects.toThrow("generated review metadata");
+	const stale = task.replace(/^Patch SHA-256: .*$/m, `Patch SHA-256: ${"b".repeat(64)}`);
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "stale", input: { children: [{ agent, task: stale }] } }, { cwd: "/tmp/project" })).rejects.toThrow("does not match generated");
+	const outside = task.replace(path, "/outside/review.patch");
+	await expect(handlers.tool_call({ type: "tool_call", toolName: "subagent", toolCallId: "outside", input: { agent, task: outside } }, { cwd: "/tmp/project" })).rejects.toThrow("lexically contained");
+});
+
 test("rejects a generated hash that does not match the exact patch bytes", async () => {
 	const path = await artifact();
 	const task = `Candidate: candidate_${"a".repeat(64)}\nPatch SHA-256: ${"b".repeat(64)}\nPatch artifact: ${path}\nReview paths: ${JSON.stringify(["/tmp/project/src/example.ts"])}\nExcluded pre-dirty paths: []`;
@@ -149,15 +191,16 @@ function createPiWithEnv(env: Record<string, string | undefined>) {
 	return handlers;
 }
 
-test("subagent children cannot commit or push; main session unaffected", async () => {
+test("children cannot commit or push; parents can commit on Bash and bg_run but publication stays disabled", async () => {
 	const key = "PI_SUBAGENT_AGENT";
 	const child = createPiWithEnv({ [key]: "1" });
-	for (const command of ["git commit -m x", "git push origin main", "git -C repo commit", "ls && git push origin main", "git --no-pager commit -m x", "git -C"]) {
+	for (const command of ["git commit -m x", "git push origin main", "git -C repo commit", "ls && git push origin main", "git --no-pager commit -m x", "git -C", "env git commit -m x", "env -S 'git push origin alan/ENG-fixture'"]) {
 		await expect(call(child, command)).rejects.toThrow("Subagents cannot commit or push");
 	}
 	await call(child, "git status");
 	await call(child, "git diff");
 	const main = createPiWithEnv({});
 	await call(main, "git commit -m x");
-	await call(main, "git push origin main");
+	await main.tool_call({ type: "tool_call", toolName: "bg_run", toolCallId: "parent-bg-commit", input: { command: "git commit -m x" } }, { cwd: "/tmp/project" });
+	await expect(call(main, "git push origin main")).rejects.toThrow("publication gate disabled");
 });

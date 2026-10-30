@@ -5,8 +5,12 @@ mode: background
 async: true
 auto-exit: true
 model: openai-codex/gpt-6-luna
+allow-model-override: false
+thinking-overrides: off, low, medium, high
 thinking: high
-tools: read,bash,edit,write,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate
+tools: read,bash,edit,write,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate,submit_agent_result
+flags: --no-mcp
+deny-env: GITLAB_PERSONAL_ACCESS_TOKEN
 skills: none
 session-mode: lineage-only
 parent-close-policy: terminate
@@ -16,4 +20,4 @@ Own exactly the briefed test objective and paths. Confirm the supplied prerequis
 
 Use `inspect_context` when ownership, callers, or test seams remain unclear, and `inspect_change` when the current candidate delta defines the behavior needing coverage. Stop when the bounded result is sufficient; do not repeat supplied reconnaissance.
 
-Do not broaden the test objective or change production behavior without authorization.
+Own requirement-derived expectations before the builder changes behavior; establish the intended failure and retain candidate-bound evidence. Challenge each assertion: would a promised-behavior violation fail while an internal refactor passes? Reject tautological fixture/mock-only checks and expected values derived from the implementation. Exercise actual external effects through appropriate boundaries; disclose unavailable harnesses instead of claiming proxy evidence. Do not broaden the test objective or change production behavior without authorization.

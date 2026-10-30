@@ -9,6 +9,9 @@ export const BACKGROUND_TASK_RESPONSE_SCHEMA = "pi-background-tasks.extension-re
 export const BACKGROUND_TASK_TERMINAL_SCHEMA = "pi-background-tasks.extension-terminal.v1";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const TERMINAL_ABANDON_REASONS = [
+	"registry_shutdown", "publisher_closed", "gate_rejected", "retry_exhausted", "retention_limit", "reload_handoff_expired",
+] as const;
 const TASK_KEYS = [
 	"id", "name", "command", "description", "status", "outputPath", "cwd", "startTime", "endTime",
 	"exitCode", "signal", "pid", "bytesWritten", "isAgent", "surviveReload", "reloadSurvival", "error",
@@ -44,6 +47,7 @@ export type BackgroundTaskCapabilities = Readonly<{
 	run_is_agent: true;
 	run_completion_trigger: true;
 	status: true;
+	work_status?: boolean;
 	logs: true;
 	logs_bounded: true;
 	kill: true;
@@ -63,6 +67,30 @@ export type BackgroundTaskLogsPayload = Readonly<{ taskId: string; maxBytes?: nu
 export type BackgroundTaskKillPayload = Readonly<{ taskId: string }>;
 
 export type BackgroundTaskStatusResult = Readonly<{ tasks: readonly BackgroundTaskSnapshot[] }>;
+export type BackgroundTaskWorkState = Readonly<{
+	task: BackgroundTaskSnapshot;
+	terminalPublicationState: "pending" | "delivered" | "abandoned" | "unknown";
+	terminalPublicationAbandonReason?: (typeof TERMINAL_ABANDON_REASONS)[number];
+	terminalPublished: boolean | "unknown";
+	terminalPublishInFlight: boolean | "unknown";
+	terminalEmitInFlight: boolean | "unknown";
+	notificationInFlight: boolean | "unknown";
+	notificationState: "not-requested" | "pending" | "delivered" | "unknown";
+}>;
+export type BackgroundWorkStatus = Readonly<{
+	schema_version: "pi-background-tasks.work-status.v1";
+	version: 1;
+	sessionId: string;
+	generation: string;
+	revision: string;
+	activeAdmissions: number;
+	shuttingDown: boolean;
+	taskAdmissionsClosed: boolean;
+	terminalPublicationClosed: boolean;
+	historyComplete: boolean;
+	incompletenessReasons: readonly string[];
+	tasks: readonly BackgroundTaskWorkState[];
+}>;
 export type BackgroundTaskLogsResult = Readonly<{
 	task: BackgroundTaskSnapshot;
 	path: string;
@@ -76,10 +104,11 @@ export type BackgroundTaskResult =
 	| BackgroundTaskCapabilities
 	| BackgroundTaskSnapshot
 	| BackgroundTaskStatusResult
+	| BackgroundWorkStatus
 	| BackgroundTaskLogsResult
 	| BackgroundTaskKillResult;
 
-export type BackgroundTaskOperation = "capabilities" | "run" | "status" | "logs" | "kill";
+export type BackgroundTaskOperation = "capabilities" | "run" | "status" | "work-status" | "logs" | "kill";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -156,9 +185,65 @@ export function parseBackgroundTaskSnapshot(value: unknown): BackgroundTaskSnaps
 	};
 }
 
+function requireChoice<T extends string>(value: unknown, choices: readonly T[], label: string): T {
+	const choice = choices.find((candidate) => candidate === value);
+	if (choice === undefined) throw new Error(`${label} has an unsupported value`);
+	return choice;
+}
+
+function knownBoolean(value: unknown, label: string): boolean | "unknown" {
+	return value === "unknown" ? value : requireBoolean(value, label);
+}
+
+function parseWorkState(value: unknown): BackgroundTaskWorkState {
+	const entry = requireRecord(value, "background task work state");
+	assertClosed(entry, ["task", "terminalPublicationState", "terminalPublicationAbandonReason", "terminalPublished",
+		"terminalPublishInFlight", "terminalEmitInFlight", "notificationInFlight", "notificationState"], "background task work state");
+	return {
+		task: parseBackgroundTaskSnapshot(entry.task),
+		terminalPublicationState: requireChoice(entry.terminalPublicationState, ["pending", "delivered", "abandoned", "unknown"], "terminalPublicationState"),
+		...(entry.terminalPublicationAbandonReason === undefined ? {} : {
+			terminalPublicationAbandonReason: requireChoice(entry.terminalPublicationAbandonReason,
+				TERMINAL_ABANDON_REASONS, "terminalPublicationAbandonReason"),
+		}),
+		terminalPublished: knownBoolean(entry.terminalPublished, "terminalPublished"),
+		terminalPublishInFlight: knownBoolean(entry.terminalPublishInFlight, "terminalPublishInFlight"),
+		terminalEmitInFlight: knownBoolean(entry.terminalEmitInFlight, "terminalEmitInFlight"),
+		notificationInFlight: knownBoolean(entry.notificationInFlight, "notificationInFlight"),
+		notificationState: requireChoice(entry.notificationState, ["not-requested", "pending", "delivered", "unknown"], "notificationState"),
+	};
+}
+
+function parseWorkStatus(value: unknown, sessionId: string | undefined): BackgroundWorkStatus {
+	const result = requireRecord(value, "background work status");
+	assertClosed(result, ["schema_version", "version", "sessionId", "generation", "revision", "activeAdmissions",
+		"shuttingDown", "taskAdmissionsClosed", "terminalPublicationClosed", "historyComplete", "incompletenessReasons", "tasks"], "background work status");
+	if (result.schema_version !== "pi-background-tasks.work-status.v1" || result.version !== 1) throw new Error("background work status version mismatch");
+	if (!sessionId || result.sessionId !== sessionId) throw new Error("background work status session does not match requested owner");
+	if (!Number.isSafeInteger(result.activeAdmissions) || typeof result.activeAdmissions !== "number" || result.activeAdmissions < 0) throw new Error("background work status.activeAdmissions must be a nonnegative safe integer");
+	if (!Array.isArray(result.incompletenessReasons)) throw new Error("background work status.incompletenessReasons must be an array");
+	const reasons = result.incompletenessReasons.map((reason: unknown) => requireString(reason, "background work status incompleteness reason"));
+	if (new Set(reasons).size !== reasons.length) throw new Error("background work status incompleteness reasons must be unique");
+	if (!Array.isArray(result.tasks)) throw new Error("background work status.tasks must be an array");
+	const tasks = result.tasks.map(parseWorkState);
+	if (new Set(tasks.map((entry) => entry.task.id)).size !== tasks.length) throw new Error("background work status task ids must be unique");
+	const shuttingDown = requireBoolean(result.shuttingDown, "background work status.shuttingDown");
+	const taskAdmissionsClosed = requireBoolean(result.taskAdmissionsClosed, "background work status.taskAdmissionsClosed");
+	const terminalPublicationClosed = requireBoolean(result.terminalPublicationClosed, "background work status.terminalPublicationClosed");
+	const historyComplete = requireBoolean(result.historyComplete, "background work status.historyComplete");
+	if (historyComplete && (reasons.length > 0 || shuttingDown || taskAdmissionsClosed || terminalPublicationClosed)) throw new Error("background work history is inconsistent with complete status");
+	return {
+		schema_version: "pi-background-tasks.work-status.v1", version: 1, sessionId,
+		generation: requireString(result.generation, "background work status.generation"),
+		revision: requireString(result.revision, "background work status.revision"),
+		activeAdmissions: result.activeAdmissions, shuttingDown, taskAdmissionsClosed, terminalPublicationClosed,
+		historyComplete, incompletenessReasons: reasons, tasks,
+	};
+}
+
 function parseCapabilities(value: unknown): BackgroundTaskCapabilities {
 	const result = requireRecord(value, "background task capabilities");
-	const keys = ["api_version", "run", "run_is_agent", "run_completion_trigger", "status", "logs", "logs_bounded", "kill"];
+	const keys = ["api_version", "run", "run_is_agent", "run_completion_trigger", "status", "work_status", "logs", "logs_bounded", "kill"];
 	assertClosed(result, keys, "background task capabilities");
 	if (
 		result.api_version !== 1 || result.run !== true || result.run_is_agent !== true
@@ -171,14 +256,16 @@ function parseCapabilities(value: unknown): BackgroundTaskCapabilities {
 		run_is_agent: true,
 		run_completion_trigger: true,
 		status: true,
+		...(result.work_status === undefined ? {} : { work_status: requireBoolean(result.work_status, "background task capabilities.work_status") }),
 		logs: true,
 		logs_bounded: true,
 		kill: true,
 	};
 }
 
-function parseOperationResult(operation: BackgroundTaskOperation, value: unknown): BackgroundTaskResult {
+function parseOperationResult(operation: BackgroundTaskOperation, value: unknown, sessionId?: string): BackgroundTaskResult {
 	if (operation === "capabilities") return parseCapabilities(value);
+	if (operation === "work-status") return parseWorkStatus(value, sessionId);
 	if (operation === "run") return parseBackgroundTaskSnapshot(value);
 	const result = requireRecord(value, `background task ${operation} result`);
 	if (operation === "status") {
@@ -238,6 +325,12 @@ export function requestBackgroundTask(
 ): Promise<BackgroundTaskStatusResult>;
 export function requestBackgroundTask(
 	events: EventBus,
+	operation: "work-status",
+	payload: Readonly<{ sessionId: string }>,
+	timeoutMs?: number,
+): Promise<BackgroundWorkStatus>;
+export function requestBackgroundTask(
+	events: EventBus,
 	operation: "logs",
 	payload: BackgroundTaskLogsPayload,
 	timeoutMs?: number,
@@ -255,6 +348,9 @@ export function requestBackgroundTask(
 	timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<BackgroundTaskResult> {
 	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("background task request timeout must be positive");
+	const sessionId = operation === "work-status"
+		? requireString(requireRecord(payload, "background work status payload").sessionId, "background work status payload.sessionId")
+		: undefined;
 	const requestId = `artifact-contracts-${randomUUID()}`;
 	return new Promise((resolve, reject) => {
 		let settled = false;
@@ -266,7 +362,7 @@ export function requestBackgroundTask(
 			unsubscribe();
 			action();
 		};
-		const unsubscribe = events.on(BACKGROUND_TASK_RESPONSE_CHANNEL, (value) => {
+		const acceptResponse = (value: unknown) => {
 			if (!isRecord(value) || value.request_id !== requestId) return;
 			try {
 				assertClosed(value, value.ok === true
@@ -276,13 +372,18 @@ export function requestBackgroundTask(
 				if (value.operation !== operation) throw new Error("background task response operation mismatch");
 				if (value.ok === false) throw new Error(`pi-background-tasks ${operation} failed: ${requireString(value.error, "background task response.error")}`);
 				if (value.ok !== true) throw new Error("background task response ok must be boolean");
-				const result = parseOperationResult(operation, value.result);
+				const result = parseOperationResult(operation, value.result, sessionId);
 				finish(() => resolve(result));
 			} catch (error) {
 				finish(() => reject(error));
 			}
+		};
+		const synchronousResponses: unknown[] = [];
+		const unsubscribe = events.on(BACKGROUND_TASK_RESPONSE_CHANNEL, (value) => {
+			if (operation !== "work-status") acceptResponse(value);
+			else if (isRecord(value) && value.request_id === requestId) synchronousResponses.push(value);
 		});
-		timer = setTimeout(() => finish(() => reject(new Error(`pi-background-tasks ${operation} request timed out`))), timeoutMs);
+		if (operation !== "work-status") timer = setTimeout(() => finish(() => reject(new Error(`pi-background-tasks ${operation} request timed out`))), timeoutMs);
 		try {
 			events.emit(BACKGROUND_TASK_REQUEST_CHANNEL, {
 				schema_version: BACKGROUND_TASK_REQUEST_SCHEMA,
@@ -290,6 +391,10 @@ export function requestBackgroundTask(
 				operation,
 				payload,
 			});
+			if (operation === "work-status") {
+				if (synchronousResponses.length !== 1) finish(() => reject(new Error("background work status requires exactly one synchronous owner response")));
+				else acceptResponse(synchronousResponses[0]);
+			}
 		} catch (error) {
 			finish(() => reject(new Error(`pi-background-tasks ${operation} request failed: ${String(error)}`)));
 		}

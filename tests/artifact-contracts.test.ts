@@ -239,6 +239,16 @@ const REJECTED_CAPABILITY_PATHS = [
 	".harness/plans/ignored/../2026-10-12-lean-instruction-architecture.md",
 ] as const;
 
+test("topic logs require additive read negotiation and are never mutable capabilities", () => {
+	for (const path of [".harness/2026/10/24/2026-10-24-workflow.md", ".harness/2026/10/24/local-feature.md"]) {
+		assert.equal(isArtifactCapabilityPath("read", path), false);
+		assert.equal(isArtifactCapabilityPath("read", path, { topicLogs: 1 }), true);
+		assert.equal(isArtifactCapabilityPath("write", path, { topicLogs: 1 }), false);
+		assert.equal(isArtifactCapabilityPath("edit", path, { topicLogs: 1 }), false);
+	}
+	assert.equal(isArtifactCapabilityPath("read", ".harness/2026/10/24/local-feature.md", { topicLogs: 2 }), false);
+});
+
 test("capability version 1 uses the exact path and operation matrix", () => {
 	assert.equal(ARTIFACT_CAPABILITY_VERSION, 1);
 	for (const operation of ["read", "write", "edit"] as const) {
@@ -277,13 +287,13 @@ test("the root capability announces after listening and responds to package-firs
 		`emit:${ARTIFACT_CAPABILITY_CHANNEL}`,
 	]);
 	assert.deepEqual(emitted, [
-		{ channel: ARTIFACT_CAPABILITY_CHANNEL, payload: { version: 1, mutations: true } },
+		{ channel: ARTIFACT_CAPABILITY_CHANNEL, payload: { version: 1, mutations: true, topicLogs: 1 } },
 	]);
 
 	listeners.get(ARTIFACT_CAPABILITY_REQUEST_CHANNEL)?.({});
 	assert.deepEqual(emitted.at(-1), {
 		channel: ARTIFACT_CAPABILITY_CHANNEL,
-		payload: { version: 1, mutations: true },
+		payload: { version: 1, mutations: true, topicLogs: 1 },
 	});
 });
 

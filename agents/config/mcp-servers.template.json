@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "codesearch": {
+      "url": "https://codesearch-internal.${MCP_INTERNAL_DOMAIN}/mcp",
+      "enabled": true
+    },
+    "gitlab": {
+      "url": "https://gitlab-mcp-internal.${MCP_INTERNAL_DOMAIN}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GITLAB_PERSONAL_ACCESS_TOKEN}"
+      }
+    }
+  }
+}

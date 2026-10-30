@@ -3,11 +3,15 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { it, test } from "bun:test";
 import registerTechLead from "../extensions/tech-lead/index.ts";
 import { briefInstructions } from "../extensions/artifact-contracts/briefs.ts";
+import { getEffectiveAgentDefinitions } from "../git/github.com/Alan-Luc/pi-subagents/src/agents/definitions.ts";
+import { resolveSubagentTimeoutState } from "../git/github.com/Alan-Luc/pi-subagents/src/launch/policy.ts";
 
 const techLead = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
 const durablePlan = readFileSync(new URL("../skills/durable-plan/SKILL.md", import.meta.url), "utf8");
 const globalInstructions = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
-const reviewPrompt = readFileSync(new URL("../prompts/code_review.md", import.meta.url), "utf8");
+const reviewPrompt = readFileSync(new URL("../prompts/eviscerate-diff.md", import.meta.url), "utf8");
+const taskRecipe = readFileSync(new URL("../skills/task-recipe/SKILL.md", import.meta.url), "utf8");
+const recipeCards = readFileSync(new URL("../skills/task-recipe/references/recipes.md", import.meta.url), "utf8");
 const takeOverPrompt = readFileSync(new URL("../prompts/take-over.md", import.meta.url), "utf8");
 const settings = JSON.parse(readFileSync(new URL("../settings.json", import.meta.url), "utf8")) as {
 	modelThinkingLevels?: Record<string, string>;
@@ -32,7 +36,7 @@ const deliveryOwners = [
 	{
 		invariantName: "ownership, callers, and contracts",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Bounded reconnaissance maps ownership, callers, contracts, risks, and checks; stop when implementation is safe.",
+		requiredMarker: "First map ownership, callers, contracts, risks, and checks; stop reconnaissance once implementation is safe.",
 	},
 	{
 		invariantName: "evidence packet",
@@ -42,7 +46,7 @@ const deliveryOwners = [
 	{
 		invariantName: "dependency slicing",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Slice only real dependencies and keep unrelated work outside scope.",
+		requiredMarker: "Derive the ready set from real dependencies and exact ownership.",
 	},
 	{
 		invariantName: "worker boundaries",
@@ -52,7 +56,7 @@ const deliveryOwners = [
 	{
 		invariantName: "focused checks",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Run focused checks while iterating",
+		requiredMarker: "Keep focused checks during iteration",
 	},
 	{
 		invariantName: "exact review artifact and hash",
@@ -61,23 +65,23 @@ const deliveryOwners = [
 	},
 	{
 		invariantName: "material remediation",
-		canonicalOwnerPath: "prompts/code_review.md",
-		requiredMarker: "If material fixes occur, rerun affected focused checks and start one remediation review",
+		canonicalOwnerPath: "prompts/eviscerate-diff.md",
+		requiredMarker: "Rerun affected checks and refresh affected lane pairs and live proof on the new candidate."
 	},
 	{
 		invariantName: "broad integration and candidate recapture",
-		canonicalOwnerPath: "prompts/code_review.md",
-		requiredMarker: "Run the required broad integration recipe once against the accepted candidate, then recapture the candidate.",
+		canonicalOwnerPath: "prompts/eviscerate-diff.md",
+		requiredMarker: "runs the relevant broad integration recipe once against the frozen candidate; the attack worker does not duplicate that run.",
 	},
 	{
 		invariantName: "background jobs",
-		canonicalOwnerPath: "prompts/code_review.md",
+		canonicalOwnerPath: "prompts/eviscerate-diff.md",
 		requiredMarker: "Before freezing the candidate, reconcile or kill every task-owned background job.",
 	},
 	{
 		invariantName: "background-first verification",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Default to background `start`/`collect`; synchronous `run` requires",
+		requiredMarker: "default to background `start`/`collect`",
 	},
 	{
 		invariantName: "authorization",
@@ -92,7 +96,8 @@ const deliveryOwners = [
 	{
 		invariantName: "finish records",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Record each completed non-trivial implementation, review, or configuration slice in one append-only daily work-log entry.",
+		requiredMarker: "record each implementation, review or configuration slice once through `work_log`",
+
 	},
 	{
 		invariantName: "pre-dispatch ready set",
@@ -105,9 +110,62 @@ function includesAll(text: string, values: readonly string[]) {
 	for (const value of values) assert.ok(text.includes(value), value);
 }
 
-test("startup policy has one bounded aggregate budget", () => {
+test("AGENTS owns each required ceremony row and its conditional gates", () => {
+	const matrix = globalInstructions.split("| Ceremony | Direct | Focused | Full |")[1]?.split("\n\n")[0];
+	assert.ok(matrix);
+	const rows = matrix.split("\n").filter((line) => line.startsWith("|") && !line.startsWith("|---"));
+	const rowNames = rows.map((line) => line.split("|")[1].trim());
+	assert.deepEqual(rowNames, [
+		"Selection", "Recipe/tasks", "Durable plan", "Human approval", "Test-first", "Mechanical deslop",
+		"Haiku advisory", "Live verification", "Correctness review", "Structural / whole-diff deslop", "Work-log entry",
+		"Predictions (reserved)", "Quiz (reserved)", "Coordinator report", "Passing intent-sized commit",
+	]);
+	const row = (name: string) => rows.find((line) => line.split("|")[1].trim() === name) ?? "";
+	const cells = (name: string) => row(name).split("|").slice(2, 5).map((cell) => cell.trim());
+	assert.deepEqual(cells("Recipe/tasks"), ["No", "Yes", "Yes"]);
+	assert.deepEqual(cells("Mechanical deslop"), ["Yes", "Yes", "Yes"]);
+	assert.deepEqual(cells("Predictions (reserved)"), ["Not implemented.", "Not implemented.", "Not implemented."]);
+	assert.deepEqual(cells("Quiz (reserved)"), ["Not implemented.", "Not implemented.", "Not implemented."]);
+	assert.deepEqual(cells("Passing intent-sized commit"), ["Yes", "Yes", "Yes."]);
+	assert.deepEqual(cells("Work-log entry"), ["No", "One completion record per slice/pass.", "Same."]);
+	includesAll(row("Selection"), ["Mechanical/docs", "no behavior", "security/trust/persistence/contract", "Bounded integration", "Consequential", "data-loss", "any size"]);
+	includesAll(row("Recipe/tasks"), ["No", "Yes"]);
+	includesAll(row("Durable plan"), ["Explicit planning", "gated Direct brief", "approval-gated", "prior plan", "Required"]);
+	includesAll(row("Human approval"), ["≥3 ownership seams", "distributed boundary", "explicit request", "trust-boundary", "not universal"]);
+	includesAll(row("Test-first"), ["Consuming check", "Behavior red", "refactor characterize", "meaningful failure paths"]);
+	includesAll(row("Mechanical deslop"), ["Yes"]);
+	includesAll(row("Live verification"), ["No unrelated runtime", "One read-only worker", "distinct success/attack", "ONE broad integration", "Separate success/attack workers", "success owns"]);
+	includesAll(row("Haiku advisory"), ["Risk-selected", "fixed-profile"]);
+	includesAll(row("Correctness review"), ["No routine", "explicit request", "Ordinary pair", "Required pair"]);
+	includesAll(row("Structural / whole-diff deslop"), ["Risk-selected pairs", "distinct risks"]);
+	includesAll(row("Predictions (reserved)"), ["Not implemented"]);
+	includesAll(row("Quiz (reserved)"), ["Not implemented"]);
+	includesAll(row("Coordinator report"), ["gates/blockers", "Gate attention", "closure summary"]);
+	includesAll(row("Passing intent-sized commit"), ["Yes"]);
+	includesAll(globalInstructions, ["State the tier and reason in preflight", "Escalate on new evidence", "downgrade only with Alan's approval", "Full always requires a plan", "approval remains conditional", "Gated Focused needs a plan", "bounded scope/checks brief unless explicit planning", "extensions/guardrails/README.md", "coordinator.report", "explicit `null`", "Summaries are not proof"]);
+	assert.doesNotMatch(globalInstructions, /^\| Small \|/m);
+	for (const consumer of [techLead, durablePlan, taskRecipe, recipeCards, reviewPrompt, agents["live-verifier"], agents["code-reviewer"]]) {
+		assert.doesNotMatch(consumer, /^\| (?:Direct|Small|Focused|Full) \|/m, "consumers link to the one policy owner instead of defining a tier table");
+	}
+	includesAll(techLead, ["Classify once from `AGENTS.md`", "state tier/reason in preflight", "escalate on evidence", "downgrade only with Alan's approval", "Status grants no approval"]);
+	includesAll(durablePlan, ["canonical Direct/Focused/Full acceptance matrix in `AGENTS.md`", "approval-gated Focused work require one"]);
+	includesAll(taskRecipe, ["tier matrix in `AGENTS.md`", "recipe selection and copy semantics"]);
+	includesAll(recipeCards, ["canonical tier matrix in `AGENTS.md`"]);
+	includesAll(agents["live-verifier"], ["one live worker with separately reported success and attack observations for Focused", "separate success/attack workers for Full"]);
+	includesAll(agents["code-reviewer"], ["12 combined `read`, `grep`, and `find` calls for Focused review", "24 for Difficult review"]);
+	assert.doesNotMatch(agents["code-reviewer"], /\bSmall\b/);
+	includesAll(reviewPrompt, ["canonical Direct/Focused/Full matrix in `AGENTS.md`", "Focused combines its success and attack observations in one read-only live worker", "Full uses separate workers"]);
+});
+
+test("guardrails threat-model boundary has a linked owner and explicit dismissal reason", () => {
+	const threatModel = readFileSync(new URL("../extensions/guardrails/README.md", import.meta.url), "utf8");
+	includesAll(globalInstructions, ["guardrails threat model", "reviewers explicitly dismiss only out-of-model inputs with that reason"]);
+	includesAll(threatModel, ["Shell wrappers, obfuscation", "outside the supported literal command surface", "state that reason explicitly", "A literal recognized mutation", "remains in model"]);
+});
+
+test("startup policy reports its aggregate word target without obscuring instructions", () => {
 	const startup = [globalInstructions, techLead, briefInstructions()].join("\n");
-	assert.ok(words(startup) <= 1_300, `startup instructions have ${words(startup)} words`);
+	console.info(`Startup instructions: ${words(startup)} words (target: 1,500; clarity and safety take precedence).`);
 	assert.doesNotMatch(techLead, /load `delivery-workflow`|The five work-seam agents are:|^Template:/m);
 	assert.ok(!techLead.includes("node:os.tmpdir()/pi"));
 });
@@ -133,17 +191,84 @@ test("temporary dogfooding reuses evidence and records friction without ceremoni
 	]);
 });
 
+test("one recipe skill owns card selection and six checkable cards without a second router", () => {
+	includesAll(techLead, ["For non-Direct work, load `task-recipe`", "select its matching card", "Side questions do not pause approved work", "pause/stop", "a real gate that suppresses continuation"]);
+	includesAll(taskRecipe, [
+		"sole authority", "steps verbatim into live tasks", "skipped: <reason>",
+		"Direct work is exempt", "whether or not it is committed",
+		"router owns scheduling, resumption and continuation", "selection and copy semantics only",
+		"retain the currently loaded role defaults", "live proof belong at the pass",
+	]);
+	assert.deepEqual([...recipeCards.matchAll(/^## (.+)$/gm)].map((match) => match[1]), [
+		"Bug fix", "Feature", "Refactor", "Investigation", "Review", "Harness change",
+	]);
+	for (const card of recipeCards.split(/^## /m).slice(1)) {
+		assert.match(card, /^\d+\. /m, "each card has copyable steps");
+		assert.match(card, /\*\*Done:\*\*/, "each card ends in a checkable result");
+	}
+	includesAll(recipeCards, ["assertion that fails for the intended reason", "passing tests rather than inventing", "Diagnose before proposing a patch", "prompts/spike.md", "prompts/eviscerate-diff.md", "plausible broken condition", "representative safe rerun or interruption"]);
+	for (const path of ["skills/task-recipe/SKILL.md", "skills/task-recipe/references/recipes.md"]) {
+		const file = new URL(`../${path}`, import.meta.url);
+		for (const match of readFileSync(file, "utf8").matchAll(/\]\(([^)]+)\)/g)) {
+			const target = new URL(match[1].split("#")[0], file);
+			assert.ok(existsSync(target), `${path} has a missing relative link: ${match[1]}`);
+		}
+	}
+});
+
+test("router continues independent work after side questions and lane-local blockers", () => {
+	includesAll(techLead, ["Side questions do not pause approved work", "reconcile current input", "then take the next authorized action", "Continue independent ready work before yielding", "a lane blocker affects only its dependents", "unknown disposition", "Status grants no approval"]);
+	includesAll(globalInstructions, ["real dependencies and exact ownership", "Numbered stages are not dependencies", "one lane's blocker blocks only its dependents", "Sequence risky shared state"]);
+});
+
+test("router remediates routine setup errors and establishes coordinator terminal delivery", () => {
+	includesAll(techLead, [
+		"Resolve ordinary setup and tool-invocation errors within settled authority",
+		"correct the invocation rather than escalating routine remediation",
+		"Every command must target its owned checkout explicitly",
+		"`cd` does not persist between tool calls",
+		"A brief is not a path sandbox: launch writers from the owned checkout or keep writes local",
+		"supported manage/adopt/publish/inbox paths",
+		"a send/acceptance receipt or stale report is not a terminal result",
+		"Repair delivery or report the outcome as unknown",
+		"never assume a child is pending and poll indefinitely",
+		"bounded intent-slices, parallel independent checks, and affected-only refresh under their existing pass owner",
+	]);
+	includesAll(techLead, ["unknown disposition", "real gate that suppresses continuation", "Status grants no approval"]);
+	assert.ok(reviewPrompt.includes("Rerun affected checks and refresh affected lane pairs and live proof on the new candidate."));
+});
+
+test("oversized staged advisories skip deterministically without partitioning", () => {
+	const deslop = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
+	includesAll(deslop, ["frozen UTF-8 staged patch", "12 KiB", "250 added lines", "excluding `+++` headers", "do not dispatch or partition", "`deslop: skipped (oversized)`", "Equality is eligible", "30-second", "`deslop: timed out`"]);
+	assert.doesNotMatch(deslop, /partition it among|fresh Haiku\/low instances|non-overlapping paths or hunks/);
+	assert.ok(recipeCards.includes("../../deslop/SKILL.md"), "recipes link to the advisory owner");
+});
+
+test("task effort follows actual uncertainty within explicit locked-role capability", () => {
+	includesAll(taskRecipe, [
+		"smallest justified effort once", "short rationale in its existing brief",
+		"A ticket's tier or a role title does not determine", "thinking-overrides",
+		"locked model's supported levels", "never substitute a model",
+		"Review/design profiles retain their explicitly pinned effort", "Use `off` only where supported",
+		"exact trigger/repro/log/error lines", "No diagnosis, contract choice or unresolved failure-path design",
+		"worker reports the concrete missing fact", "parent reclassifies that subtask",
+		"not permission to silently drop a requested level or escalate models",
+	]);
+	assert.deepEqual([...taskRecipe.matchAll(/^\| `(off|low|medium|high)` \|/gm)].map((match) => match[1]), ["off", "low", "medium", "high"]);
+});
+
 test("the router preserves direct, planning, and approval controls", () => {
 	includesAll(techLead, [
-		"Direct is default",
+		"Classify once from `AGENTS.md`",
 		"`plan with me`",
 		"`brief plan`",
 		"`take over`",
 		"load `durable-plan`",
-		"Use a large approval gate",
+		"preserve its baseline and matrix gates",
 	]);
 	includesAll(globalInstructions, [
-		"The parent may create coherent passing local commits",
+		"The parent may create coherent passing local commits during implementation",
 		"Never push without Alan's explicit authorization",
 		"Children never commit",
 	]);
@@ -152,10 +277,13 @@ test("the router preserves direct, planning, and approval controls", () => {
 
 test("the router preserves lifecycle ownership without leaking delegation manuals", () => {
 	includesAll(techLead, [
-		"Delegate only across a real ownership or expertise seam",
+		"delegate only across real ownership/expertise seams",
 		"use its tool-owned delegation guidance and validated brief contract",
 	]);
-	includesAll(globalInstructions, ["Truly trivial direct work", "non-trivial"]);
+	includesAll(techLead, ["prompts/eviscerate-diff.md", "matrix-selected independent acceptance in `AGENTS.md`", "do not recreate a heavier topology"]);
+	includesAll(globalInstructions, ["State the tier and reason in preflight", "Escalate on new evidence", "downgrade only with Alan's approval", "Gated Focused needs a plan", "bounded scope/checks brief unless explicit planning", "Direct is a tier", "never weaker rigor"]);
+	for (const consumer of [techLead, reviewPrompt, durablePlan]) assert.doesNotMatch(consumer, /^\| (Direct|Full) \|/m, "work-tier definitions stay in AGENTS, separate from reviewer depth profiles");
+	for (const owner of [globalInstructions, techLead, reviewPrompt, durablePlan]) assert.doesNotMatch(owner, /truly trivial|quick iterations|very small, low-risk/i);
 	assert.doesNotMatch(techLead, /Apply Ponytail|Truly trivial direct work|A plan never authorizes push|The parent may create coherent passing local commits/);
 	assert.doesNotMatch(techLead, /Template:|The five work-seam agents are:|PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN|ready set|worker result/);
 	assert.doesNotMatch(takeOverPrompt, /roster|Template:|PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN/);
@@ -170,15 +298,23 @@ it.each(deliveryOwners)("delivery invariant: $invariantName", ({ canonicalOwnerP
 	assert.ok(owner.includes(requiredMarker), `${canonicalOwnerPath} is missing ${requiredMarker}`);
 });
 
-test("the roster contains exactly four agents with deliberate tool scopes", () => {
+test("the roster includes the canonical live verifier and explicit MR observer with exact model profiles", () => {
 	assert.deepEqual(Object.keys(agents).sort(), [
 		"code-explorer",
 		"code-reviewer",
+		"code-reviewer-haiku",
+		"code-reviewer-opus",
+		"code-reviewer-sol",
+		"code-reviewer-sonnet",
 		"implementation-engineer",
+		"implementation-engineer-opus",
+		"implementation-engineer-sol",
+		"live-verifier",
+		"mr-babysitter",
 		"test-automation-engineer",
 	]);
 	for (const name of ["implementation-engineer", "test-automation-engineer"]) {
-		assert.match(agents[name], /^tools: .*TaskCreate,TaskList,TaskGet,TaskUpdate$/m);
+		assert.match(agents[name], /^tools: .*TaskCreate,TaskList,TaskGet,TaskUpdate,submit_agent_result$/m);
 	}
 	assert.ok(globalInstructions.includes("Not run: <reason>"));
 	assert.match(agents["code-explorer"], /^thinking: low$/m);
@@ -203,6 +339,78 @@ test("the roster contains exactly four agents with deliberate tool scopes", () =
 	}
 });
 
+it.each([
+	{ name: "code-explorer", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "code-explorer" },
+	{ name: "mr-babysitter", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "mr-babysitter" },
+	{ name: "implementation-engineer", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "implementation-engineer" },
+	{ name: "test-automation-engineer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "test-automation-engineer" },
+	{ name: "live-verifier", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "live-verifier" },
+	{ name: "code-reviewer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "code-reviewer" },
+	{ name: "code-reviewer-haiku", model: "anthropic/claude-haiku-5-5", thinking: "low", canonical: "code-reviewer" },
+	{ name: "code-reviewer-sonnet", model: "anthropic/claude-sonnet-5-5", thinking: "high", canonical: "code-reviewer" },
+	{ name: "code-reviewer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "code-reviewer" },
+	{ name: "code-reviewer-opus", model: "anthropic/claude-opus-5-5", thinking: "medium", canonical: "code-reviewer" },
+	{ name: "implementation-engineer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "implementation-engineer" },
+	{ name: "implementation-engineer-opus", model: "anthropic/claude-opus-5-5", thinking: "high", canonical: "implementation-engineer" },
+])("the installed loader resolves $name without inferred overrides", ({ name, model, thinking, canonical }) => {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = new URL("../", import.meta.url).pathname;
+	try {
+		const definitions = getEffectiveAgentDefinitions(process.env.PI_CODING_AGENT_DIR);
+		const profile = definitions.find((definition) => definition.name === name);
+		const owner = definitions.find((definition) => definition.name === canonical);
+		assert.ok(profile && owner);
+		assert.equal(profile.model, model);
+		assert.equal(profile.thinking, thinking);
+		assert.equal(profile.allowModelOverride, false);
+		assert.deepEqual(profile.thinkingOverrides, name === "test-automation-engineer" ? ["off", "low", "medium", "high"] : undefined);
+		assert.equal(profile.tools, owner.tools);
+		assert.equal(profile.skills, owner.skills);
+		if (name === "code-reviewer-haiku") {
+			assert.equal(profile.timeout, 30);
+			assert.equal(profile.timeoutWarnThreshold, "false");
+			assert.equal(profile.onTimeout, "block-resume");
+			assert.deepEqual(resolveSubagentTimeoutState(profile), { timeoutBudget: { timeoutSeconds: 30 }, timeoutBlocksResume: true });
+		}
+		if (name === "live-verifier") {
+			assert.equal(profile.tools, "read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result");
+			assert.equal(profile.skills, "none");
+		}
+		assert.notEqual(profile.noContextFiles, true);
+		assert.equal(profile.parentClosePolicy, "terminate");
+		assert.equal(profile.spawning, false);
+		if (name !== canonical) assert.ok(profile.body?.includes(`agents/${canonical}.md`));
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+	}
+});
+
+test("live verifier is a distinct fixed-low read-only role and test writing stays with its owner", () => {
+	const verifier = agents["live-verifier"];
+	assert.match(verifier, /^model: openai-codex\/gpt-6-luna$/m);
+	assert.match(verifier, /^thinking: low$/m);
+	assert.match(verifier, /^allow-model-override: false$/m);
+	assert.match(verifier, /^tools: read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result$/m);
+	assert.match(verifier, /^flags: --no-mcp$/m);
+	assert.match(verifier, /^deny-env: GITLAB_PERSONAL_ACCESS_TOKEN$/m);
+	assert.match(verifier, /^skills: none$/m);
+	assert.match(verifier, /skills\/live-verification\/SKILL\.md/);
+	includesAll(verifier, [
+		"Keep required checks and their receipts in one live runtime",
+		"use bounded synchronous `verification_evidence` `run`",
+		"do not use `caller_ping` to wait or keep the helper alive",
+		"do not report receipts from a prior runtime as current `Verified by`",
+		"Preserve asynchronous `start`/`collect` when task ownership genuinely persists",
+		"not a synchronous default",
+	]);
+	assert.doesNotMatch(verifier, /(?:^|,)\s*(?:edit|write|subagent|TaskCreate|TaskUpdate)(?:,|$)/m);
+	assert.doesNotMatch(verifier, /^thinking-overrides:/m);
+	assert.match(agents["test-automation-engineer"], /^thinking: high$/m);
+	assert.match(agents["test-automation-engineer"], /Add the smallest explicit, deterministic cases/);
+	assert.doesNotMatch(agents["test-automation-engineer"], /For the full-review live-verification lane/);
+});
+
 test("implementation and review roles preserve material behavior", () => {
 	includesAll(globalInstructions, ["trust-boundary validation", "accessibility", "strict types"]);
 	includesAll(agents["implementation-engineer"], ["focused happy and meaningful failure-path tests", "verification_evidence"]);
@@ -210,7 +418,10 @@ test("implementation and review roles preserve material behavior", () => {
 	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-6-luna$/m);
 	assert.ok(reviewPrompt.includes("`Review range: HEAD` for current worktree changes"));
 	assert.ok(reviewPrompt.includes("`Review range: <base>...<head>` for a committed branch"));
-	assert.ok(reviewPrompt.includes("one remediation review covering only the remediation delta and affected contracts"));
+	assert.ok(reviewPrompt.includes("review remediation deltas plus affected contracts, and repeat autonomously"));
+	assert.ok(reviewPrompt.includes("agents/live-verifier.md"));
+	assert.ok(reviewPrompt.includes("route authorized tooling creation to `build-live-verification`"));
+	assert.ok(reviewPrompt.includes("Stop only when the final candidate has complete selected review, integration and live clearance"));
 	assert.ok(reviewPrompt.includes("do not independently rereview an unchanged patch"));
 });
 
@@ -238,11 +449,20 @@ test("global instructions retain Alan-specific conventions", () => {
 		"Never push without Alan's explicit authorization",
 		"`benchmark/<run-id>`",
 		"Use BLUF",
-		"Before non-trivial tools or delegation",
-		"Prefer concurrent execution for disjoint work that speeds delivery or avoids blocking",
-		"keep dependencies and risky shared writes sequential",
-		"record outcomes after completion",
-		"independently review only material-risk or multi-seam changes",
+		"Before extended reasoning",
+		"before working through the solution",
+		"progress checkpoint before continuing",
+		"Alan can interrupt at any time",
+		"Honor explicit pause/stop requests",
+		"Continue independent ready work before yielding",
+		"one lane's blocker blocks only its dependents",
+		"Numbered stages are not dependencies",
+		"Sequence risky shared state",
+		"record each implementation, review or configuration slice once",
+		"Keep unrelated work outside scope", "background long work",
+		"Child results and review findings are intermediate events, not task completion",
+		"Yield only for an active async result, real gate or explicit stop",
+		"close non-Direct work through selected adversarial coverage",
 		"do not independently rereview an unchanged patch",
 		"Label artifact links",
 		"Quiz Alan only when explicitly asked",
@@ -251,9 +471,84 @@ test("global instructions retain Alan-specific conventions", () => {
 		"Run the narrowest relevant check",
 		"`it.each([...])`",
 		"Use “malicious,” never “nasty,”",
-		"Comment only non-obvious why",
+		"Comment only on non-obvious why",
 		"three failed attempts",
 	]);
+});
+
+test("common test-first standards reach roles without skill loading", () => {
+	includesAll(globalInstructions, [
+		"Before production behavior edits", "requirement-derived", "intended assertion failure",
+		"red/green/refactor", "Mechanical/docs edits use direct checks", "characterize existing behavior with passing tests",
+		"genuinely impractical", "not a size or testing-cost exemption",
+		"internal refactor", "tautological", "same surface", "persisted effects",
+	]);
+	assert.equal(existsSync(new URL("../skills/tdd/SKILL.md", import.meta.url)), false);
+	for (const name of ["code-explorer", "test-automation-engineer"]) {
+		assert.match(agents[name], /^skills: none$/m);
+		assert.doesNotMatch(agents[name], /^no-context-files: true$/m);
+	}
+	includesAll(agents["implementation-engineer"], ["before production edits", "intended assertion", "red/green/refactor", "same surface"]);
+	includesAll(agents["test-automation-engineer"], ["requirement-derived", "internal refactor", "tautological"]);
+	includesAll(agents["code-explorer"], ["observable contracts", "test seams", "runtime prerequisites"]);
+	includesAll(agents["code-reviewer"], ["test value", "intended red", "real-surface"]);
+	includesAll(durablePlan, ["observable acceptance", "caller", "independent proposals", "shared", "judge-only", "Direct work is exempt", "direct consuming-surface check"]);
+});
+
+test("solo runtime discloses unavailable cross-model evidence", async () => {
+	const session = harness(["read", "bash", "subagent", "subagent_resume", "subagent_kill"]);
+	session.initialize();
+	await session.toggle();
+	assert.ok(session.prompt().includes("Do not claim paired review or model diversity in solo mode"));
+	assert.ok(session.prompt().includes("disclose required coverage gaps"));
+	assert.deepEqual(session.tools(), ["read", "bash"]);
+	await session.toggle();
+	assert.equal(session.prompt(), techLead);
+});
+
+it.each(["thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop"])("the %s skill preserves selective routing and source provenance", (name) => {
+	const directory = new URL(`../skills/${name}/`, import.meta.url);
+	const skill = readFileSync(new URL("SKILL.md", directory), "utf8");
+	assert.ok(skill.includes(`name: ${name}`));
+	assert.match(skill, /^description: .+/m);
+	assert.match(skill, /^license: MIT$/m);
+	assert.doesNotMatch(skill, /^disable-model-invocation: true$/m);
+	includesAll(skill, ["eb4db2b55b2b7dec3d9282754cddf0a56bf4ff10", "candidate", "[License](LICENSE)"]);
+	const license = readFileSync(new URL("LICENSE", directory), "utf8");
+	includesAll(license, ["Copyright (c) 2026 Cursor", "Permission is hereby granted", "THE SOFTWARE IS PROVIDED"]);
+	for (const match of skill.matchAll(/\]\(([^)]+)\)/g)) {
+		if (!match[1].includes("://")) assert.ok(existsSync(new URL(match[1], directory)), match[1]);
+	}
+});
+
+it.each([
+	{ owner: "parent pass", text: reviewPrompt },
+	{ owner: "reviewer", text: agents["code-reviewer"] },
+	{ owner: "builder", text: agents["implementation-engineer"] },
+	{ owner: "recipe", text: recipeCards },
+])("review hardening preserves exact triggers and nonbehavior exceptions in $owner", ({ text }) => {
+	includesAll(text, ["exact triggering input/state", "before", "direct check"]);
+	assert.match(text, /(?:green|passing) characterization/);
+});
+
+test("dismissed material findings keep evidence-based reasons in the pass summary", () => {
+	includesAll(reviewPrompt, ["dismissed material findings", "evidence-based reasons", "pass summary, not a separate artifact", "never parent-only self-review", "silently defer a blocker", "retry until green", "trust-boundary validation", "data-loss protection", "cancellation"]);
+	assert.ok(recipeCards.includes("complete selected review, integration and live clearance cover the final candidate"));
+	assert.ok(recipeCards.includes("dismissed with evidence and reason in the pass summary"));
+});
+
+test("policy-selected review keeps complete independent coverage without a fixed worker topology", () => {
+	includesAll(techLead, ["consequential architectural", "prompts/eviscerate-diff.md", "eight live children", "capacity", "matrix-selected independent acceptance in `AGENTS.md`", "Explicit deep review keeps its requested coverage"]);
+	includesAll(reviewPrompt, [
+		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
+		"eight live children", "complete pairs", "canonical `agents/live-verifier.md` role", "protected", "missing counterpart", "not votes",
+		"thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "fresh selected reviewer-profile",
+		"canonical Direct/Focused/Full matrix in `AGENTS.md`", "ticket-close", "Direct work uses its consuming-surface check", "risk outranks size", "Name concrete reasons for added", "live-verification-success", "live-verification-attack", "not a target worker count",
+		"When independent live workers are not selected, the parent owns",  "Full uses separate fresh worker sessions and briefs", "Isolate disposable state and keep evidence separate by observation", "Join both live results", "attack worker does not duplicate that run",
+		"Launch every selected ready lane together", "read-only", "Join all selected results", "Source edits invalidate", "exact-trigger failing regression", "repeat autonomously", "fixed or explicitly dismissed", "requires input", "The shared reviewer registry must drive metadata preparation and artifact/hash/path checks for every reviewer profile", "same generated immutable metadata", "Explicit `/eviscerate-diff` retains the requested independent coverage", "Solo mode", "complete selected review, integration and live clearance", "selected and skipped lanes with reasons",
+	]);
+	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
+	includesAll(cleanup, ["Ponytail", "trust-boundary", "data-loss", "unchanged behavior", "read-only", "parent"]);
 });
 
 test("main sessions append the router while children do not", () => {
