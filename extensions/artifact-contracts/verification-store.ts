@@ -7,6 +7,8 @@ export type CandidateIdentity = Readonly<{
 	head: string | null;
 	tree: string;
 	kind: "clean" | "dirty";
+	source?: "staged";
+	runtimeInputs?: readonly Readonly<{ path: string; sha256: string }>[];
 }>;
 
 export type VerificationEvidence = Readonly<{
@@ -20,10 +22,11 @@ export type VerificationEvidence = Readonly<{
 	logSha256: string;
 	valid: boolean;
 	invalidReason?: string;
+	verifiedBy?: string;
 }>;
 
 type CandidateInput = Omit<CandidateIdentity, "id">;
-type EvidenceInput = Omit<VerificationEvidence, "id" | "argv"> & { argv: readonly string[] };
+type EvidenceInput = Omit<VerificationEvidence, "id" | "argv" | "verifiedBy"> & { argv: readonly string[] };
 type VerificationClaim = Readonly<{ evidenceId: string; command: string; exitCode: number }>;
 type VerificationAttempt = Readonly<{ token: symbol; generation: number }>;
 
@@ -34,7 +37,7 @@ const latestAttemptByCommand = new Map<string, VerificationAttempt>();
 let currentGeneration = 0;
 let latestInvalidationReason = "tool activity after verification";
 
-function hash(value: string): string {
+function hash(value: string | Uint8Array): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
@@ -43,9 +46,18 @@ function commandKey(repositoryRoot: string, command: string, cwd: string): strin
 }
 
 export function createCandidateIdentity(input: CandidateInput): CandidateIdentity {
+	const runtimeInputs = input.runtimeInputs === undefined ? undefined : Object.freeze(
+		input.runtimeInputs.map((pin) => Object.freeze({ ...pin })).sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+	);
+	const identityFields = [
+		input.repositoryRoot, input.head, input.tree, input.kind,
+		...(input.source === undefined ? [] : [input.source]),
+		...(runtimeInputs === undefined ? [] : [runtimeInputs]),
+	];
 	return Object.freeze({
 		...input,
-		id: `candidate_${hash(JSON.stringify([input.repositoryRoot, input.head, input.tree, input.kind]))}`,
+		...(runtimeInputs === undefined ? {} : { runtimeInputs }),
+		id: `candidate_${hash(JSON.stringify(identityFields))}`,
 	});
 }
 
@@ -68,6 +80,7 @@ export function recordVerificationEvidence(input: EvidenceInput, attempt?: Verif
 		valid,
 		...(invalidReason === undefined ? {} : { invalidReason }),
 		id,
+		...(valid ? { verifiedBy: `- \`command-json: ${JSON.stringify(input.command).replaceAll("`", "\\u0060")}\` → exit ${input.exitCode} [evidence: ${id}]` } : {}),
 		argv: Object.freeze([...argv]),
 	});
 	evidenceById.set(id, evidence);
@@ -82,7 +95,28 @@ export function recordVerificationEvidence(input: EvidenceInput, attempt?: Verif
 	return evidence;
 }
 
+export function getVerificationEvidence(id: string): VerificationEvidence | undefined {
+	return evidenceById.get(id);
+}
+
+export function verificationEvidenceErrors(id: string): string[] {
+	const evidence = evidenceById.get(id);
+	if (!evidence) return [`Verified by: evidence ${id} was not found in this session`];
+	return verificationClaimErrors({ evidenceId: id, command: evidence.command, exitCode: evidence.exitCode });
+}
+
 export function verificationClaimErrors(claim: VerificationClaim): string[] {
+	return claimErrors(claim, true);
+}
+
+// A publication seal has its own source/input binding; ordinary receipts still use generation freshness.
+export function sealedVerificationEvidenceErrors(id: string): string[] {
+	const evidence = evidenceById.get(id);
+	if (!evidence) return [`publication evidence ${id} was not found in this session`];
+	return claimErrors({ evidenceId: id, command: evidence.command, exitCode: evidence.exitCode }, false);
+}
+
+function claimErrors(claim: VerificationClaim, requireCurrentGeneration: boolean): string[] {
 	const evidence = evidenceById.get(claim.evidenceId);
 	if (!evidence) return [`Verified by: evidence ${claim.evidenceId} was not found in this session`];
 
@@ -97,7 +131,7 @@ export function verificationClaimErrors(claim: VerificationClaim): string[] {
 	} else if (latestByCommand.get(key) !== evidence.id) {
 		errors.push(`Verified by: evidence ${claim.evidenceId} is obsolete; only the latest result for the repository, command, and cwd is reportable`);
 	}
-	if (evidenceGenerationById.get(evidence.id) !== currentGeneration) {
+	if (requireCurrentGeneration && evidenceGenerationById.get(evidence.id) !== currentGeneration) {
 		errors.push(`Verified by: evidence ${claim.evidenceId} is stale: ${latestInvalidationReason}`);
 	}
 	if (!evidence.valid) errors.push(`Verified by: evidence ${claim.evidenceId} is invalid: ${evidence.invalidReason ?? "verification failed"}`);

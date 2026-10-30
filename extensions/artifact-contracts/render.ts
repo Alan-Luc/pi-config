@@ -1,7 +1,7 @@
-import { SCHEMAS, type SchemaId } from "./schemas.ts";
+import { SCHEMAS, type Schema, type SchemaId } from "./schemas.ts";
 
 export function renderTemplate(schemaId: SchemaId): string {
-	const schema = SCHEMAS[schemaId];
+	const schema: Schema = SCHEMAS[schemaId];
 	return [
 		...schema.preamble.map((line) => line.example),
 		...(schema.preamble.length ? [""] : []),

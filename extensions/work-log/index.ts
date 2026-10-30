@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { constants, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync as readFileSyncDescriptor, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { FileHandle, open } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
@@ -16,6 +17,8 @@ interface WorkParams {
 	blockers: string[];
 	nextState: string;
 	plan: string;
+	topic?: string;
+	metrics?: CompletionMetrics;
 	handoff?: string;
 }
 
@@ -25,34 +28,63 @@ interface DecisionParams {
 	summary: string;
 	approach: string[];
 	rationale: string;
+	plan: string;
+	topic?: string;
 }
 
-export type WorkLogParams = WorkParams | DecisionParams;
+export interface CompletionMetrics {
+	activeSeconds?: number;
+	pausedSeconds?: number;
+	passSeconds?: number;
+	children?: number;
+}
+
+interface RecoveryParams {
+	kind: "recover";
+	plan: string;
+	topic?: string;
+	expectedToken: string;
+}
+
+export type WorkLogParams = WorkParams | DecisionParams | RecoveryParams;
+type RecordParams = WorkParams | DecisionParams;
 
 const TEXT = { type: "string", minLength: 1 } as const;
 const LIST = { type: "array", items: TEXT, minItems: 1 } as const;
 const WORK_LOG_PARAMS = {
+	type: "object",
 	anyOf: [
 		{
 			type: "object",
 			properties: {
 				kind: { const: "work" }, title: TEXT, goal: TEXT, result: TEXT, completedWork: LIST,
 				changedPaths: LIST, checks: LIST, decisions: { type: "array", items: TEXT }, blockers: LIST,
-				nextState: TEXT, plan: TEXT, handoff: TEXT,
+				nextState: TEXT, plan: { ...TEXT, description: 'An exact existing .harness/plans/YYYY-MM-DD-slug.md path, or the literal None.' }, topic: { ...TEXT, description: 'Required only with plan "None"; a lowercase 1–80 character feature slug without a date prefix.' }, metrics: { type: "object", description: "Optional completion-only self-reported annotations. Omit unknown values; not authoritative evaluation evidence.", properties: {
+					activeSeconds: { type: "number", minimum: 0, description: "Focused active time in seconds." },
+					pausedSeconds: { type: "number", minimum: 0, description: "Paused, blocked, or remediation time in seconds." },
+					passSeconds: { type: "number", minimum: 0, description: "Freeze-to-clearance wall time, including blocked/remediation time; never sum concurrent agents." },
+					children: { type: "integer", minimum: 0, description: "Unique launched child sessions, including failed/timed-out seats; exclude resumes." },
+				}, additionalProperties: false }, handoff: TEXT,
 			},
 			required: ["kind", "title", "goal", "result", "completedWork", "changedPaths", "checks", "blockers", "nextState", "plan"],
 			additionalProperties: false,
 		},
 		{
 			type: "object",
-			properties: { kind: { const: "decision" }, title: TEXT, summary: TEXT, approach: LIST, rationale: TEXT },
-			required: ["kind", "summary", "approach", "rationale"],
+			properties: { kind: { const: "decision" }, title: TEXT, summary: TEXT, approach: LIST, rationale: TEXT, plan: { ...TEXT, description: 'An exact existing .harness/plans/YYYY-MM-DD-slug.md path, or the literal None.' }, topic: { ...TEXT, description: 'Required only with plan "None"; a lowercase 1–80 character feature slug without a date prefix.' } },
+			required: ["kind", "summary", "approach", "rationale", "plan"],
+			additionalProperties: false,
+		},
+		{
+			type: "object",
+			properties: { kind: { const: "recover" }, plan: { ...TEXT, description: 'The exact existing plan associated with the locked topic, or None plus topic.' }, topic: TEXT, expectedToken: { ...TEXT, description: 'Exact token copied from a busy-lock diagnostic; recovery separately requires explicit user confirmation and quiescence.' } },
+			required: ["kind", "plan", "expectedToken"],
 			additionalProperties: false,
 		},
 	],
 } as const;
 export interface WorkLogDetails {
-	kind: "work" | "decision";
+	kind: "work" | "decision" | "recover";
 	path: string;
 	duplicate: boolean;
 	existingPath?: string;
@@ -64,10 +96,11 @@ const NEUTRAL = new Set(["", "none", "n/a"]);
 type LogContext = {
 	cwd: string;
 	sessionManager: Pick<ExtensionToolContext["sessionManager"], "getSessionId" | "getSessionName">;
+	authorizeRecovery?: (path: string, token: string) => Promise<boolean>;
 };
 type MutationQueue = <T>(filePath: string, operation: () => Promise<T>) => Promise<T>;
-type RecordKey = readonly ["work" | "decision", string, string, string];
-type RecordFields = Partial<Record<"title" | "session" | "summary" | "result", string>>;
+type RecordKey = readonly [string, "work" | "decision", string, string, string];
+type RecordFields = Partial<Record<"title" | "session" | "summary" | "result" | "plan", string>>;
 
 function sanitize(value: string): string {
 	return value.replace(/\s+/g, " ").trim().replaceAll("`", "'");
@@ -103,7 +136,28 @@ function listSection(heading: string, values: readonly string[]): string[] {
 	return ["", `**${heading}:**`, ...values.map((value) => `- ${value}`)];
 }
 
-function formatEntry(params: WorkLogParams, date: ReturnType<typeof dateParts>, sessionId: string, sessionName: string): string {
+function validateMetrics(metrics: CompletionMetrics | undefined): CompletionMetrics | undefined {
+	if (!metrics) return undefined;
+	const validated: CompletionMetrics = {};
+	for (const field of ["activeSeconds", "pausedSeconds", "passSeconds", "children"] as const) {
+		const value = metrics[field];
+		if (value === undefined) continue;
+		if (!Number.isFinite(value) || value < 0 || (field === "children" && !Number.isInteger(value))) {
+			throw new Error(`metrics.${field} must be a finite nonnegative ${field === "children" ? "integer" : "number"}`);
+		}
+		validated[field] = value;
+	}
+	return validated;
+}
+
+function metricSection(metrics: CompletionMetrics | undefined): string[] {
+	const validated = validateMetrics(metrics);
+	if (!validated) return [];
+	const values = Object.entries(validated).filter(([, value]) => value !== undefined);
+	return values.length ? ["", "**Completion metrics:**", ...values.map(([field, value]) => `- ${field}: ${value}`)] : [];
+}
+
+function formatEntry(params: RecordParams, date: ReturnType<typeof dateParts>, sessionId: string, sessionName: string): string {
 	if (params.kind === "decision") {
 		const title = required(params.title ?? params.summary, "title");
 		const summary = required(params.summary, "summary");
@@ -118,6 +172,9 @@ function formatEntry(params: WorkLogParams, date: ReturnType<typeof dateParts>, 
 			...listSection("Approach", approach),
 			"",
 			`**Rationale:** ${rationale}`,
+			"",
+			`**Plan:** ${required(params.plan, "plan")}`,
+			...(params.topic ? [`**Topic:** ${required(params.topic, "topic")}`] : []),
 		].join("\n");
 	}
 
@@ -144,23 +201,26 @@ function formatEntry(params: WorkLogParams, date: ReturnType<typeof dateParts>, 
 		`**Next state:** ${required(params.nextState, "nextState")}`,
 		"",
 		`**Plan:** ${required(params.plan, "plan")}`,
+		...(params.topic ? [`**Topic:** ${required(params.topic, "topic")}`] : []),
+		...metricSection(params.metrics),
 		"",
 		`**Handoff:** ${handoff}`,
 	].join("\n");
 }
 
-function recordKey(kind: "work" | "decision", sessionId: string, title: string, summary: string): string {
-	return JSON.stringify([kind, sessionId, title, summary] satisfies RecordKey);
+function recordKey(topic: string, kind: "work" | "decision", sessionId: string, title: string, summary: string): string {
+	return JSON.stringify([topic, kind, sessionId, title, summary] satisfies RecordKey);
 }
 
-function readRecordKeys(text: string): Set<string> {
+function readRecordKeys(text: string, topic: string, legacyPlan?: string): Set<string> {
 	const keys = new Set<string>();
 	let current: RecordFields = {};
 	const finish = () => {
 		const kind = current.summary !== undefined ? "decision" : current.result !== undefined ? "work" : undefined;
 		const summary = current.summary ?? current.result;
-		if (kind && current.session && current.title && summary) {
-			keys.add(recordKey(kind, current.session, current.title, summary));
+		if (kind && current.session && current.title && summary
+			&& (legacyPlan === undefined || (legacyPlan !== "None" && kind === "work" && current.plan === legacyPlan))) {
+			keys.add(recordKey(topic, kind, current.session, current.title, summary));
 		}
 	};
 	for (const line of text.split("\n")) {
@@ -175,10 +235,148 @@ function readRecordKeys(text: string): Set<string> {
 			current.summary = line.slice("**Summary:** ".length).trim();
 		} else if (line.startsWith("**Result:** ")) {
 			current.result = line.slice("**Result:** ".length).trim();
+		} else if (line.startsWith("**Plan:** ")) {
+			current.plan = line.slice("**Plan:** ".length).trim();
 		}
 	}
 	finish();
 	return keys;
+}
+
+interface LockOwner {
+	pid: number;
+	session: string;
+	createdAt: string;
+	token: string;
+}
+
+async function readLockOwner(lockPath: string): Promise<LockOwner | undefined> {
+	if (!validateLogPath(lockPath, "Topic lock owner")) return undefined;
+	let value: unknown;
+	try {
+		value = JSON.parse(await readLogFile(lockPath, "Topic lock owner"));
+	} catch {
+		return undefined;
+	}
+	if (typeof value !== "object" || value === null) return undefined;
+	if (!isRecord(value) || typeof value.pid !== "number" || typeof value.session !== "string" || typeof value.createdAt !== "string" || typeof value.token !== "string") return undefined;
+	return { pid: value.pid, session: value.session, createdAt: value.createdAt, token: value.token };
+}
+
+function ownerDescription(owner: LockOwner | undefined): string {
+	return owner
+		? `pid=${owner.pid}, session=${owner.session}, created=${owner.createdAt}, token=${owner.token}`
+		: "owner details unavailable or malformed";
+}
+
+async function withTopicLock<T>(path: string, session: string, operation: () => Promise<T>): Promise<T> {
+	mkdirSync(dirname(path), { recursive: true });
+	rejectSymlinkComponents(dirname(path), "Canonical log directory");
+	const lockPath = `${path}.lock`;
+	const owner: LockOwner = { pid: process.pid, session, createdAt: new Date().toISOString(), token: randomUUID() };
+	const candidatePath = `${lockPath}.candidate-${owner.token}`;
+	let acquired = false;
+	let operationError: Error | undefined;
+	try {
+		writeFileSync(candidatePath, `${JSON.stringify(owner)}\n`, { flag: "wx", mode: 0o600 });
+		const descriptor = openSync(candidatePath, constants.O_WRONLY);
+		try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+		for (let attempt = 0; attempt < 21; attempt++) {
+			rejectSymlinkComponents(lockPath, "Topic lock");
+			try {
+				// Publish complete owner metadata atomically with exclusive lock acquisition.
+				linkSync(candidatePath, lockPath);
+				acquired = true;
+				break;
+			} catch (error) {
+				if (errorCode(error) !== "EEXIST") throw error;
+				if (attempt === 20) {
+					let heldBy: LockOwner | undefined;
+					try { heldBy = await readLockOwner(lockPath); } catch { heldBy = undefined; }
+					throw new Error(`Topic log is busy: ${path}; ${ownerDescription(heldBy)}. Retry later or use explicit token recovery only after the owner is proven quiescent.`);
+				}
+				await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+			}
+		}
+		if (!acquired) throw new Error(`Cannot acquire topic lock for ${path}`);
+		unlinkSync(candidatePath);
+		return await operation();
+	} catch (error) {
+		operationError = error instanceof Error ? error : new Error(describeError(error), { cause: error });
+		throw operationError;
+	} finally {
+		const cleanupErrors: Error[] = [];
+		try {
+			if (existingStat(candidatePath)) unlinkSync(candidatePath);
+		} catch (error) {
+			cleanupErrors.push(new Error(`Cannot remove topic lock candidate ${candidatePath}: ${describeError(error)}`, { cause: error }));
+		}
+		if (acquired) {
+			try {
+				const heldBy = await readLockOwner(lockPath);
+				if (heldBy?.token !== owner.token) throw new Error(`Topic lock ownership changed for ${path}; preserved ${lockPath}.`);
+				unlinkSync(lockPath);
+			} catch (error) {
+				cleanupErrors.push(new Error(`Cannot release topic lock ${lockPath}: ${describeError(error)}`, { cause: error }));
+			}
+		}
+		if (cleanupErrors.length) {
+			const errors = operationError ? [operationError, ...cleanupErrors] : cleanupErrors;
+			const [firstCleanupError] = cleanupErrors;
+			if (!operationError && cleanupErrors.length === 1 && firstCleanupError) throw firstCleanupError;
+			throw new AggregateError(errors, `Topic lock cleanup failed for ${path}`);
+		}
+	}
+}
+
+function recoverTopicLock(path: string, expectedToken: string): void {
+	const lockPath = `${path}.lock`;
+	rejectSymlinkComponents(lockPath, "Topic lock");
+	const ownerText = readFileSyncNoFollow(lockPath);
+	const owner = parseLockOwner(ownerText);
+	if (owner.token !== expectedToken) {
+		throw new Error(`Topic lock token changed for ${path}; expected token did not match ${owner.token}. Nothing was removed.`);
+	}
+	const quarantine = `${lockPath}.quarantine-${randomUUID()}`;
+	// Isolate the expected owner so a replacement lock is never removed by recovery.
+	renameSync(lockPath, quarantine);
+	try {
+		const quarantinedOwner = parseLockOwner(readFileSyncNoFollow(quarantine));
+		if (quarantinedOwner.token !== expectedToken) {
+			throw new Error(`Quarantined lock token changed for ${path}; preserved quarantine at ${quarantine}. Nothing was removed.`);
+		}
+		unlinkSync(quarantine);
+	} catch (error) {
+		if (existingStat(quarantine)) throw new Error(`${describeError(error)}; preserved quarantine at ${quarantine}`);
+		throw error;
+	}
+}
+
+function readFileSyncNoFollow(path: string): string {
+	if (!validateLogPath(path, "Topic lock owner")) throw new Error(`Topic lock owner is missing: ${path}`);
+	const noFollow = constants.O_NOFOLLOW;
+	if (typeof noFollow !== "number") throw new Error("O_NOFOLLOW is unavailable for topic lock recovery");
+	const descriptor = openSync(path, constants.O_RDONLY | noFollow);
+	try {
+		if (!fstatSync(descriptor).isFile()) throw new Error(`Topic lock owner must be a regular file: ${path}`);
+		return readFileSyncDescriptor(descriptor, "utf8");
+	} finally {
+		closeSync(descriptor);
+	}
+}
+
+function parseLockOwner(text: string): LockOwner {
+	let value: unknown;
+	try { value = JSON.parse(text); } catch { throw new Error("Topic lock owner record is malformed"); }
+	if (typeof value !== "object" || value === null) throw new Error("Topic lock owner record is malformed");
+	if (!isRecord(value) || typeof value.pid !== "number" || typeof value.session !== "string" || typeof value.createdAt !== "string" || typeof value.token !== "string") {
+		throw new Error("Topic lock owner record is malformed");
+	}
+	return { pid: value.pid, session: value.session, createdAt: value.createdAt, token: value.token };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function describeError(error: unknown): string {
@@ -336,23 +534,44 @@ function relativePath(root: string, path: string): string {
 	return value;
 }
 
-function logPaths(root: string, date: ReturnType<typeof dateParts>): { canonical: string; legacy: string; relative: string } {
+function logPaths(root: string, date: ReturnType<typeof dateParts>, key: string): { canonical: string; daily: string; legacy: string; relative: string } {
 	const canonicalRoot = join(root, ".harness");
+	const canonical = join(canonicalRoot, date.year, date.month, date.day, `${key}.md`);
+	const daily = join(canonicalRoot, date.year, date.month, `${date.day}.md`);
 	const legacyRoot = join(root, ".opencode");
-	const relativeDate = join(date.year, date.month, `${date.day}.md`);
-	const canonical = join(canonicalRoot, relativeDate);
-	const legacy = join(legacyRoot, relativeDate);
+	const legacy = join(legacyRoot, date.year, date.month, `${date.day}.md`);
 	assertContained(root, canonicalRoot, "Canonical log root");
-	assertContained(root, canonical, "Canonical log path");
-	assertContained(root, legacyRoot, "Legacy log root");
-	assertContained(root, legacy, "Legacy log path");
+	assertContained(root, canonical, "Canonical topic log path");
 	validateDirectoryChain(canonicalRoot, "Canonical log root");
-	validateDirectoryChain(dirname(canonical), "Canonical log directory");
-	validateLogPath(canonical, "Canonical log path");
-	validateDirectoryChain(legacyRoot, "Legacy log root");
-	validateDirectoryChain(dirname(legacy), "Legacy log directory");
-	validateLogPath(legacy, "Legacy log path");
-	return { canonical, legacy, relative: relativePath(root, canonical) };
+	validateDirectoryChain(dirname(canonical), "Canonical topic log directory");
+	validateLogPath(canonical, "Canonical topic log path");
+	for (const [path, label] of [[daily, "Historical daily log path"], [legacy, "Legacy log path"]] as const) {
+		assertContained(root, path, label);
+		validateDirectoryChain(dirname(path), `${label} directory`);
+		validateLogPath(path, label);
+	}
+	return { canonical, daily, legacy, relative: relativePath(root, canonical) };
+}
+
+function topicKey(root: string, plan: string, topic: string | undefined): string {
+	if (plan === "None") {
+		if (!topic || !/^(?!\d{4}-\d{2}-\d{2})(?=.{1,80}$)[a-z0-9]+(?:-[a-z0-9]+)*$/.test(topic)) {
+			throw new Error('For plan "None", supply topic as a 1–80 character lowercase slug without a date prefix.');
+		}
+		return topic;
+	}
+	if (topic !== undefined) throw new Error('Do not supply topic with a plan; use plan "None" and a feature topic instead.');
+	const match = /^\.harness\/plans\/(\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.md$/.exec(plan);
+	if (!match) throw new Error('Use a canonical .harness/plans/YYYY-MM-DD-slug.md plan, or plan "None" with a lowercase topic slug.');
+	const planDate = match[1].slice(0, 10);
+	const parsedDate = Date.parse(`${planDate}T00:00:00.000Z`);
+	if (!Number.isFinite(parsedDate) || new Date(parsedDate).toISOString().slice(0, 10) !== planDate) {
+		throw new Error("plan filename date must be a valid YYYY-MM-DD calendar date.");
+	}
+	const planPath = join(root, ...plan.split("/"));
+	validateDirectoryChain(dirname(planPath), "Plan directory");
+	if (!validateLogPath(planPath, "Plan path")) throw new Error(`Plan does not exist: ${plan}; create that canonical plan or use plan "None" with topic.`);
+	return match[1];
 }
 
 async function readLogFile(path: string, label: string): Promise<string> {
@@ -374,28 +593,28 @@ async function readLogFile(path: string, label: string): Promise<string> {
 	return content;
 }
 
-async function findDuplicate(paths: readonly string[], key: string): Promise<string | undefined> {
-	for (const path of paths) {
-		const label = path.includes(".opencode") ? "Legacy log path" : "Canonical log path";
+async function findDuplicate(paths: readonly string[], key: string, topic: string, plan: string): Promise<string | undefined> {
+	for (const [index, path] of paths.entries()) {
+		const oldDaily = index > 0;
+		const label = path.includes(".opencode") ? "Legacy log path" : oldDaily ? "Historical daily log path" : "Canonical topic log path";
 		if (!validateLogPath(path, label)) continue;
-		if (readRecordKeys(await readLogFile(path, label)).has(key)) return path;
+		if (readRecordKeys(await readLogFile(path, label), topic, oldDaily ? plan : undefined).has(key)) return path;
 	}
 	return undefined;
 }
 
-async function appendToPath(path: string, date: ReturnType<typeof dateParts>, entry: string): Promise<void> {
+async function appendToPath(path: string, date: ReturnType<typeof dateParts>, topic: string, plan: string, entry: string): Promise<void> {
 	const noFollow = constants.O_NOFOLLOW;
 	if (typeof noFollow !== "number") throw new Error("This platform does not support O_NOFOLLOW for work-log writes");
 	mkdirSync(dirname(path), { recursive: true });
 	rejectSymlinkComponents(dirname(path), "Canonical log directory");
-	const flags = constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | noFollow;
+	const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | noFollow;
 	let handle: FileHandle | undefined;
 	let failure: Error | undefined;
 	try {
 		handle = await open(path, flags, 0o666);
-		const current = await handle.readFile("utf8");
-		const prefix = current.length === 0 ? `# Work log — ${date.iso}\n\n` : "\n\n";
-		await handle.write(`${prefix}${entry}\n`, undefined, "utf8");
+		const prefix = (await handle.stat()).size === 0 ? `# Work log — ${date.iso} — ${topic}\n\n**Plan:** ${plan}\n\n` : "\n\n";
+		await handle.writeFile(`${prefix}${entry}\n`, "utf8");
 		await handle.sync();
 	} catch (error) {
 		failure = new Error(`Cannot append canonical work log ${path}: ${describeError(error)}`, { cause: error });
@@ -413,39 +632,58 @@ export async function appendWorkLog(
 	const sessionId = required(sanitize(ctx.sessionManager.getSessionId()), "session id");
 	const sessionName = sanitize(ctx.sessionManager.getSessionName() ?? "");
 	const root = resolveRepositoryRoot(ctx.cwd);
-	const paths = logPaths(root, date);
+	const plan = required(params.plan, "plan");
+	if (plan !== params.plan) throw new Error("plan must be an exact canonical path or the literal None; whitespace normalization is not accepted.");
+	const topic = topicKey(root, plan, params.topic);
+	const paths = logPaths(root, date, topic);
+	if (params.kind === "recover") {
+		const expectedToken = required(params.expectedToken, "expectedToken");
+		if (expectedToken !== params.expectedToken) throw new Error("expectedToken must exactly match the owner token without normalization.");
+		if (!ctx.authorizeRecovery || !(await ctx.authorizeRecovery(paths.canonical, expectedToken))) {
+			throw new Error("Topic lock recovery requires explicit authorization and confirmed topic-wide writer quiescence.");
+		}
+		recoverTopicLock(paths.canonical, expectedToken);
+		return {
+			content: [{ type: "text", text: `Recovered the matching topic lock for ${paths.relative}; verified quiescence is required before this explicit operation.` }],
+			details: { kind: "recover", path: paths.relative, duplicate: false },
+		};
+	}
 	const title = params.kind === "decision" ? required(params.title ?? params.summary, "title") : required(params.title, "title");
 	const summary = params.kind === "decision" ? required(params.summary, "summary") : required(params.result, "result");
-	const key = recordKey(params.kind, sessionId, title, summary);
+	const key = recordKey(topic, params.kind, sessionId, title, summary);
 	const entry = formatEntry(params, date, sessionId, sessionName);
 
-	return mutationQueue(paths.canonical, async () => {
-		const duplicate = await findDuplicate([paths.canonical, paths.legacy], key);
+	return mutationQueue(paths.canonical, () => withTopicLock(paths.canonical, sessionId, async () => {
+		const duplicate = await findDuplicate([paths.canonical, paths.daily, paths.legacy], key, topic, plan);
 		if (duplicate) {
 			const existingPath = relativePath(root, duplicate);
 			return {
 				content: [{ type: "text", text: `Skipped duplicate ${params.kind} entry; existing record is ${existingPath}` }],
-				details: { kind: params.kind, path: paths.relative, duplicate: true, existingPath },
+				details: { kind: params.kind, path: existingPath, duplicate: true, existingPath },
 			};
 		}
-		await appendToPath(paths.canonical, date, entry);
+		await appendToPath(paths.canonical, date, topic, plan, entry);
 		return {
 			content: [{ type: "text", text: `Appended ${params.kind} entry to ${paths.relative}` }],
 			details: { kind: params.kind, path: paths.relative, duplicate: false },
 		};
-	});
+	}));
 }
 
 async function executeWorkLog(params: WorkLogParams, ctx: ExtensionToolContext) {
 	const { withFileMutationQueue } = await import("@earendil-works/pi-coding-agent");
-	return appendWorkLog(params, ctx, withFileMutationQueue);
+	const authorizeRecovery = async (path: string, token: string): Promise<boolean> => {
+		if (!ctx.hasUI) return false;
+		return ctx.ui.confirm(`Recover ${path}.lock only after confirming all writers are quiescent. Expected owner token: ${token}`, "Authorize work-log lock recovery");
+	};
+	return appendWorkLog(params, { cwd: ctx.cwd, sessionManager: ctx.sessionManager, authorizeRecovery }, withFileMutationQueue);
 }
 
 export default function registerWorkLog(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "work_log",
 		label: "Work log",
-		description: "Append a concise work or decision record to today's canonical repository work log.",
+		description: "Append work or decision records to today's plan/topic log. Optional finite nonnegative work metrics are self-reported annotations, not evaluation evidence. A recover request requires Alan's explicit authorization and proof the topic writer is quiescent; never recover from age or PID alone.",
 		promptSnippet: "Append a verified work or decision record",
 		parameters: WORK_LOG_PARAMS,
 		annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },

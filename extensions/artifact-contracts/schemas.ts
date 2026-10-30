@@ -14,6 +14,7 @@ export type LinePattern = { readonly pattern: RegExp; readonly example: string }
 
 export type Section = {
 	readonly heading: string;
+	readonly input?: Readonly<{ field: string; kind: "text" | "lines" | "choice" | "findings" | "evidence" }>;
 	/** Rendered into the scaffold as `<!-- fill: hint -->`. */
 	readonly hint: string;
 	/** Body must be exactly one line equal to one of these values. */
@@ -39,6 +40,8 @@ const SESSION_ID = String.raw`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 
 const PLAN_PATH = new RegExp(`^\\.harness/plans/${DATE}-${SLUG}\\.md$`);
 const DAILY_LOG_PATH = new RegExp(`^\\.harness/${DATED_DIRECTORY}\\.md$`);
+const TOPIC_LOG_PATH = new RegExp(`^\\.harness/${DATED_DIRECTORY}/${SLUG}\\.md$`);
+const TOPIC_LOG_SIDECAR_PATH = new RegExp(`^\\.harness/${DATED_DIRECTORY}/${SLUG}\\.md\\.lock(?:\\.(?:candidate|quarantine)-[^/]+)?$`);
 const HANDOFF_PATH = new RegExp(`^\\.harness/handoffs/${DATED_DIRECTORY}/${SESSION_ID}-${SLUG}\\.md$`);
 const REPORT_PATH = new RegExp(`^\\.harness/reports/${DATED_DIRECTORY}/${SESSION_ID}-${SLUG}\\.md$`);
 
@@ -51,17 +54,23 @@ const CAPABILITY_PATHS: Readonly<Record<ArtifactOperation, readonly RegExp[]>> =
 	edit: [PLAN_PATH, REPORT_PATH],
 };
 
-export function isArtifactCapabilityPath(operation: ArtifactOperation, path: string): boolean {
-	return CAPABILITY_PATHS[operation].some((pattern) => pattern.test(path));
+export function isArtifactCapabilityPath(
+	operation: ArtifactOperation,
+	path: string,
+	features: Readonly<{ topicLogs?: number }> = {},
+): boolean {
+	return CAPABILITY_PATHS[operation].some((pattern) => pattern.test(path))
+		|| (operation === "read" && features.topicLogs === 1 && TOPIC_LOG_PATH.test(path));
 }
 
-const status: Section = { heading: "Status", hint: "done | blocked | failed", oneOf: ["done", "blocked", "failed"] };
-const findings = (heading: string): Section => ({
+const status = { heading: "Status", hint: "done | blocked | failed", oneOf: ["done", "blocked", "failed"], input: { field: "status", kind: "choice" } } as const satisfies Section;
+const findings = <Field extends string>(heading: string, field: Field) => ({
+	input: { field, kind: "findings" },
 	heading,
 	hint: "one item per finding: `path:line` — issue, evidence, suggested direction",
 	item: { pattern: /^- `[^`]+`/, example: "- `src/file.ts:42` — <issue>" },
 	none: true,
-});
+} as const satisfies Section);
 
 export const SCHEMAS = {
 	plan: {
@@ -80,7 +89,7 @@ export const SCHEMAS = {
 			{ heading: "Risks and open questions", hint: "blocking questions and known risks" },
 			{
 				heading: "Progress and handoff",
-				hint: "per slice: result, changed paths, checks run, blockers, exact next step",
+				hint: "minimal current status and resume pointer to the canonical topic work log; no duplicated execution ledger",
 				subheading: { pattern: new RegExp(`^### ${DATE} — \\S.*$`), example: "### YYYY-MM-DD — <slice or milestone>" },
 			},
 			{
@@ -130,45 +139,64 @@ export const SCHEMAS = {
 		preamble: [],
 		sections: [
 			status,
-			{ heading: "Objective", hint: "the briefed objective in one line" },
-			{ heading: "Current state", hint: "what now exists, including changed files" },
-			{ heading: "Key decisions", hint: "choices made and why, or None." },
+			{ heading: "Objective", hint: "the briefed objective in one line", input: { field: "objective", kind: "text" } },
+			{ heading: "Current state", hint: "what now exists, including changed files", input: { field: "currentState", kind: "text" } },
+			{ heading: "Key decisions", hint: "choices made and why, or None.", input: { field: "decisions", kind: "lines" } },
 			{
 				heading: "Verified by",
+				input: { field: "proofIds", kind: "evidence" },
 				hint: "each check with its exit code, verification evidence ID, and optional note; or Not run: <reason>",
 				item: {
 					pattern: /^- (`[^`]+` (→|->) exit \d+ \[evidence: verify_[0-9a-f]{64}\](?: .+)?|Not run: \S.*)$/,
 					example: `- \`'<command>'\` → exit 0 [evidence: verify_${"0".repeat(64)}]`,
 				},
 			},
-			{ heading: "Next steps", hint: "what the parent should do next, or None." },
-			{ heading: "Do not", hint: "actions the parent or next agent must avoid, or None." },
+			{ heading: "Next steps", hint: "what the parent should do next, or None.", input: { field: "nextSteps", kind: "lines" } },
+			{ heading: "Do not", hint: "actions the parent or next agent must avoid, or None.", input: { field: "doNot", kind: "lines" } },
 		],
 	},
 	explorer: {
 		preamble: [],
 		sections: [
 			status,
-			{ heading: "Answer", hint: "the concise answer to the brief's question" },
-			{ heading: "Relevant paths", hint: "absolute paths with line numbers where useful" },
-			{ heading: "Uncertainty", hint: "real uncertainty or blockers, or None." },
+			{ heading: "Answer", hint: "the concise answer to the brief's question", input: { field: "answer", kind: "text" } },
+			{ heading: "Relevant paths", hint: "absolute paths with line numbers where useful", input: { field: "paths", kind: "lines" } },
+			{ heading: "Uncertainty", hint: "real uncertainty or blockers, or None.", input: { field: "uncertainty", kind: "lines" } },
 		],
 	},
 	review: {
 		preamble: [],
 		sections: [
 			status,
-			{ heading: "Verdict", hint: "APPROVE | APPROVE WITH CHANGES | REJECT", oneOf: ["APPROVE", "APPROVE WITH CHANGES", "REJECT"] },
-			{ heading: "Scope", hint: "exact paths, module, or diff range reviewed" },
-			findings("Critical (P0)"),
-			findings("Important (P1)"),
-			findings("Nice-to-have (P2)"),
-			{ heading: "Out of scope", hint: "follow-ups outside the requested review, or None." },
+			{ heading: "Verdict", hint: "APPROVE | APPROVE WITH CHANGES | REJECT", oneOf: ["APPROVE", "APPROVE WITH CHANGES", "REJECT"], input: { field: "verdict", kind: "choice" } },
+			{ heading: "Scope", hint: "exact paths, module, or diff range reviewed", input: { field: "scope", kind: "text" } },
+			findings("Critical (P0)", "critical"),
+			findings("Important (P1)", "important"),
+			findings("Nice-to-have (P2)", "niceToHave"),
+			{ heading: "Out of scope", hint: "follow-ups outside the requested review, or None.", input: { field: "outOfScope", kind: "lines" } },
 		],
 	},
 } as const satisfies Record<string, Schema>;
 
 export type SchemaId = keyof typeof SCHEMAS;
+export type ResultSchemaId = "worker" | "explorer" | "review";
+export const RESULT_FINDING_FIELDS = ["location", "issue", "evidence", "direction"] as const;
+export type ResultFinding = Readonly<Record<(typeof RESULT_FINDING_FIELDS)[number], string>>;
+export const RESULT_SUPPLEMENTAL_FIELDS = {
+	worker: [{ field: "observationIds", kind: "evidence" }, { field: "notRun", kind: "lines" }],
+	explorer: [],
+	review: [],
+} as const;
+type InputSection<Id extends ResultSchemaId> = (typeof SCHEMAS)[Id]["sections"][number];
+type InputValue<Section> = Section extends { input: { kind: "findings" } } ? readonly ResultFinding[]
+	: Section extends { input: { kind: "lines" | "evidence" } } ? readonly string[]
+	: Section extends { oneOf: readonly (infer Choice)[] } ? Choice : string;
+export type ResultSubmission<Id extends ResultSchemaId> = {
+	readonly [Section in InputSection<Id> as Section["input"]["field"]]: InputValue<Section>;
+} & {
+	readonly [Field in (typeof RESULT_SUPPLEMENTAL_FIELDS)[Id][number] as Field["field"]]: readonly string[];
+};
+export const RESULT_EVIDENCE_REFERENCE_PATTERN = "^verify_[0-9a-f]{64}$";
 
 /** Documents validated on every agent write or edit (repo-relative POSIX paths). */
 export const DOCUMENTS: readonly { readonly schema: SchemaId; readonly path: RegExp; readonly createOnly: boolean }[] = [
@@ -185,6 +213,8 @@ export const PROTECTED: readonly { readonly path: RegExp; readonly reason: strin
 		path: DAILY_LOG_PATH,
 		reason: "Daily work logs are append-only: use the native work_log tool.",
 	},
+	{ path: TOPIC_LOG_PATH, reason: "Topic work logs are append-only: use the native work_log tool." },
+	{ path: TOPIC_LOG_SIDECAR_PATH, reason: "Topic log ownership sidecars are protected: use the native work_log tool and its authorized recovery operation." },
 	{ path: /^\.opencode\//, reason: "Legacy .opencode records are read-only." },
 ];
 
@@ -192,5 +222,9 @@ export const PROTECTED: readonly { readonly path: RegExp; readonly reason: strin
 export const AGENT_OUTPUT: Readonly<Record<string, SchemaId | null>> = {
 	"code-explorer": "explorer",
 	"code-reviewer": "review",
+	"code-reviewer-haiku": "review",
+	"code-reviewer-sonnet": "review",
+	"code-reviewer-sol": "review",
+	"code-reviewer-opus": "review",
 };
 export const DEFAULT_OUTPUT: SchemaId = "worker";

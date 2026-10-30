@@ -1,0 +1,8 @@
+{
+  "server": "gitlab",
+  "approvedReadOnlyTools": [
+    "mcp__gitlab__get_merge_request",
+    "mcp__gitlab__get_merge_request_diffs"
+  ],
+  "status": "Advertised MR-read operations selected for the explicit observer; runtime effects, identity and authorization remain untested."
+}

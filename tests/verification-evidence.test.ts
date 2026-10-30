@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { afterEach, it, test } from "bun:test";
-import type { EventBus } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type EventBus } from "@earendil-works/pi-coding-agent";
+import { registerPublicationClearance } from "../extensions/artifact-contracts/publication-clearance.ts";
+import { registerHandoffHooks } from "../extensions/artifact-contracts/handoffs.ts";
 import {
 	BACKGROUND_TASK_REQUEST_CHANNEL,
 	BACKGROUND_TASK_RESPONSE_CHANNEL,
@@ -20,6 +22,7 @@ import {
 	executeVerification,
 	executeVerificationEvidence,
 	registerVerificationEvidence,
+	type CandidateExec,
 	type VerificationToolContext,
 } from "../extensions/artifact-contracts/verification.ts";
 import {
@@ -27,10 +30,14 @@ import {
 	clearVerificationEvidence,
 	createCandidateIdentity,
 	invalidateVerificationEvidence,
+	sealedVerificationEvidenceErrors,
 	recordVerificationEvidence,
 	verificationClaimErrors,
 } from "../extensions/artifact-contracts/verification-store.ts";
 
+import { requestWorkStatus, VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE, DELEGATION_STATUS_REQUEST, DELEGATION_STATUS_RESPONSE } from "../extensions/lib/work-status.ts";
+
+const VERIFICATION_EXIT_SESSION = "verification-exit-parent";
 const root = mkdtempSync(join(tmpdir(), "verification-evidence-contract-"));
 let sequence = 0;
 const candidate = createCandidateIdentity({
@@ -67,6 +74,76 @@ function record(
 
 afterEach(() => clearVerificationEvidence());
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
+
+test("verification status is unknown without the same-owner live session responder", async () => {
+	const listeners = new Map<string, Set<(value: unknown) => void>>();
+	const events: EventBus = {
+		on(channel, listener) {
+			const handlers = listeners.get(channel) ?? new Set();
+			handlers.add(listener);
+			listeners.set(channel, handlers);
+			return () => { handlers.delete(listener); };
+		},
+		emit(channel, value) { for (const listener of listeners.get(channel) ?? []) listener(value); },
+	};
+	const lifecycle = new Map<string, (...args: never[]) => unknown>();
+	assert.equal(requestWorkStatus(events, "verification", "native-parent"), undefined);
+	registerVerificationEvidence({ events, registerTool() {}, on(name: string, handler: (...args: never[]) => unknown) { lifecycle.set(name, handler); } } as never);
+	assert.equal(requestWorkStatus(events, "verification", "native-parent"), undefined, "no initialized native session");
+	await lifecycle.get("session_start")?.(...[{}, { sessionManager: { getSessionId: () => "native-parent" } }] as never[]);
+	const status = requestWorkStatus(events, "verification", "native-parent");
+	assert.ok(status, "the live same-owner responder must answer");
+	assert.equal(status.sessionId, "native-parent");
+	assert.equal(status.starting, 0);
+	assert.deepEqual(status.uncollectedTaskIds, []);
+	assert.ok(status.generation);
+	assert.equal(requestWorkStatus(events, "verification", "foreign-parent"), undefined);
+	const removeDuplicate = events.on(VERIFICATION_STATUS_REQUEST, (request) => {
+		events.emit(VERIFICATION_STATUS_RESPONSE, { ...status, ...request });
+	});
+	assert.equal(requestWorkStatus(events, "verification", "native-parent"), undefined, "ambiguous responders fail closed");
+	removeDuplicate();
+	await lifecycle.get("session_shutdown")?.(...[] as never[]);
+	assert.equal(requestWorkStatus(events, "verification", "native-parent"), undefined, "shutdown invalidates producer");
+});
+
+test("verification status reads registering starts and owned uncollected tasks from its executing owner", async () => {
+	const directory = await newRepository();
+	const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+	const { promise: registering, resolve: entered } = Promise.withResolvers<void>();
+	const service = backgroundService(directory, { beforeRunResponse: () => { entered(); return gate; } });
+	const lifecycle: Record<string, (event: never, ctx: never) => unknown> = {};
+	registerVerificationEvidence({ events: service, registerTool() {}, on(name: string, handler: (event: never, ctx: never) => unknown) { lifecycle[name] = handler; } } as never);
+	await lifecycle.session_start({} as never, { sessionManager: { getSessionId: () => "executing-parent" } } as never);
+	const start = executeVerificationEvidence("status-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, makeContext(directory), service);
+	await registering;
+	try {
+		const pending = requestWorkStatus(service, "verification", "executing-parent");
+		assert.equal(pending?.starting, 1);
+		assert.deepEqual(pending?.uncollectedTaskIds, []);
+	} finally { release(); }
+	const started = await start;
+	if (started.details.operation !== "start") throw new Error("expected start");
+	try {
+		const pending = requestWorkStatus(service, "verification", "executing-parent");
+		assert.equal(pending?.starting, 0);
+		assert.deepEqual(pending?.uncollectedTaskIds, [started.details.taskId]);
+	} finally {
+		await executeVerificationEvidence("status-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	}
+	assert.deepEqual(requestWorkStatus(service, "verification", "executing-parent")?.uncollectedTaskIds, []);
+	await lifecycle.session_shutdown({} as never, {} as never);
+	assert.equal(requestWorkStatus(service, "verification", "executing-parent"), undefined);
+});
+
+test("registered verification tool exposes typed parameters to schema renderers", () => {
+	let tool: { parameters: { type?: string; properties?: Record<string, { type?: string }> } } | undefined;
+	registerVerificationEvidence({ registerTool: (definition: NonNullable<typeof tool>) => { tool = definition; } } as never);
+	assert.equal(tool?.parameters.type, "object");
+	assert.equal(tool?.parameters.properties?.argv.type, "array");
+	assert.equal(tool?.parameters.properties?.timeout.type, "number");
+	assert.equal(tool?.parameters.properties?.operation.type, "string");
+});
 
 test("candidate and evidence IDs are deterministic content hashes", () => {
 	assert.match(candidate.id, /^candidate_[0-9a-f]{64}$/);
@@ -148,8 +225,18 @@ test("tool completion before recording invalidates an overlapping verification a
 	assert.match(verificationClaimErrors({ evidenceId: evidence.id, command, exitCode: 0 }).join("\n"), /stale: bash tool activity completed/);
 });
 
+test("sealed publication evidence survives ordinary generation invalidation but still pins its log", () => {
+	const evidence = record("'bun' 'test' 'sealed-proof'");
+	invalidateVerificationEvidence("read-only post-seal inspection");
+	assert.match(verificationClaimErrors({ evidenceId: evidence.id, command: evidence.command, exitCode: 0 }).join("\n"), /stale: read-only post-seal inspection/);
+	assert.deepEqual(sealedVerificationEvidenceErrors(evidence.id), [], "publication identity binding must not relax ordinary receipt freshness");
+	writeFileSync(evidence.logPath, "tampered sealed log");
+	assert.match(sealedVerificationEvidenceErrors(evidence.id).join("\n"), /log hash does not match/);
+});
+
 test("invalid, missing, and tampered evidence fails closed", () => {
 	const invalid = record("'bun' 'test' 'invalid'", 0, false);
+	assert.equal(invalid.verifiedBy, undefined, "invalid receipts do not supply a reportable item");
 	assert.match(verificationClaimErrors({ evidenceId: invalid.id, command: invalid.command, exitCode: 0 })[0], /candidate changed during verification/);
 
 	const missing = record("'bun' 'test' 'missing'");
@@ -168,7 +255,8 @@ test("invalid, missing, and tampered evidence fails closed", () => {
 type ProcessResult = { exitCode: number; output: string };
 type FakeBashOptions = {
 	omitExitFor?: (command: string) => boolean;
-	resultFor?: (command: string) => ProcessResult | undefined;
+	resultFor?: (command: string) => ProcessResult | undefined | Promise<ProcessResult | undefined>;
+	nativeExec?: { calls: number };
 };
 
 async function runProcess(argv: readonly string[], cwd: string): Promise<ProcessResult> {
@@ -198,16 +286,40 @@ async function repository(): Promise<string> {
 	return directory;
 }
 
+async function runNativeExec(file: string, args: string[], options: Parameters<CandidateExec>[2]): ReturnType<CandidateExec> {
+	const child = Bun.spawn([file, ...args], { cwd: options?.cwd, stdout: "pipe", stderr: "pipe" });
+	let killed = false;
+	const kill = () => { killed = true; child.kill(); };
+	const timer = options?.timeout === undefined ? undefined : setTimeout(kill, options.timeout);
+	options?.signal?.addEventListener("abort", kill, { once: true });
+	try {
+		const [stdout, stderr, code] = await Promise.all([
+			new Response(child.stdout).text(),
+			new Response(child.stderr).text(),
+			child.exited,
+		]);
+		return { code: code ?? -1, stdout, stderr, killed };
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+		options?.signal?.removeEventListener("abort", kill);
+	}
+}
+
 function makeContext(directory: string, options: FakeBashOptions = {}): VerificationToolContext {
 	let nestedCall = 0;
+	const nativeExec = options.nativeExec;
 	return {
 		cwd: directory,
+		...(nativeExec ? { exec: async (file, args, execOptions) => {
+			nativeExec.calls += 1;
+			return runNativeExec(file, args, execOptions);
+		} } : {}),
 		executeTool: async (name, args) => {
 			assert.equal(name, "bash");
 			if (typeof args !== "object" || args === null || Array.isArray(args)) throw new Error("invalid fake bash input");
 			const input = args as { command?: unknown; timeout?: unknown };
 			if (typeof input.command !== "string" || typeof input.timeout !== "number") throw new Error("invalid fake bash input");
-			const result = options.resultFor?.(input.command) ?? await runProcess(["bash", "-c", input.command], directory);
+			const result = await options.resultFor?.(input.command) ?? await runProcess(["bash", "-c", input.command], directory);
 			const structuredContent: Record<string, string | number | boolean> = {
 				output: result.output,
 				truncated: false,
@@ -241,13 +353,16 @@ async function newRepository(): Promise<string> {
 }
 
 type FakeBackgroundService = EventBus & {
-	counts: Record<"run" | "status" | "logs", number>;
+	counts: Record<"run" | "status" | "logs" | "kill", number>;
 	task: BackgroundTaskSnapshot;
-	complete(status?: "completed" | "failed" | "killed", exitCode?: number | null): void;
+	tasks: Map<string, BackgroundTaskSnapshot>;
+	ordinaryTask?: BackgroundTaskSnapshot;
+	complete(status?: "completed" | "failed" | "killed", exitCode?: number | null, taskId?: string): void;
 };
 
 function backgroundService(directory: string, options: {
 	status?: "running" | "completed" | "failed" | "killed";
+	sessionId?: string;
 	exitCode?: number | null;
 	omitExitCode?: boolean;
 	output?: string;
@@ -255,14 +370,20 @@ function backgroundService(directory: string, options: {
 	logsPath?: string;
 	logsText?: string;
 	emitTerminalOnRun?: boolean;
+	notifyOnCompletion?: boolean;
+	ordinaryTask?: BackgroundTaskSnapshot;
+	beforeKill?: (task: BackgroundTaskSnapshot) => void | Promise<void>;
+	beforeRunResponse?: () => Promise<void>;
+	statusError?: string;
+	statusErrors?: Record<string, string>;
+	killErrors?: Record<string, string>;
 } = {}): FakeBackgroundService {
 	const listeners = new Map<string, Set<(value: unknown) => void>>();
-	const counts = { run: 0, status: 0, logs: 0 };
+	const counts = { run: 0, status: 0, logs: 0, kill: 0 };
 	const output = Buffer.from(options.output ?? "verification output\n");
 	const runtimeDirectory = mkdtempSync(join(realpathSync(tmpdir()), "pi-background-tasks-test-"));
 	runtimeRepositories.push(runtimeDirectory);
 	const outputPath = options.outputPath ?? join(runtimeDirectory, "task-1.output");
-	const absoluteOutputPath = isAbsolute(outputPath) ? outputPath : join(directory, outputPath);
 	let command = "";
 	let task: BackgroundTaskSnapshot = {
 		id: "task-1",
@@ -277,7 +398,7 @@ function backgroundService(directory: string, options: {
 		bytesWritten: output.byteLength,
 		isAgent: false,
 		notified: options.status !== "running",
-		notifyOnCompletion: true,
+		notifyOnCompletion: options.notifyOnCompletion ?? true,
 		triggerOnCompletion: true,
 	};
 	const service = {
@@ -292,17 +413,23 @@ function backgroundService(directory: string, options: {
 		},
 		counts,
 		get task() { return task; },
-		complete(status: "completed" | "failed" | "killed" = "completed", exitCode: number | null = 0) {
-			task = {
-				...task,
+		tasks: new Map<string, BackgroundTaskSnapshot>(),
+		ordinaryTask: options.ordinaryTask,
+		complete(status: "completed" | "failed" | "killed" = "completed", exitCode: number | null = 0, taskId = task.id) {
+			const current = service.tasks.get(taskId);
+			if (!current) throw new Error(`unknown fake task ${taskId}`);
+			const terminal = {
+				...current,
 				status,
 				endTime: 2,
 				...(options.omitExitCode ? {} : { exitCode }),
 				notified: true,
 			};
+			service.tasks.set(taskId, terminal);
+			if (taskId === task.id) task = terminal;
 			service.emit(BACKGROUND_TASK_TERMINAL_CHANNEL, {
 				schema_version: BACKGROUND_TASK_TERMINAL_SCHEMA,
-				task,
+				task: terminal,
 			});
 		},
 	} as FakeBackgroundService;
@@ -312,48 +439,121 @@ function backgroundService(directory: string, options: {
 		if (typeof request.request_id !== "string" || typeof request.operation !== "string") throw new Error("malformed request");
 		if (request.operation === "run") {
 			counts.run += 1;
+			const taskId = `task-${counts.run}`;
+			const outputPath = options.outputPath ?? join(runtimeDirectory, `${taskId}.output`);
+			const taskOutputPath = isAbsolute(outputPath) ? outputPath : join(directory, outputPath);
 			if (!options.outputPath) {
-				writeFileSync(absoluteOutputPath, output);
-				writeFileSync(join(runtimeDirectory, "task-1.json"), "{}\n");
+				writeFileSync(taskOutputPath, output);
+				writeFileSync(join(runtimeDirectory, `${taskId}.json`), "{}\n");
 			}
 			command = String(request.payload?.command ?? "");
-			task = { ...task, command };
+			task = { ...task, id: taskId, outputPath, command };
+			service.tasks.set(taskId, task);
+			const respond = () => {
+				service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "run",
+					ok: true,
+					result: task,
+				});
+				if (task.status !== "running" && options.emitTerminalOnRun !== false) service.complete(task.status, task.exitCode ?? null, taskId);
+			};
+			if (options.beforeRunResponse) void options.beforeRunResponse().then(respond);
+			else respond();
+			return;
+		}
+		if (request.operation === "work-status") {
+			assert.equal(request.payload?.sessionId, options.sessionId ?? VERIFICATION_EXIT_SESSION);
 			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
 				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
 				request_id: request.request_id,
-				operation: "run",
+				operation: "work-status",
 				ok: true,
-				result: task,
+				result: {
+					schema_version: "pi-background-tasks.work-status.v1", version: 1,
+					sessionId: options.sessionId ?? VERIFICATION_EXIT_SESSION, generation: "fixture-generation", revision: "a".repeat(64),
+					activeAdmissions: 0, shuttingDown: false, taskAdmissionsClosed: false,
+					terminalPublicationClosed: false, historyComplete: true, incompletenessReasons: [],
+					tasks: [...service.tasks.values()].map((task) => ({
+						task, terminalPublicationState: task.status === "running" ? "pending" : "delivered",
+						terminalPublished: task.status !== "running", terminalPublishInFlight: false,
+						terminalEmitInFlight: false, notificationInFlight: false,
+						notificationState: !task.notifyOnCompletion ? "not-requested" : task.notified ? "delivered" : "pending",
+					})),
+				},
 			});
-			if (task.status !== "running" && options.emitTerminalOnRun !== false) service.complete(task.status, task.exitCode ?? null);
 			return;
 		}
 		if (request.operation === "status") {
 			counts.status += 1;
-			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
-				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
-				request_id: request.request_id,
-				operation: "status",
-				ok: true,
-				result: { tasks: [task] },
-			});
+			const taskId = typeof request.payload?.taskId === "string" ? request.payload.taskId : "";
+			const statusError = options.statusErrors?.[taskId] ?? options.statusError;
+			const requestedTask = service.tasks.get(taskId);
+			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, statusError
+				? {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "status",
+					ok: false,
+					error: statusError,
+				}
+				: {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "status",
+					ok: true,
+					result: { tasks: [...(requestedTask ? [requestedTask] : []), ...(options.ordinaryTask ? [options.ordinaryTask] : [])] },
+				});
+			return;
+		}
+		if (request.operation === "kill") {
+			counts.kill += 1;
+			const taskId = typeof request.payload?.taskId === "string" ? request.payload.taskId : "";
+			const killError = options.killErrors?.[taskId];
+			if (killError) {
+				service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "kill",
+					ok: false,
+					error: killError,
+				});
+				return;
+			}
+			const requestedTask = service.tasks.get(taskId);
+			if (!requestedTask) throw new Error(`unknown fake task ${taskId}`);
+			void (async () => {
+				await options.beforeKill?.(requestedTask);
+				service.complete("killed", null, taskId);
+				service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+					schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
+					request_id: request.request_id,
+					operation: "kill",
+					ok: true,
+					result: { task: service.tasks.get(taskId), message: "killed" },
+				});
+			})();
 			return;
 		}
 		if (request.operation === "logs") {
 			counts.logs += 1;
+			const taskId = typeof request.payload?.taskId === "string" ? request.payload.taskId : "";
+			const loggedTask = service.tasks.get(taskId);
+			if (!loggedTask) throw new Error(`unknown fake task ${taskId}`);
 			const boundedText = output.subarray(0, MAX_EXPOSED_OUTPUT_BYTES).toString("utf8");
 			const truncated = output.byteLength > MAX_EXPOSED_OUTPUT_BYTES;
 			const text = truncated
-				? `${boundedText}\n\n[Showing head ${MAX_EXPOSED_OUTPUT_BYTES} bytes of ${output.byteLength} bytes; ${output.byteLength - MAX_EXPOSED_OUTPUT_BYTES} bytes omitted. Full output: ${outputPath}]`
-				: `${boundedText}\n\n[Full output: ${outputPath}]`;
+				? `${boundedText}\n\n[Showing head ${MAX_EXPOSED_OUTPUT_BYTES} bytes of ${output.byteLength} bytes; ${output.byteLength - MAX_EXPOSED_OUTPUT_BYTES} bytes omitted. Full output: ${loggedTask.outputPath}]`
+				: `${boundedText}\n\n[Full output: ${loggedTask.outputPath}]`;
 			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
 				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA,
 				request_id: request.request_id,
 				operation: "logs",
 				ok: true,
 				result: {
-					task,
-					path: options.logsPath ?? outputPath,
+					task: loggedTask,
+					path: options.logsPath ?? loggedTask.outputPath,
 					bytesRead: Math.min(output.byteLength, MAX_EXPOSED_OUTPUT_BYTES),
 					truncated,
 					tail: false,
@@ -363,6 +563,26 @@ function backgroundService(directory: string, options: {
 		}
 	});
 	return service;
+}
+
+async function shutdownVerification(service: FakeBackgroundService): Promise<void> {
+	let shutdown: (() => void | Promise<void>) | undefined;
+	registerVerificationEvidence({
+		events: service,
+		on: (event: string, handler: () => void | Promise<void>) => {
+			if (event === "session_shutdown") shutdown = handler;
+			return () => undefined;
+		},
+		registerTool: () => undefined,
+	} as never);
+	assert.ok(shutdown, "the registered session shutdown handler must be invokable");
+	await shutdown();
+}
+
+function stagedImageFromCommand(command: string): string {
+	const match = /^cd '([^']+)' &&/.exec(command);
+	assert.ok(match, "staged command must target its private source image");
+	return match[1];
 }
 
 process.on("exit", () => {
@@ -406,6 +626,125 @@ test("captures clean, staged, unstaged, untracked, deleted, and renamed candidat
 		assert.equal(dirty.kind, "dirty", scenario.name);
 		assert.notEqual(dirty.id, clean.id, scenario.name);
 	}
+});
+
+test("staged capture uses the real index and preserves unstaged and untracked inputs", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, "tracked.txt"), "staged source\n");
+	await git(directory, "add", "tracked.txt");
+	const indexTree = await git(directory, "write-tree");
+	writeFileSync(join(directory, "tracked.txt"), "unstaged repair\n");
+	writeFileSync(join(directory, "untracked.txt"), "not staged\n");
+	const before = await repositorySnapshot(directory);
+	const index = readFileSync(join(directory, ".git", "index"));
+	const request = { operation: "capture" as const, source: "staged" as const };
+	const response = await executeVerificationEvidence("staged-capture", request, undefined, makeContext(directory));
+	const result = response.details;
+	if (result.operation !== "capture") throw new Error("expected a candidate capture");
+	assert.equal(result.candidate.tree, indexTree, "unstaged repair must not become the staged source");
+	assert.ok("source" in result.candidate);
+	assert.equal(result.candidate.source, "staged");
+	assert.equal(await git(directory, "show", `${result.candidate.tree}:tracked.txt`), "staged source");
+	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
+	assert.equal(readFileSync(join(directory, "tracked.txt"), "utf8"), "unstaged repair\n");
+	assert.equal(readFileSync(join(directory, "untracked.txt"), "utf8"), "not staged\n");
+	assert.deepEqual(await repositorySnapshot(directory), before);
+});
+
+test("staged provenance distinguishes otherwise identical candidate inputs", () => {
+	const fields = { repositoryRoot: "/repo", head: "a".repeat(40), tree: "b".repeat(40), kind: "dirty" as const };
+	const staged = { ...fields, source: "staged" as const };
+	assert.notEqual(createCandidateIdentity(staged).id, createCandidateIdentity(fields).id);
+});
+
+test("staged execution must not clear when the working tree repairs staged source", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, "tracked.txt"), "broken\n");
+	await git(directory, "add", "tracked.txt");
+	writeFileSync(join(directory, "tracked.txt"), "repaired\n");
+	const context = makeContext(directory);
+	const argv = ["node", "-e", "process.exit(require('node:fs').readFileSync('tracked.txt', 'utf8') === 'repaired\\n' ? 0 : 1)"];
+	const working = await executeVerification("working-repair", { operation: "run", argv, cwd: ".", timeout: 10 }, context);
+	assert.equal(working.evidence.exitCode, 0);
+
+	const staged = await executeVerification("staged-broken", {
+		operation: "run", argv, cwd: ".", timeout: 10, source: "staged",
+	}, context);
+	assert.equal(staged.evidence.exitCode, 1, "staged source must run broken index content, not the unstaged repair");
+	assert.equal(staged.evidence.valid, true);
+});
+
+test("staged execution pins runtime inputs against identical-byte symlink replacement", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, ".gitignore"), "/runtime.json\n");
+	await git(directory, "add", ".gitignore");
+	await git(directory, "commit", "--quiet", "-m", "ignore runtime input");
+	const input = join(directory, "runtime.json");
+	writeFileSync(input, "same bytes\n");
+	const external = mkdtempSync(join(tmpdir(), "verification-external-runtime-"));
+	runtimeRepositories.push(external);
+	const target = join(external, "runtime.json");
+	writeFileSync(target, "same bytes\n");
+	const request = {
+		operation: "run" as const, source: "staged" as const, runtimeInputs: ["runtime.json"],
+		argv: ["node", "-e", "const fs=require('node:fs');fs.unlinkSync(process.argv[1]);fs.symlinkSync(process.argv[2],process.argv[1])", input, target],
+		cwd: ".", timeout: 10,
+	};
+	const result = await executeVerification("runtime-symlink", request, makeContext(directory));
+	assert.equal(result.evidence.exitCode, 0);
+	assert.equal(result.evidence.valid, false, "unchanged bytes must not hide an external symlink replacing a pinned input");
+	assert.match(result.evidence.invalidReason ?? "", /symbolic link|escapes repository/);
+});
+
+test("staged execution runs green index content without touching the broken working file", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, "tracked.txt"), "repaired\n");
+	await git(directory, "add", "tracked.txt");
+	writeFileSync(join(directory, "tracked.txt"), "broken\n");
+	const index = readFileSync(join(directory, ".git", "index"));
+	const request = {
+		operation: "run" as const, source: "staged" as const,
+		argv: ["node", "-e", "process.exit(require('node:fs').readFileSync('tracked.txt','utf8')==='repaired\\n'?0:1)"],
+		cwd: ".", timeout: 10,
+	};
+	const result = await executeVerification("staged-green", request, makeContext(directory));
+	assert.equal(result.evidence.exitCode, 0);
+	assert.equal(result.evidence.valid, true);
+	assert.equal(result.evidence.candidate.source, "staged");
+	assert.deepEqual(result.evidence.argv, request.argv);
+	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index);
+	assert.equal(readFileSync(join(directory, "tracked.txt"), "utf8"), "broken\n");
+});
+
+test("staged execution preserves permission-sensitive runtime inputs", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, ".gitignore"), "/runtime.json\n");
+	await git(directory, "add", ".gitignore");
+	await git(directory, "commit", "--quiet", "-m", "ignore runtime input");
+	writeFileSync(join(directory, "runtime.json"), "runtime\n");
+	chmodSync(join(directory, "runtime.json"), 0o777);
+	const previousMask = process.umask(0o022);
+	try {
+		const result = await executeVerification("runtime-mode", {
+			operation: "run", source: "staged", runtimeInputs: ["runtime.json"], cwd: ".", timeout: 10,
+			argv: ["node", "-e", "process.exit(require('node:fs').statSync('runtime.json').mode & 0o020 ? 1 : 0)"],
+		}, makeContext(directory));
+		assert.equal(result.evidence.exitCode, 1, "copy umask must not conceal a group-writable declared runtime input");
+		assert.equal(result.evidence.valid, true);
+	} finally {
+		process.umask(previousMask);
+	}
+});
+
+test("staged runtime pins participate in immutable candidate identity", () => {
+	const fields = { repositoryRoot: "/repo", head: "a".repeat(40), tree: "b".repeat(40), kind: "dirty" as const, source: "staged" as const };
+	const first = { ...fields, runtimeInputs: [{ path: "runtime.json", sha256: "a".repeat(64) }] };
+	const second = { ...fields, runtimeInputs: [{ path: "runtime.json", sha256: "b".repeat(64) }] };
+	const captured = createCandidateIdentity(first);
+	assert.notEqual(captured.id, createCandidateIdentity(second).id);
+	first.runtimeInputs[0].sha256 = "c".repeat(64);
+	assert.ok("runtimeInputs" in captured);
+	assert.deepEqual(captured.runtimeInputs, [{ path: "runtime.json", sha256: "a".repeat(64) }]);
 });
 
 test("candidate capture preserves HEAD, branch, real index, status, stash, and files", async () => {
@@ -580,13 +919,145 @@ test("source mutation invalidates otherwise successful evidence and prior comman
 	assert.match(verificationClaimErrors({ evidenceId: prior.id, command: prior.command, exitCode: 0 }).join("\n"), /stale: candidate changed during verification/);
 });
 
-test("ref-only HEAD mutation invalidates otherwise successful evidence", async () => {
+test.each([
+	["git", "commit", "-am", "x"],
+	["git", "push", "origin", "TASK-x"],
+] as const)("run denies direct Git mutation before attempt registration or execution dispatch: %j", async (...argv) => {
 	const directory = await newRepository();
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, ".", createCandidateIdentity({
+		repositoryRoot: directory,
+		head: await git(directory, "rev-parse", "HEAD"),
+		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const dispatches = { bash: 0 };
+	const context = makeContext(directory, { resultFor: (shellCommand) => {
+		if (!shellCommand.endsWith(`&& ${command}`)) return undefined;
+		dispatches.bash += 1;
+		return { exitCode: 0, output: "" };
+	} });
+	await assert.rejects(
+		executeVerification("denied-run", { operation: "run", argv: [...argv], cwd: ".", timeout: 10 }, context),
+		/Blocked direct Git mutation/,
+	);
+	assert.deepEqual(dispatches, { bash: 0 }, "denial must precede execution dispatch");
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/, "denial must not register a newer attempt for the same command");
+});
+
+test.each([
+	["git", "commit", "-am", "x"],
+	["git", "push", "origin", "TASK-x"],
+] as const)("start denies direct Git mutation before attempt registration or background dispatch: %j", async (...argv) => {
+	const directory = await newRepository();
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, ".", createCandidateIdentity({
+		repositoryRoot: directory,
+		head: await git(directory, "rev-parse", "HEAD"),
+		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const service = backgroundService(directory);
+	await assert.rejects(
+		executeVerificationEvidence("denied-start", { operation: "start", argv: [...argv], cwd: ".", timeout: 10 }, undefined, makeContext(directory), service),
+		/Blocked direct Git mutation/,
+	);
+	assert.equal(service.counts.run, 0, "denial must precede background registration");
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/, "denial must not register a newer attempt for the same command");
+});
+
+test.each(["run", "start"] as const)("%s denies Git -C mutation in an explicitly selected linked worktree and repository-relative cwd", async (operation) => {
+	const directory = await newRepository();
+	const container = mkdtempSync(join(tmpdir(), "verification-denial-linked-"));
+	runtimeRepositories.push(container);
+	const linked = join(container, "candidate");
+	await git(directory, "worktree", "add", "--quiet", "--detach", linked);
+	mkdirSync(join(linked, "nested"));
+	const argv = ["git", "-C", linked, "commit", "-am", "x"];
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, "nested", createCandidateIdentity({
+		repositoryRoot: linked,
+		head: await git(linked, "rev-parse", "HEAD"),
+		tree: await git(linked, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const before = await repositorySnapshot(linked);
+	const context = makeContext(directory);
+	const params = { operation, repositoryRoot: linked, argv, cwd: "nested", timeout: 10 } as const;
+	if (operation === "run") {
+		await assert.rejects(executeVerification("linked-denial", params, context), /Blocked direct Git mutation/);
+	} else {
+		const service = backgroundService(directory);
+		await assert.rejects(executeVerificationEvidence("linked-denial", params, undefined, context, service), /Blocked direct Git mutation/);
+		assert.equal(service.counts.run, 0);
+	}
+	assert.deepEqual(await repositorySnapshot(linked), before);
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/);
+});
+
+test.each(["run", "start"] as const)("%s denies an existing directGit command wrapper", async (operation) => {
+	const directory = await newRepository();
+	const argv = ["command", "git", "push", "origin", "TASK-x"];
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, ".", createCandidateIdentity({
+		repositoryRoot: directory,
+		head: await git(directory, "rev-parse", "HEAD"),
+		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const before = await repositorySnapshot(directory);
+	const context = makeContext(directory);
+	const params = { operation, argv, cwd: ".", timeout: 10 } as const;
+	if (operation === "run") await assert.rejects(executeVerification("wrapped-denial", params, context), /Blocked direct Git mutation/);
+	else {
+		const service = backgroundService(directory);
+		await assert.rejects(executeVerificationEvidence("wrapped-denial", params, undefined, context, service), /Blocked direct Git mutation/);
+		assert.equal(service.counts.run, 0);
+	}
+	assert.deepEqual(await repositorySnapshot(directory), before);
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/);
+});
+
+test.each(["run", "start"] as const)("%s denies direct worktree add without creating its destination", async (operation) => {
+	const directory = await newRepository();
+	const destination = join(directory, ".harness", "worktrees", "denied-child");
+	const argv = ["git", "worktree", "add", "--detach", destination];
+	const command = canonicalCommand(argv);
+	const prior = record(command, 0, true, ".", createCandidateIdentity({
+		repositoryRoot: directory,
+		head: await git(directory, "rev-parse", "HEAD"),
+		tree: await git(directory, "rev-parse", "HEAD^{tree}"),
+		kind: "clean",
+	}));
+	const before = await repositorySnapshot(directory);
+	const context = makeContext(directory);
+	const params = { operation, argv, cwd: ".", timeout: 10 } as const;
+	if (operation === "run") await assert.rejects(executeVerification("worktree-denial", params, context), /Blocked direct Git mutation/);
+	else {
+		const service = backgroundService(directory);
+		await assert.rejects(executeVerificationEvidence("worktree-denial", params, undefined, context, service), /Blocked direct Git mutation/);
+		assert.equal(service.counts.run, 0);
+	}
+	assert.equal(existsSync(destination), false);
+	assert.deepEqual(await repositorySnapshot(directory), before);
+	assert.doesNotMatch(verificationClaimErrors({ evidenceId: prior.id, command, exitCode: 0 }).join("\n"), /obsolete/);
+});
+
+test("ref drift outside the checked argv invalidates otherwise successful evidence", async () => {
+	const directory = await newRepository();
+	let movedHead = false;
+	const context = makeContext(directory, { resultFor: async (command) => {
+		if (!command.includes("'printf' 'ref-drift'")) return undefined;
+		await git(directory, "commit", "--allow-empty", "--quiet", "-m", "external ref drift");
+		movedHead = true;
+		return { exitCode: 0, output: "ref-drift" };
+	} });
 	const result = await executeVerification(
 		"ref-mutator",
-		{ operation: "run", argv: ["git", "commit", "--allow-empty", "--quiet", "-m", "move HEAD"], cwd: ".", timeout: 10 },
-		makeContext(directory),
+		{ operation: "run", argv: ["printf", "ref-drift"], cwd: ".", timeout: 10 },
+		context,
 	);
+	assert.equal(movedHead, true);
 	assert.equal(result.evidence.exitCode, 0);
 	assert.equal(result.evidence.valid, false);
 	assert.equal(result.evidence.invalidReason, "candidate changed during verification");
@@ -640,6 +1111,467 @@ test("capture operation returns a structured candidate", async () => {
 	assert.equal(result.structuredContent?.operation, "capture");
 });
 
+test("staged background checks execute the index image and clean it after collection", async () => {
+	const directory = await newRepository();
+	writeFileSync(join(directory, "tracked.txt"), "broken\n");
+	await git(directory, "add", "tracked.txt");
+	writeFileSync(join(directory, "tracked.txt"), "repaired\n");
+	const service = backgroundService(directory, { exitCode: 1 });
+	const request = {
+		operation: "start" as const, source: "staged" as const, cwd: ".", timeout: 10,
+		argv: ["node", "-e", "console.log(process.cwd());process.exit(require('node:fs').readFileSync('tracked.txt','utf8')==='repaired\\n'?0:1)"],
+	};
+	const started = await executeVerificationEvidence("stage-start", request, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const executed = await runProcess(["bash", "-c", started.details.task.command], directory);
+	assert.equal(executed.exitCode, 1, "the background command must execute staged broken source, not the live repair");
+	const image = executed.output.trim();
+	assert.notEqual(realpathSync(image), realpathSync(directory));
+	assert.equal(started.details.candidate.source, "staged");
+	const collected = await executeVerificationEvidence("stage-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(collected.details.evidence.exitCode, 1);
+	assert.deepEqual(collected.details.evidence.argv, request.argv);
+	assert.throws(() => statSync(image), /ENOENT/);
+	assert.equal(readFileSync(join(directory, "tracked.txt"), "utf8"), "repaired\n");
+	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
+});
+
+test("node --test records the failing staged test from a skip-worktree index with native exec", async () => {
+	const directory = await newRepository();
+	const testSource = "const test=require('node:test');const assert=require('node:assert/strict');test('staged assertion',()=>assert.equal('broken','fixed'));\n";
+	writeFileSync(join(directory, "broken.test.js"), testSource);
+	await git(directory, "add", "broken.test.js");
+	await git(directory, "update-index", "--skip-worktree", "broken.test.js");
+	const index = readFileSync(join(directory, ".git", "index"));
+	const nativeExec = { calls: 0 };
+	const result = await executeVerification("node-test-staged", {
+		operation: "run", source: "staged", argv: ["node", "--test"], cwd: ".", timeout: 10,
+	}, makeContext(directory, { nativeExec }));
+	assert.ok(nativeExec.calls > 0, "staged snapshot Git commands must use the native exec path");
+	assert.equal(result.evidence.exitCode, 1);
+	assert.equal(result.evidence.valid, true, "a real failing staged test is valid evidence");
+	assert.match(result.output, /staged assertion/);
+	assert.match(result.output, /fail 1/);
+	assert.deepEqual(readFileSync(join(directory, ".git", "index")), index, "native snapshot execution preserves real index flags");
+});
+
+it.each([undefined, "staged"] as const)("background start and collect use native identity reads without Bash exit metadata (source=%s)", async (source) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const nativeExec = { calls: 0 };
+	let bashCalls = 0;
+	const context = makeContext(directory, { nativeExec, omitExitFor: () => { bashCalls++; return true; } });
+	const started = await executeVerificationEvidence("native-identity-start", {
+		operation: "start", ...(source === undefined ? {} : { source }), argv: ["true"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const collected = await executeVerificationEvidence("native-identity-collect", {
+		operation: "collect", taskId: started.details.taskId,
+	}, undefined, context, service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collected result");
+	assert.ok(nativeExec.calls > 0);
+	assert.equal(bashCalls, 0, "trusted Git identity reads must not require Bash result metadata");
+	assert.equal(service.counts.run, 1);
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(collected.details.evidence.exitCode, 0);
+});
+
+test("failed native identity reads do not fall back to another execution owner", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	let bashCalls = 0;
+	const context = {
+		...makeContext(directory),
+		exec: async () => { throw new Error("native identity read failed"); },
+		executeTool: async () => { bashCalls++; throw new Error("unexpected Bash fallback"); },
+	};
+	await assert.rejects(executeVerificationEvidence("failed-native-identity", {
+		operation: "start", argv: ["true"], cwd: ".", timeout: 10,
+	}, undefined, context, service), /native identity read failed/);
+	assert.equal(bashCalls, 0);
+	assert.equal(service.counts.run, 0);
+});
+
+test("native identity reads do not manufacture a synchronous check exit code", async () => {
+	const directory = await newRepository();
+	const context = makeContext(directory, { nativeExec: { calls: 0 }, omitExitFor: () => true });
+	await assert.rejects(executeVerification("missing-check-exit", {
+		operation: "run", argv: ["true"], cwd: ".", timeout: 10,
+	}, context), /missing structured exit_code/);
+});
+
+test("staged start uses the native exec path", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const nativeExec = { calls: 0 };
+	const started = await executeVerificationEvidence("native-start", {
+		operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+	}, undefined, makeContext(directory, { nativeExec }), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	assert.ok(nativeExec.calls > 0, "staged start Git commands must use the native exec path");
+	const executed = await runProcess(["bash", "-c", started.details.task.command], directory);
+	assert.equal(executed.exitCode, 0);
+	const image = executed.output.trim();
+	const collected = await executeVerificationEvidence("native-start-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.throws(() => statSync(image), /ENOENT/);
+});
+
+test("session shutdown cleans a terminal uncollected staged image", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("shutdown-terminal-start", {
+		operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const image = stagedImageFromCommand(started.details.task.command);
+	assert.equal((await runProcess(["bash", "-c", started.details.task.command], directory)).exitCode, 0);
+	assert.equal(existsSync(image), true);
+	await shutdownVerification(service);
+	assert.equal(existsSync(image), false);
+	assert.equal(service.counts.logs, 0, "shutdown must not fabricate collection or evidence");
+});
+
+test("session shutdown kills a running staged task before cleanup and leaves ordinary tasks alone", async () => {
+	const directory = await newRepository();
+	let child: ReturnType<typeof Bun.spawn> | undefined;
+	let imageWasPresentDuringKill = false;
+	const ordinaryTask: BackgroundTaskSnapshot = {
+		id: "ordinary-task", command: "ordinary", status: "running", outputPath: "/tmp/ordinary.output", cwd: directory,
+		startTime: 1, bytesWritten: 0, isAgent: false, notified: false, notifyOnCompletion: true, triggerOnCompletion: true,
+	};
+	let image = "";
+	const service = backgroundService(directory, {
+		status: "running", emitTerminalOnRun: false, ordinaryTask,
+		beforeKill: async () => {
+			imageWasPresentDuringKill = existsSync(image) && existsSync(join(image, "alive"));
+			child?.kill("SIGTERM");
+			await child?.exited;
+		},
+	});
+	const started = await executeVerificationEvidence("shutdown-running-start", {
+		operation: "start", source: "staged",
+		argv: ["node", "-e", "require('node:fs').writeFileSync('alive','yes');setInterval(()=>{},1000)"], cwd: ".", timeout: 30,
+	}, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	image = stagedImageFromCommand(started.details.task.command);
+	child = Bun.spawn(["bash", "-c", started.details.task.command], { cwd: directory, stdout: "ignore", stderr: "ignore" });
+	for (let attempt = 0; attempt < 100 && !existsSync(join(image, "alive")); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+	assert.equal(existsSync(join(image, "alive")), true, "the verification process must be using its source image");
+	await shutdownVerification(service);
+	assert.equal(imageWasPresentDuringKill, true, "the image remains until task termination completes");
+	assert.equal(service.task.status, "killed");
+	assert.equal(service.counts.kill, 1);
+	assert.equal(service.ordinaryTask?.status, "running", "unowned ordinary tasks must not be killed");
+	assert.equal(existsSync(image), false);
+	assert.notEqual(await child.exited, null);
+});
+
+it.each([
+	{ failure: "status" as const, statusErrors: { "task-1": "status service unavailable" }, expectedKills: 1 },
+	{ failure: "kill" as const, killErrors: { "task-1": "kill service unavailable" }, expectedKills: 2 },
+])("shutdown continues reconciling task 2 after task 1 $failure failure", async ({ failure, statusErrors, killErrors, expectedKills }) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false, statusErrors, killErrors });
+	const context = makeContext(directory);
+	const images: string[] = [];
+	for (let index = 0; index < 2; index += 1) {
+		const result = await executeVerificationEvidence(`shutdown-multi-${failure}-${index}`, {
+			operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+		}, undefined, context, service);
+		if (result.details.operation !== "start") throw new Error("expected start result");
+		images.push(stagedImageFromCommand(result.details.task.command));
+	}
+	for (const image of images) assert.equal(existsSync(image), true);
+	await assert.rejects(shutdownVerification(service), (error: unknown) => {
+		assert.ok(error instanceof AggregateError);
+		assert.equal(error.errors.length, 1);
+		assert.match(error.message, new RegExp(`task task-1.*${failure === "status" ? "status" : "kill"} service unavailable`));
+		return true;
+	});
+	assert.equal(existsSync(images[0]), true, "the task with uncertain ownership retains its source image");
+	assert.equal(existsSync(images[1]), false, "the unaffected task is killed before its image is removed");
+	assert.equal(service.tasks.get("task-2")?.status, "killed");
+	assert.equal(service.counts.kill, expectedKills);
+	service.complete("failed", 1, "task-1");
+	const collected = await executeVerificationEvidence(`shutdown-multi-${failure}-collect`, { operation: "collect", taskId: "task-1" }, undefined, context, service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(collected.details.evidence.exitCode, 1);
+	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
+	assert.throws(() => statSync(images[0]), /ENOENT/);
+});
+
+test("shutdown reconciliation errors propagate and preserve the staged image", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false, statusError: "status service unavailable" });
+	const started = await executeVerificationEvidence("shutdown-error-start", {
+		operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+	}, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const image = stagedImageFromCommand(started.details.task.command);
+	await assert.rejects(shutdownVerification(service), /status service unavailable/);
+	assert.equal(existsSync(image), true, "uncertain task ownership must retain its source image");
+	service.complete("failed", 1);
+	const collected = await executeVerificationEvidence("shutdown-error-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(collected.details.evidence.exitCode, 1);
+	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
+	assert.throws(() => statSync(image), /ENOENT/);
+});
+
+test("collect cleanup and repeated shutdown are idempotent", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const started = await executeVerificationEvidence("repeat-shutdown-start", {
+		operation: "start", source: "staged", argv: ["node", "-e", "console.log(process.cwd())"], cwd: ".", timeout: 10,
+	}, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const image = stagedImageFromCommand(started.details.task.command);
+	assert.equal((await runProcess(["bash", "-c", started.details.task.command], directory)).exitCode, 0);
+	const collected = await executeVerificationEvidence("repeat-shutdown-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, true);
+	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), "verification output\n");
+	assert.equal(existsSync(image), false);
+	await shutdownVerification(service);
+	await shutdownVerification(service);
+	assert.equal(existsSync(image), false);
+});
+
+test("staged background collection invalidates index drift and cleans its image", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const request = { operation: "start" as const, source: "staged" as const, cwd: ".", timeout: 10, argv: ["node", "-e", "console.log(process.cwd())"] };
+	const started = await executeVerificationEvidence("drift-start", request, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const executed = await runProcess(["bash", "-c", started.details.task.command], directory);
+	assert.equal(executed.exitCode, 0);
+	const image = executed.output.trim();
+	assert.notEqual(realpathSync(image), realpathSync(directory));
+	writeFileSync(join(directory, "tracked.txt"), "restaged\n");
+	await git(directory, "add", "tracked.txt");
+	const collected = await executeVerificationEvidence("drift-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
+	assert.equal(collected.details.evidence.valid, false);
+	assert.match(collected.details.evidence.invalidReason ?? "", /tree changed/);
+	assert.throws(() => statSync(image), /ENOENT/);
+});
+
+test("rejected staged start responses clean their private image", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { notifyOnCompletion: false });
+	await assert.rejects(executeVerificationEvidence("bad-stage-start", {
+		operation: "start", source: "staged", cwd: ".", timeout: 10,
+		argv: ["node", "-e", "console.log(process.cwd())"],
+	}, undefined, makeContext(directory), service), /did not satisfy the verification run contract/);
+	const executed = await runProcess(["bash", "-c", service.task.command], directory);
+	try {
+		assert.notEqual(executed.exitCode, 0, "rejected start must not leave an executable source image behind");
+	} finally {
+		if (executed.exitCode === 0) {
+			const image = realpathSync(executed.output.trim());
+			assert.ok(image.startsWith(`${realpathSync(tmpdir())}/pi-staged-verification-`));
+			rmSync(dirname(image), { recursive: true, force: true });
+		}
+	}
+});
+
+test("staged collection failure cleans its image without claiming evidence", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const started = await executeVerificationEvidence("missing-stage-log", {
+		operation: "start", source: "staged", cwd: ".", timeout: 10, argv: ["node", "-e", "console.log(process.cwd())"],
+	}, undefined, makeContext(directory), service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const executed = await runProcess(["bash", "-c", started.details.task.command], directory);
+	assert.equal(executed.exitCode, 0);
+	const image = executed.output.trim();
+	assert.notEqual(realpathSync(image), realpathSync(directory));
+	unlinkSync(service.task.outputPath);
+	await assert.rejects(executeVerificationEvidence("missing-stage-log-collect", { operation: "collect", taskId: started.details.taskId }, undefined, makeContext(directory), service), /output path/);
+	assert.throws(() => statSync(image), /ENOENT/);
+});
+
+function verificationExitHooks(events: EventBus): Record<string, (event: never) => unknown> {
+	const registered: Record<string, (event: never) => unknown> = {};
+	const previous = process.env.PI_SUBAGENT_AGENT;
+	process.env.PI_SUBAGENT_AGENT = "live-verifier";
+	try {
+		registerHandoffHooks({
+			events,
+			registerTool: () => undefined,
+			getActiveTools: () => [],
+			on(name: string, handler: (event: never, context: { sessionManager: { getSessionId(): string; getBranch(): readonly never[] } }) => unknown) {
+				registered[name] = (event) => handler(event, {
+					sessionManager: { getSessionId: () => VERIFICATION_EXIT_SESSION, getBranch: () => [] },
+				});
+			},
+		} as never);
+	} finally {
+		if (previous === undefined) delete process.env.PI_SUBAGENT_AGENT;
+		else process.env.PI_SUBAGENT_AGENT = previous;
+	}
+	return registered;
+}
+
+test("reliability: capture reports the loaded verification protocol", async () => {
+	const directory = await newRepository();
+	const captured = await executeVerificationEvidence("protocol-capture", { operation: "capture" }, undefined, makeContext(directory));
+	assert.equal(captured.details.protocolVersion, 2);
+});
+
+test("reliability: pending collection leaves the attempt and image available for actual terminal evidence", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false });
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("pending-start", {
+		operation: "start", source: "staged", argv: ["true"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const image = stagedImageFromCommand(started.details.task.command);
+	try {
+		const pending = await executeVerificationEvidence("pending-collect", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+		assert.equal(pending.isError, false);
+		assert.deepEqual(pending.details, {
+			operation: "collect", protocolVersion: 2, state: "pending", taskId: started.details.taskId,
+			nextAction: "wait-for-terminal-notification",
+		});
+		assert.equal("evidence" in pending.details, false);
+		assert.equal(service.counts.logs, 0);
+		assert.equal(existsSync(image), true);
+		service.complete();
+		const terminal = await executeVerificationEvidence("pending-terminal", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+		if (terminal.details.operation !== "collect" || terminal.details.state !== "collected") throw new Error("expected terminal collection");
+		assert.equal(terminal.details.evidence.valid, true);
+		assert.equal(terminal.details.evidence.exitCode, 0);
+		assert.equal(terminal.details.protocolVersion, 2);
+		assert.equal(started.details.protocolVersion, 2);
+		assert.equal(service.counts.run, 1);
+		assert.equal(service.counts.logs, 1);
+		assert.equal(existsSync(image), false);
+	} finally {
+		await shutdownVerification(service);
+	}
+});
+
+it.each(["caller_ping", "subagent_done"])("reliability: %s cannot discard terminal uncollected verification", async (toolName) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const context = makeContext(directory);
+	const registered = verificationExitHooks(service);
+	const started = await executeVerificationEvidence("uncollected-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	const blocked = await registered.tool_call({ toolName, toolCallId: "uncollected-exit", input: {} } as never) as { block: boolean; reason: string } | undefined;
+	assert.equal(blocked?.block, true);
+	assert.match(blocked?.reason ?? "", /uncollected.*task-1/i);
+	const terminal = await executeVerificationEvidence("uncollected-terminal", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+	assert.equal(terminal.isError, false);
+	assert.equal(await registered.tool_call({ toolName, toolCallId: "collected-exit", input: {} } as never), undefined);
+});
+
+test("reliability: a surfaced terminal collection failure allows requesting help without evidence", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const context = makeContext(directory);
+	const registered = verificationExitHooks(service);
+	const started = await executeVerificationEvidence("failed-collection-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start result");
+	unlinkSync(service.task.outputPath);
+	await assert.rejects(executeVerificationEvidence("failed-collection-terminal", { operation: "collect", taskId: started.details.taskId }, undefined, context, service), /output path/);
+	assert.equal(await registered.tool_call({ toolName: "caller_ping", toolCallId: "failed-collection-help", input: { message: "Collection failed; no verification is claimed." } } as never), undefined);
+});
+
+test("reliability: exit cannot race a verification start still registering", async () => {
+	const directory = await newRepository();
+	const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+	const { promise: registering, resolve: entered } = Promise.withResolvers<void>();
+	const service = backgroundService(directory, { beforeRunResponse: () => { entered(); return gate; } });
+	const context = makeContext(directory);
+	const registered = verificationExitHooks(service);
+	const start = executeVerificationEvidence("registering-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, context, service);
+	await registering;
+	try {
+		const blocked = await registered.tool_call({ toolName: "caller_ping", toolCallId: "registering-exit", input: {} } as never) as { block: boolean; reason: string } | undefined;
+		assert.equal(blocked?.block, true);
+		assert.match(blocked?.reason ?? "", /start.*register/i);
+	} finally {
+		release();
+		const started = await start;
+		if (started.details.operation !== "start") throw new Error("expected start result");
+		await executeVerificationEvidence("registering-terminal", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+	}
+});
+
+test("parent background collection survives unrelated Bash without becoming fresh publication proof", async () => {
+	const directory = await newRepository();
+	const output = "PARENT_CHECK_EXECUTED\n";
+	const sessionManager = SessionManager.inMemory(directory);
+	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false, output, sessionId: sessionManager.getSessionId() });
+	sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: "parent proof fixture" }], timestamp: Date.now() });
+	const context = { ...makeContext(directory, { nativeExec: { calls: 0 } }), sessionManager };
+	const verificationLifecycle: Record<string, (event: never, ctx: never) => unknown> = {};
+	registerVerificationEvidence({ events: service, registerTool() {}, on(name: string, handler: (event: never, ctx: never) => unknown) { verificationLifecycle[name] = handler; } } as never);
+	await verificationLifecycle.session_start({} as never, context as never);
+	service.on(DELEGATION_STATUS_REQUEST, (value) => {
+		if (typeof value !== "object" || value === null) throw new Error("invalid delegation status request");
+		service.emit(DELEGATION_STATUS_RESPONSE, { ...value, version: 1, generation: "fixture-delegation", revision: 1, runningChildIds: [], pendingResultIds: [] });
+	});
+	const lifecycle = new Map<string, (event: never, ctx: never) => unknown>();
+	type ClearanceTool = { execute: (id: string, params: Record<string, unknown>, signal: undefined, update: undefined, ctx: unknown) => Promise<unknown> };
+	let clearance: ClearanceTool | undefined;
+	registerPublicationClearance({ events: service, exec: runNativeExec,
+		on(name: string, handler: (event: never, ctx: never) => unknown) { lifecycle.set(name, handler); },
+		registerTool(tool: unknown) { clearance = tool as ClearanceTool; },
+	} as never);
+	lifecycle.get("session_start")?.({} as never, context as never);
+	const input = { operation: "start" as const, argv: ["node", "-e", "console.log('PARENT_CHECK_EXECUTED')"], cwd: ".", timeout: 10 };
+	lifecycle.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "parent-start", input } as never, context as never);
+	const started = await executeVerificationEvidence("parent-start", input, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected background start");
+	lifecycle.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "parent-start", details: started.details } as never, context as never);
+	const execution = runProcess(["bash", "-c", started.details.task.command], directory);
+	lifecycle.get("tool_call")?.({ toolName: "bash", toolCallId: "parent-inspection", input: { command: "git status --porcelain=v1" } } as never, context as never);
+	assert.equal(await git(directory, "status", "--porcelain=v1"), "");
+	lifecycle.get("tool_result")?.({ toolName: "bash", toolCallId: "parent-inspection" } as never, context as never);
+	const executed = await execution;
+	assert.equal(executed.exitCode, 0, executed.output);
+	assert.equal(executed.output, output);
+	service.complete();
+	const collect = { operation: "collect" as const, taskId: started.details.taskId };
+	lifecycle.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "parent-collect", input: collect } as never, context as never);
+	const collected = await executeVerificationEvidence("parent-collect", collect, undefined, context, service);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected terminal collection");
+	lifecycle.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "parent-collect", details: collected.details } as never, context as never);
+	const proof = collected.details.evidence;
+	assert.equal(proof.valid, true);
+	assert.ok(proof.verifiedBy);
+	assert.deepEqual(verificationClaimErrors({ evidenceId: proof.id, command: proof.command, exitCode: 0 }), []);
+	assert.ok(clearance);
+	await assert.rejects(clearance.execute("old-parent-proof", { tier: "Direct", evidenceIds: [proof.id], lanes: [], adjudication: "An ordinary reportable receipt is not fresh publication proof." }, undefined, undefined, context), /fresh|activity/);
+	// Pi emits no tool_result when a later hook blocks a tool call.
+	lifecycle.get("tool_call")?.({ toolName: "bash", toolCallId: "guard-blocked", input: { command: "git push origin main" } } as never, context as never);
+	lifecycle.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "fresh-start", input } as never, context as never);
+	const freshStart = await executeVerificationEvidence("fresh-start", input, undefined, context, service);
+	if (freshStart.details.operation !== "start") throw new Error("expected fresh start");
+	lifecycle.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "fresh-start", details: freshStart.details } as never, context as never);
+	const freshExecution = await runProcess(["bash", "-c", freshStart.details.task.command], directory);
+	assert.equal(freshExecution.exitCode, 0, freshExecution.output);
+	assert.equal(freshExecution.output, output);
+	service.complete();
+	const freshInput = { operation: "collect" as const, taskId: freshStart.details.taskId };
+	lifecycle.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "fresh-collect", input: freshInput } as never, context as never);
+	const fresh = await executeVerificationEvidence("fresh-collect", freshInput, undefined, context, service);
+	if (fresh.details.operation !== "collect" || fresh.details.state !== "collected") throw new Error("expected fresh collection");
+	lifecycle.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "fresh-collect", details: fresh.details } as never, context as never);
+	assert.ok(await clearance.execute("fresh-parent-proof", { tier: "Direct", evidenceIds: [fresh.details.evidence.id], lanes: [], adjudication: "A fresh parent background check may seed a local seal." }, undefined, undefined, context));
+});
+
 test("background start and early terminal collect preserve the verification contract", { timeout: 30_000 }, async () => {
 	const directory = await newRepository();
 	const fullOutput = "x".repeat(MAX_EXPOSED_OUTPUT_BYTES + 100);
@@ -666,7 +1598,7 @@ test("background start and early terminal collect preserve the verification cont
 		service,
 	);
 	assert.equal(collected.isError, false);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.argv[0], "printf");
 	assert.equal(collected.details.evidence.cwd, ".");
 	assert.equal(collected.details.output.length, MAX_EXPOSED_OUTPUT_BYTES);
@@ -702,7 +1634,7 @@ it.each(["linked worktree", "session subdirectory"])("legacy background output b
 	const collected = await executeVerificationEvidence("legacy-collect", {
 		operation: "collect", taskId: started.details.taskId,
 	}, undefined, context, service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.isError, false);
 	assert.equal(collected.details.evidence.candidate.repositoryRoot, realpathSync(repositoryRoot));
 	assert.equal(collected.details.output, "verification output\n");
@@ -728,7 +1660,7 @@ it.each([
 	const collected = await executeVerificationEvidence("mutation-collect", {
 		operation: "collect", taskId: started.details.taskId,
 	}, undefined, context, service);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.exitCode, 0);
 	assert.equal(collected.details.evidence.valid, false);
 	assert.equal(collected.details.evidence.invalidReason, "candidate changed during verification");
@@ -782,12 +1714,12 @@ test("background collect accepts empty bounded-log text for silent commands", { 
 		service,
 	);
 	assert.equal(collected.isError, false);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.output, "");
 	assert.equal(readFileSync(collected.details.evidence.logPath).byteLength, 0);
 });
 
-test("background collect performs one status query and rejects a running task", { timeout: 30_000 }, async () => {
+test("background collect performs one status query and returns pending for a running task", { timeout: 30_000 }, async () => {
 	const directory = await newRepository();
 	const service = backgroundService(directory, { status: "running", emitTerminalOnRun: false });
 	const context = makeContext(directory);
@@ -799,10 +1731,12 @@ test("background collect performs one status query and rejects a running task", 
 		service,
 	);
 	if (started.details.operation !== "start") throw new Error("expected start result");
-	await assert.rejects(
-		executeVerificationEvidence("collect-running", { operation: "collect", taskId: started.details.taskId }, undefined, context, service),
-		/still running/,
-	);
+	const pending = await executeVerificationEvidence("collect-running", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+	assert.equal(pending.isError, false);
+	assert.deepEqual(pending.details, {
+		operation: "collect", protocolVersion: 2, state: "pending", taskId: started.details.taskId,
+		nextAction: "wait-for-terminal-notification",
+	});
 	assert.equal(service.counts.status, 1);
 	service.complete();
 	const collected = await executeVerificationEvidence(
@@ -836,7 +1770,7 @@ test("background collect reports nonzero exits and candidate mutation", { timeou
 		failedService,
 	);
 	assert.equal(failedCollect.isError, true);
-	if (failedCollect.details.operation !== "collect") throw new Error("expected collect result");
+	if (failedCollect.details.operation !== "collect" || failedCollect.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(failedCollect.details.evidence.exitCode, 7);
 	assert.equal(failedCollect.details.evidence.valid, true);
 
@@ -860,7 +1794,7 @@ test("background collect reports nonzero exits and candidate mutation", { timeou
 		mutatedService,
 	);
 	assert.equal(mutatedCollect.isError, true);
-	if (mutatedCollect.details.operation !== "collect") throw new Error("expected collect result");
+	if (mutatedCollect.details.operation !== "collect" || mutatedCollect.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(mutatedCollect.details.evidence.valid, false);
 	assert.equal(mutatedCollect.details.evidence.invalidReason, "candidate changed during verification");
 });
@@ -885,7 +1819,7 @@ test.each(["failed", "killed"] as const)("%s tasks without an exit code are inva
 		service,
 	);
 	assert.equal(collected.isError, true);
-	if (collected.details.operation !== "collect") throw new Error("expected collect result");
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.exitCode, -1);
 	assert.match(collected.details.evidence.invalidReason ?? "", /did not report a numeric exit code/);
 });
@@ -958,7 +1892,7 @@ test("start preserves validation and fails when the EventBus is unavailable", as
 test("malformed terminal frames are rejected by the shared EventBus listener", async () => {
 	const directory = await newRepository();
 	const service = backgroundService(directory);
-	registerVerificationEvidence({ events: service, registerTool: () => undefined } as never);
+	registerVerificationEvidence({ events: service, on: () => () => undefined, registerTool: () => undefined } as never);
 	assert.throws(() => service.emit(BACKGROUND_TASK_TERMINAL_CHANNEL, {
 		schema_version: BACKGROUND_TASK_TERMINAL_SCHEMA,
 		task: { id: "task-1", status: "completed", extra: true },

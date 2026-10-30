@@ -5,8 +5,11 @@ mode: background
 async: true
 auto-exit: true
 model: openai-codex/gpt-6-luna
+allow-model-override: false
 thinking: medium
-tools: read,bash,edit,write,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate
+tools: read,bash,edit,write,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate,submit_agent_result
+flags: --no-mcp
+deny-env: GITLAB_PERSONAL_ACCESS_TOKEN
 session-mode: lineage-only
 parent-close-policy: terminate
 ---
@@ -15,4 +18,6 @@ Own exactly the briefed objective and paths. Confirm the supplied prerequisites,
 
 Use `inspect_context` when supplied evidence leaves an exact ownership, caller, or contract question unresolved, and `inspect_change` when the brief requires the current candidate delta. Stop when the bounded result is sufficient; do not repeat supplied reconnaissance.
 
-Implement focused happy and meaningful failure-path tests.
+Implement focused happy and meaningful failure-path tests. Choose observable acceptance before production edits, establish the intended assertion failure, then execute red/green/refactor one behavior at a time. Keep red and green candidate provenance distinct; setup errors are not red. Verify integration claims on the same surface and inspect resulting effects, not only unit results. Follow the common mechanical/refactor/impractical-harness exceptions without manufacturing history.
+
+For an accepted behavioral review finding, use the reviewer's exact triggering input/state for a failing regression before the fix, then green and affected live proof. Structural/docs/deslop findings without changed behavior use green characterization or a direct check; never manufacture a red.
