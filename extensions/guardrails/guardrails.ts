@@ -400,7 +400,7 @@ async function validateWorktree(args: string[], projectRoot: string, workdir: st
 const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which owns local commits and may push only with Alan's explicit authorization.";
 
 /** Publishing is limited to Alan's own personal repositories. */
-const PERSONAL_REMOTE_RE = /^git@github\.com:Alan-Luc\/[A-Za-z0-9._-]+$/;
+const PERSONAL_REMOTE_RE = /^(?:git@github\.com:|https:\/\/github\.com\/)Alan-Luc\/[A-Za-z0-9._-]+$/;
 
 /** Elsewhere (e.g. work repos) only Alan's own alan/* branches may be pushed. */
 const ALAN_BRANCH_RE = /^alan\/(?!.*\.\.)[A-Za-z0-9._/-]+$/;
@@ -433,7 +433,10 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 		if (invocation.name === "commit" && hasCommitNoVerify(invocation.args)) throw new Error("Blocked direct Git commit containing -n (short for --no-verify)");
 		if (invocation.name === "push") {
 			validatePush(invocation.args);
-			if (commands.length !== 1 || shellCommand.length !== 4 || shellCommand[0] !== "git" || shellCommand[1] !== "push"
+			const plainPush = shellCommand.length === 4 && shellCommand[0] === "git" && shellCommand[1] === "push";
+			const selectedRepositoryPush = !publication && shellCommand.length === 6 && shellCommand[0] === "git"
+				&& shellCommand[1] === "-C" && Boolean(shellCommand[2]) && shellCommand[3] === "push";
+			if (commands.length !== 1 || (!plainPush && !selectedRepositoryPush)
 				|| invocation.args.length !== 2 || invocation.args[0] !== "origin") {
 				throw new Error("Blocked publication: only a standalone literal git push origin <branch> is supported; no companion command, wrapper or override.");
 			}
@@ -449,8 +452,9 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 					.split("\n").map((line) => line.trim()).filter(Boolean);
 				const branch = invocation.args[1] ?? "";
 				const personal = pushUrls.length === 1 && PERSONAL_REMOTE_RE.test(pushUrls[0]!);
+				if (selectedRepositoryPush && !personal) throw new Error("Blocked publication: explicit repository selection requires one personal Alan-Luc GitHub origin.");
 				if (!personal && !ALAN_BRANCH_RE.test(branch)) {
-					throw new Error(`Blocked publication: 'origin' (${pushUrls.join(", ") || "missing"}) is not a personal git@github.com:Alan-Luc repository, so only alan/* branches may be pushed; got '${branch}'.`);
+					throw new Error(`Blocked publication: 'origin' (${pushUrls.join(", ") || "missing"}) is not a personal Alan-Luc GitHub repository, so only alan/* branches may be pushed; got '${branch}'.`);
 				}
 			}
 		}
