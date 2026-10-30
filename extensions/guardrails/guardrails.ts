@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { promisify } from "node:util";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
@@ -405,6 +407,28 @@ async function validateWorktree(args: string[], projectRoot: string, workdir: st
 	await requireNoSymlinkTraversal(candidate, worktreeRoot, "Git worktree destination");
 }
 
+const execGit = promisify(execFile);
+
+async function isGitHubPush(cwd: string, args: string[]): Promise<boolean> {
+	if (args.some((arg) => arg.startsWith("-") && arg !== "-u" && arg !== "--set-upstream")) return false;
+	try {
+		const options = { cwd, encoding: "utf8" as const, timeout: 10_000, maxBuffer: 1024 * 1024 };
+		const { stdout } = await execGit("git", ["remote", "get-url", "--push", "--all", "origin"], options);
+		const urls = stdout.trim().split("\n");
+		if (!urls.every((url) => /^(?:https:\/\/github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)[^\s]+$/.test(url))) return false;
+		// Recursive pushes can publish submodules to a different host; mirror config can delete refs.
+		const config = await execGit("git", ["config", "--get-regexp", "^(remote\\.origin\\.mirror|push\\.recursesubmodules|submodule\\.recurse)$"], options)
+			.catch((error: unknown) => {
+				if (isRecord(error) && error.code === 1) return { stdout: "" };
+				throw error;
+			});
+		return config.stdout.trim().split("\n").filter(Boolean).every((line) =>
+			/^(?:remote\.origin\.mirror (?:false|no|0)|(?:push\.recursesubmodules|submodule\.recurse) (?:false|no|0|check))$/.test(line));
+	} catch {
+		return false;
+	}
+}
+
 const SUBAGENT_GIT_BLOCK = "Subagents cannot commit or push; report the change to the parent, which owns local commits and may push only with Alan's explicit authorization.";
 
 export type PublicationRuntimeProvider = (cwd: string) => Promise<PublicationRuntime | undefined>;
@@ -419,7 +443,13 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 	let changedDirectory = false;
 	for (const shellCommand of commands) {
 		let index = 0; while (isAssignment(shellCommand[index])) index += 1;
-		if (shellCommand[index] === "cd") { changedDirectory = true; continue; }
+		if (shellCommand[index] === "cd") {
+			changedDirectory = true;
+			if (commands.length === 2 && shellCommand === commands[0] && shellCommand.length === 2 && isAbsolute(shellCommand[1]) && !hasAmbiguousExpansion(shellCommand[1])) {
+				workdir = resolve(workdir, shellCommand[1]);
+			}
+			continue;
+		}
 		const tokens = directGit(shellCommand, allowGitIndexFile, workdir); if (!tokens) continue;
 		if (tokens.includes("--no-verify")) throw new Error("Blocked direct Git invocation containing --no-verify");
 		const invocation = parseGit(tokens, workdir);
@@ -428,6 +458,14 @@ async function validateGit(command: string, projectRoot: string, workdir: string
 		if (invocation.name === "commit" && hasCommitNoVerify(invocation.args)) throw new Error("Blocked direct Git commit containing -n (short for --no-verify)");
 		if (invocation.name === "push") {
 			validatePush(invocation.args);
+			const prefix = tokens.slice(0, tokens.length - invocation.args.length - 1);
+			const plainGit = shellCommand[0] === "git" && prefix[0] === "git" && (prefix.length === 1
+				|| (prefix.length === 3 && prefix[1] === "-C")
+				|| (prefix.length === 2 && prefix[1].startsWith("-C")));
+			const standalone = commands.length === 1 || (commands.length === 2 && commands[0][0] === "cd"
+				&& commands[0].length === 2 && isAbsolute(commands[0][1]) && !hasAmbiguousExpansion(commands[0][1])
+				&& !/[|]|(^|[^&])&([^&]|$)/.test(command));
+			if (plainGit && standalone && await isGitHubPush(invocation.workdir, invocation.args)) continue;
 			if (commands.length !== 1 || shellCommand.length !== 4 || shellCommand[0] !== "git" || shellCommand[1] !== "push"
 				|| invocation.args.length !== 2 || invocation.args[0] !== "origin") {
 				throw new Error("Blocked publication: only a standalone literal git push origin <branch> is supported; no companion command, wrapper or override.");

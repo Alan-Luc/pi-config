@@ -12,7 +12,7 @@ async function loadPiApi() {
 	return import(join(installRoot, "releases", version, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"));
 }
 
-test("Pi default discovery loads and parent-mode guard denies legacy publication", async () => {
+test("Pi default discovery loads and GitHub pushes bypass non-GitHub publication gating", async () => {
 	if (isSubagentChildEnvironment(process.env)) {
 		const fixtureEnv = { ...process.env };
 		for (const key of ["PI_SUBAGENT_AGENT", "PI_SUBAGENT_PARENT_SESSION", "PI_SUBAGENT_NAME", "PI_SUBAGENT_SESSION", "PI_SUBAGENT_SURFACE"]) delete fixtureEnv[key];
@@ -54,7 +54,15 @@ test("Pi default discovery loads and parent-mode guard denies legacy publication
 		const callbacks = guardrails?.handlers.get("tool_call");
 		expect(callbacks).toBeDefined();
 		expect(callbacks?.length).toBeGreaterThan(0);
+		const before = git("show-ref");
+		for (const toolName of ["bash", "bg_run"]) {
+			await Promise.all((callbacks ?? []).map((callback) => callback({ type: "tool_call", toolName, toolCallId: "loaded-push", input: { command: `cd '${cwd}' && git push -u origin alan/fixture` } }, { cwd })));
+		}
+		expect(git("show-ref")).toBe(before);
+		expect(git("remote", "get-url", "--push", "origin")).toBe("git@github.com:Alan-Luc/fixture.git");
+		git("remote", "set-url", "origin", "git@gitlab.com:Alan-Luc/fixture.git");
 		await expect(Promise.all((callbacks ?? []).map((callback) => callback({ type: "tool_call", toolName: "bash", toolCallId: "loaded-push", input: { command: "git push origin alan/fixture" } }, { cwd })))).rejects.toThrow(/publication.*(?:gate disabled|grant unavailable|not an allowed parent push shape)/);
+		expect(git("show-ref")).toBe(before);
 		expect(shortcuts?.shortcuts.has("alt+p")).toBe(true);
 		expect(workLog?.tools.has("work_log")).toBe(true);
 		expect(notifyUser?.tools.has("notify_user")).toBe(true);
