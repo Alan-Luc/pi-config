@@ -359,7 +359,8 @@ it.each([
 		assert.ok(profile && owner);
 		assert.equal(profile.model, model);
 		assert.equal(profile.thinking, thinking);
-		assert.equal(profile.allowModelOverride, false);
+		// thinking-overrides requires a locked model, so that one profile keeps the lock.
+		assert.equal(profile.allowModelOverride, name !== "test-automation-engineer");
 		assert.deepEqual(profile.thinkingOverrides, name === "test-automation-engineer" ? ["off", "low", "medium", "high"] : undefined);
 		assert.equal(profile.tools, owner.tools);
 		assert.equal(profile.skills, owner.skills);
@@ -387,7 +388,7 @@ test("live verifier is a distinct fixed-low read-only role and test writing stay
 	const verifier = agents["live-verifier"];
 	assert.match(verifier, /^model: openai-codex\/gpt-6-luna$/m);
 	assert.match(verifier, /^thinking: low$/m);
-	assert.match(verifier, /^allow-model-override: false$/m);
+	assert.match(verifier, /^allow-model-override: true$/m);
 	assert.match(verifier, /^tools: read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result$/m);
 	assert.match(verifier, /^flags: --no-mcp$/m);
 	assert.match(verifier, /^deny-env: GITLAB_PERSONAL_ACCESS_TOKEN$/m);
