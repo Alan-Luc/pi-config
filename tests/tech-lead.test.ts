@@ -359,9 +359,8 @@ it.each([
 		assert.ok(profile && owner);
 		assert.equal(profile.model, model);
 		assert.equal(profile.thinking, thinking);
-		// thinking-overrides requires a locked model, so that one profile keeps the lock.
-		assert.equal(profile.allowModelOverride, name !== "test-automation-engineer");
-		assert.deepEqual(profile.thinkingOverrides, name === "test-automation-engineer" ? ["off", "low", "medium", "high"] : undefined);
+		assert.equal(profile.allowModelOverride, true);
+		assert.equal(profile.thinkingOverrides, undefined);
 		assert.equal(profile.tools, owner.tools);
 		assert.equal(profile.skills, owner.skills);
 		if (name === "code-reviewer-haiku") {
