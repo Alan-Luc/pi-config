@@ -3,8 +3,10 @@
 Run this explicit one-time setup against a disposable isolated Pi config root; never pass the canonical `~/.pi/agent` root:
 
 ```sh
-python3 agents/config/initialize-mcp.py /absolute/path/to/isolated-pi-config
+MCP_INTERNAL_DOMAIN=internal.example python3 agents/config/initialize-mcp.py /absolute/path/to/isolated-pi-config
 ```
+
+The template ships `codesearch` and `gitlab` hostnames with an `${MCP_INTERNAL_DOMAIN}` placeholder so no internal domain lives in this repository. The initializer substitutes the `MCP_INTERNAL_DOMAIN` environment value and refuses to run when the variable is unset or empty.
 
 The initializer merges only the bundled `codesearch` and `gitlab` server entries into the target `mcp.json`, preserving unrelated settings and server entries. It retains the Authorization environment reference literally; it never reads or prints the token value. The `code-explorer` profile is statically limited to the four supplied codesearch native names, denies `mcp` and generic resource names, and denies inheritance of the GitLab token.
 

@@ -27,8 +27,19 @@ function manifest(root: string, tools: unknown) {
 }
 
 function initialize(root: string) {
-	return spawnSync("python3", [join(root, "agents/config/initialize-mcp.py"), root], { encoding: "utf8", timeout: 10_000, env: { ...process.env, GITLAB_PERSONAL_ACCESS_TOKEN: "fixture-secret-not-for-output" } });
+	return spawnSync("python3", [join(root, "agents/config/initialize-mcp.py"), root], { encoding: "utf8", timeout: 10_000, env: { ...process.env, GITLAB_PERSONAL_ACCESS_TOKEN: "fixture-secret-not-for-output", MCP_INTERNAL_DOMAIN: "fixture.example" } });
 }
+
+test("setup refuses to resolve the bundled servers without an internal domain", () => {
+	const root = fixture();
+	try {
+		manifest(root, ["mcp__gitlab__fixture_read"]);
+		const result = spawnSync("python3", [join(root, "agents/config/initialize-mcp.py"), root], { encoding: "utf8", timeout: 10_000, env: { ...process.env, GITLAB_PERSONAL_ACCESS_TOKEN: "fixture-secret-not-for-output", MCP_INTERNAL_DOMAIN: "" } });
+		assert.notEqual(result.status, 0);
+		assert.match(result.stderr, /MCP_INTERNAL_DOMAIN must be set/);
+		assert.deepEqual(JSON.parse(readFileSync(join(root, "mcp.json"), "utf8")).mcpServers, { existing: { url: "https://fixture.invalid/mcp" } });
+	} finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("setup preserves existing model, tool denials, directory access and auth while merging selected servers", () => {
 	const root = fixture();
@@ -47,8 +58,8 @@ test("setup preserves existing model, tool denials, directory access and auth wh
 			unrelated: true,
 			mcpServers: {
 				existing: { url: "https://fixture.invalid/mcp" },
-				codesearch: { url: "https://codesearch-internal.${MCP_INTERNAL_DOMAIN}/mcp", enabled: true },
-				gitlab: { url: "https://gitlab-mcp-internal.${MCP_INTERNAL_DOMAIN}/mcp", headers: { Authorization: "Bearer ${GITLAB_PERSONAL_ACCESS_TOKEN}" } },
+				codesearch: { url: "https://codesearch-internal.fixture.example/mcp", enabled: true },
+				gitlab: { url: "https://gitlab-mcp-internal.fixture.example/mcp", headers: { Authorization: "Bearer ${GITLAB_PERSONAL_ACCESS_TOKEN}" } },
 			},
 		});
 	} finally { rmSync(root, { recursive: true, force: true }); }

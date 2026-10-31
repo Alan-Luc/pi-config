@@ -16,6 +16,17 @@ BLOCKED_TOOLS = {
     "read_mcp_resource",
 }
 TOKEN_ENV = "GITLAB_PERSONAL_ACCESS_TOKEN"
+DOMAIN_PLACEHOLDER = "${MCP_INTERNAL_DOMAIN}"
+
+
+def substitute_domain(value, domain):
+    if isinstance(value, dict):
+        return {key: substitute_domain(item, domain) for key, item in value.items()}
+    if isinstance(value, list):
+        return [substitute_domain(item, domain) for item in value]
+    if isinstance(value, str) and DOMAIN_PLACEHOLDER in value:
+        return value.replace(DOMAIN_PLACEHOLDER, domain)
+    return value
 
 
 def merge(target, source):
@@ -100,8 +111,14 @@ def main():
     if root == canonical_root or root in canonical_root.parents:
         raise SystemExit("refusing canonical root or its ancestors; supply a dedicated isolated config root")
 
+    domain = os.environ.get("MCP_INTERNAL_DOMAIN", "").strip()
     source_config = Path(__file__).parent
-    template = json.loads((source_config / "mcp-servers.template.json").read_text(encoding="utf-8"))
+    template_text = (source_config / "mcp-servers.template.json").read_text(encoding="utf-8")
+    # Only substitute when a domain is supplied: an unset value must fail loudly
+    # instead of baking an empty label into a hostname that resolves nowhere.
+    if DOMAIN_PLACEHOLDER in template_text and not domain:
+        raise SystemExit("MCP_INTERNAL_DOMAIN must be set to initialize the bundled MCP servers")
+    template = substitute_domain(json.loads(template_text), domain)
     if not isinstance(template, dict) or not isinstance(template.get("mcpServers"), dict):
         raise SystemExit("MCP server template must contain an mcpServers object")
 
