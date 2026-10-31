@@ -1,6 +1,6 @@
 # Task recipe cards
 
-Copy selected card steps verbatim into Focused/Full live tasks; retain inapplicable steps as `skipped: <reason>`. Direct work needs no recipe/task-copy ceremony. The canonical tier matrix in `AGENTS.md` selects coverage. A staged [Haiku/low advisory](../../deslop/SKILL.md) is risk-selected; oversized patches are skipped, and timeouts are incomplete (`deslop: timed out`). Never treat worktree review as staged review.
+Copy selected card steps verbatim into Focused/Full live tasks; retain inapplicable steps as `skipped: <reason>`. Direct work needs no recipe/task-copy ceremony. The canonical tier matrix in `tech-lead.md` selects coverage. A staged [Haiku/low advisory](../../deslop/SKILL.md) is risk-selected; oversized patches are skipped, and timeouts are incomplete (`deslop: timed out`). Never treat worktree review as staged review.
 
 ## Bug fix
 

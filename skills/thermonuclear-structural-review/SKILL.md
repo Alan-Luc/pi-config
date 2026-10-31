@@ -6,7 +6,7 @@ license: MIT
 
 # Structural-quality review
 
-Apply this lens when selected for a named risk under the canonical acceptance table in `AGENTS.md` or an explicit bounded review; do not add another panel. Review the supplied candidate, exact patch and named connected contracts. Ponytail remains the canonical minimalism policy.
+Apply this lens when selected for a named risk under the canonical acceptance table in `tech-lead.md` or an explicit bounded review; do not add another panel. Review the supplied candidate, exact patch and named connected contracts. Ponytail remains the canonical minimalism policy.
 
 Look beyond local polish for a concrete smaller coherent design:
 - Can whole branches, modes, wrappers or coordination layers disappear instead of moving around? Prefer fewer concepts, not merely more files.

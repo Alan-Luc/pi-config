@@ -4,6 +4,7 @@
       "command": [
         "bun",
         "test",
+        "tests/agents-budget.test.ts",
         "tests/artifact-briefs.test.ts",
         "tests/artifact-contracts.test.ts",
         "tests/artifact-documents.test.ts",

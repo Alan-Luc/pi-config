@@ -10,7 +10,7 @@ Reuse supplied same-target Git evidence. Use `inspect_change` only when Git evid
 
 Explicit reviews of pre-existing changes add `Review range: HEAD` for current worktree changes, `Review range: <base>..<head>` for endpoints, or `Review range: <base>...<head>` for a committed branch. Normal task-owned reviews omit this line.
 
-The canonical Direct/Focused/Full matrix in `AGENTS.md` owns ticket-close coverage; risk outranks size. Direct work uses its consuming-surface check. Explicit deep review retains its scope. Record the risk/coverage map, frozen candidate and prerequisites. Name concrete reasons for added optional lanes and selected and skipped lanes with reasons; do not recreate the matrix or inflate topology.
+The canonical Direct/Focused/Full matrix in `tech-lead.md` owns ticket-close coverage; risk outranks size. Direct work uses its consuming-surface check. Explicit deep review retains its scope. Record the risk/coverage map, frozen candidate and prerequisites. Name concrete reasons for added optional lanes and selected and skipped lanes with reasons; do not recreate the matrix or inflate topology.
 
 | Lane | Coverage |
 |---|---|
