@@ -5,7 +5,7 @@ mode: background
 async: true
 auto-exit: true
 model: anthropic/claude-haiku-5-5
-allow-model-override: false
+allow-model-override: true
 thinking: low
 timeout: 30
 timeout-warn-threshold: false

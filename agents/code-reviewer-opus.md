@@ -5,7 +5,7 @@ mode: background
 async: true
 auto-exit: true
 model: anthropic/claude-opus-5-5
-allow-model-override: false
+allow-model-override: true
 thinking: medium
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 flags: --no-mcp
