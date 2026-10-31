@@ -16,7 +16,7 @@ Effort selection is not active merely because a task recipe mentions it. Use the
 
 ## Task effort
 
-Select the smallest justified effort once before a worker launch and include a short rationale in its existing brief. A ticket's tier or a role title does not determine every subtask's effort. Only an opted-in role's `thinking-overrides` and the locked model's supported levels permit a selection; never substitute a model. Review/design profiles retain their explicitly pinned effort.
+Select the smallest justified effort once before a worker launch and include a short rationale in its existing brief. A ticket's tier or a role title does not determine every subtask's effort. Every role accepts model and thinking overrides, so the selection is bounded only by the chosen model's supported levels; never substitute a model without saying so. Review/design profiles retain their explicitly pinned effort.
 
 | Effort | Actual delegated work |
 |---|---|
@@ -25,7 +25,7 @@ Select the smallest justified effort once before a worker launch and include a s
 | `medium` | Test design, ordinary implementation or diagnosis, including selecting meaningful cases. |
 | `high` | Subtle concurrency/multi-process behavior, state/trust/security design, an unresolved causal mechanism or consequential assertions. |
 
-Use `off` only where supported. Missing opt-in/support or contradictory evidence is explicit, not permission to silently drop a requested level or escalate models. A worker reports the concrete missing fact; the parent reclassifies that subtask rather than blindly retrying at higher effort. If the parent can perform an exact tiny action faster, do it directly.
+Use `off` only where the chosen model supports it. A model without that level is explicit, not permission to silently drop a requested level or escalate models. A worker reports the concrete missing fact; the parent reclassifies that subtask rather than blindly retrying at higher effort. If the parent can perform an exact tiny action faster, do it directly.
 
 ## Cards
 

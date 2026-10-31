@@ -242,16 +242,17 @@ test("oversized staged advisories skip deterministically without partitioning", 
 	assert.ok(recipeCards.includes("../../deslop/SKILL.md"), "recipes link to the advisory owner");
 });
 
-test("task effort follows actual uncertainty within explicit locked-role capability", () => {
+test("task effort follows actual uncertainty within each model's supported levels", () => {
 	includesAll(taskRecipe, [
 		"smallest justified effort once", "short rationale in its existing brief",
-		"A ticket's tier or a role title does not determine", "thinking-overrides",
-		"locked model's supported levels", "never substitute a model",
-		"Review/design profiles retain their explicitly pinned effort", "Use `off` only where supported",
+		"A ticket's tier or a role title does not determine", "Every role accepts model and thinking overrides",
+		"chosen model's supported levels", "never substitute a model without saying so",
+		"Review/design profiles retain their explicitly pinned effort", "Use `off` only where the chosen model supports it",
 		"exact trigger/repro/log/error lines", "No diagnosis, contract choice or unresolved failure-path design",
 		"worker reports the concrete missing fact", "parent reclassifies that subtask",
 		"not permission to silently drop a requested level or escalate models",
 	]);
+	assert.doesNotMatch(taskRecipe, /thinking-overrides|opted-in role|Missing opt-in/);
 	assert.deepEqual([...taskRecipe.matchAll(/^\| `(off|low|medium|high)` \|/gm)].map((match) => match[1]), ["off", "low", "medium", "high"]);
 });
 
