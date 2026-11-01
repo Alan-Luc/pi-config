@@ -81,7 +81,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function validLine(value: unknown, maximumLength = 4000): value is string {
-	return typeof value === "string" && value.trim().length > 0 && value.length <= maximumLength && !/[\r\n]/.test(value);
+	return typeof value === "string" && value.trim().length > 0 && value.length <= maximumLength && !/[\r\n]/.test(value)
+		&& !/^ {0,3}#{1,6} /.test(value);
 }
 
 function isEvidenceId(value: unknown): value is string {
@@ -101,7 +102,7 @@ export function resultSubmissionErrors(schemaId: ResultSchemaId, value: unknown)
 		const fieldValue = value[definition.field];
 		switch (definition.kind) {
 			case "text":
-				if (!validLine(fieldValue, 8000)) errors.push(`${definition.field}: expected non-empty single-line text`);
+				if (!validLine(fieldValue, 8000)) errors.push(`${definition.field}: expected non-empty single-line prose without markdown headings`);
 				break;
 			case "choice": {
 				const section = resultSections(schemaId).find((item) => item.input.field === definition.field);
@@ -112,7 +113,7 @@ export function resultSubmissionErrors(schemaId: ResultSchemaId, value: unknown)
 			}
 			case "lines":
 				if (!Array.isArray(fieldValue) || fieldValue.some((line) => !validLine(line))) {
-					errors.push(`${definition.field}: expected an array of non-empty single-line strings`);
+					errors.push(`${definition.field}: expected an array of non-empty single-line strings without markdown headings`);
 				}
 				break;
 			case "evidence":

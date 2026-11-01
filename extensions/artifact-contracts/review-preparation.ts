@@ -593,7 +593,7 @@ export async function prepareReview(
 	));
 	if (records.length === 0) {
 		if (reviewRange === undefined) {
-			throw new Error("review preparation found no task-owned diff to review; add Review range: HEAD for existing worktree changes or Review range: main...HEAD for an existing branch");
+			throw new Error("review preparation found no task-owned diff to review: the working tree matches HEAD. Review committed work with Review range: <base>..HEAD.");
 		}
 		throw new Error(`review preparation found no changes for ${diff.description}`);
 	}

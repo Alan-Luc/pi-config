@@ -197,13 +197,16 @@ function validateOneOf(section: Section, body: BodyLine[], errors: string[], hea
 
 function validateLines(section: Section, body: BodyLine[], errors: string[], headingLine: number): void {
 	if (!section.lines) return;
-	if (body.length !== section.lines.length) {
-		errors.push(`line ${headingLine}: expected exactly ${section.lines.length} non-blank lines, found ${body.length}`);
+	const count = section.lines.length;
+	if (section.allowExtraLines ? body.length < count : body.length !== count) {
+		const expected = section.allowExtraLines ? `${count} required lines (further lines allowed)` : `exactly ${count} non-blank lines`;
+		errors.push(`line ${headingLine}: expected ${expected}, found ${body.length}`);
 	}
 	for (const [index, line] of body.entries()) {
 		const expected = section.lines[index];
 		if (expected && !matches(expected, structural(line.text))) {
-			errors.push(`line ${line.line}: expected line matching ${quote(expected.example)}, found ${quote(line.text)}`);
+			const want = expected.label ? `a "${expected.label}:" line` : `a line matching ${quote(expected.example)}`;
+			errors.push(`line ${line.line}: expected ${want}, found ${quote(line.text)}`);
 		}
 	}
 }

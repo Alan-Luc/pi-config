@@ -117,7 +117,7 @@ test("tech lead owns each required ceremony row and its conditional gates", () =
 	const rowNames = rows.map((line) => line.split("|")[1].trim());
 	assert.deepEqual(rowNames, [
 		"Selection", "Recipe/tasks", "Durable plan", "Human approval", "Test-first", "Mechanical deslop",
-		"Haiku advisory", "Live verification", "Correctness review", "Structural / whole-diff deslop", "Work-log entry",
+		"Advisory deslop", "Live verification", "Correctness review", "Structural / whole-diff deslop", "Work-log entry",
 		"Coordinator report", "Passing intent-sized commit",
 	]);
 	const row = (name: string) => rows.find((line) => line.split("|")[1].trim() === name) ?? "";
@@ -133,9 +133,9 @@ test("tech lead owns each required ceremony row and its conditional gates", () =
 	includesAll(row("Test-first"), ["Consuming check", "Behavior red", "refactor characterize", "meaningful failure paths"]);
 	includesAll(row("Mechanical deslop"), ["Yes"]);
 	includesAll(row("Live verification"), ["No unrelated runtime", "One read-only worker", "distinct success/attack", "ONE broad integration", "Separate success/attack workers", "success owns"]);
-	includesAll(row("Haiku advisory"), ["Risk-selected", "fixed-profile"]);
-	includesAll(row("Correctness review"), ["No routine", "explicit request", "Ordinary pair", "Required pair"]);
-	includesAll(row("Structural / whole-diff deslop"), ["Risk-selected pairs", "distinct risks"]);
+	includesAll(row("Advisory deslop"), ["Risk-selected", "fixed-profile"]);
+	includesAll(row("Correctness review"), ["No routine", "explicit request", "One reviewer", "adds a counterpart"]);
+	includesAll(row("Structural / whole-diff deslop"), ["One risk-selected lane", "adds a distinct-risk counterpart"]);
 	includesAll(row("Coordinator report"), ["gates/blockers", "Gate attention", "closure summary"]);
 	includesAll(row("Passing intent-sized commit"), ["Yes"]);
 	includesAll(techLead, ["State the tier and reason in preflight", "Escalate on new evidence", "downgrade only with Alan's approval", "Full always requires a plan", "approval remains conditional", "Gated Focused needs a plan", "bounded scope/checks brief unless explicit planning", "coordinator.report", "explicit `null`", "Summaries are not proof"]);
@@ -300,8 +300,6 @@ test("the roster includes the canonical live verifier and explicit MR observer w
 	assert.deepEqual(Object.keys(agents).sort(), [
 		"code-explorer",
 		"code-reviewer",
-		"code-reviewer-haiku",
-		"code-reviewer-opus",
 		"code-reviewer-sol",
 		"code-reviewer-sonnet",
 		"implementation-engineer",
@@ -344,10 +342,8 @@ it.each([
 	{ name: "test-automation-engineer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "test-automation-engineer" },
 	{ name: "live-verifier", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "live-verifier" },
 	{ name: "code-reviewer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "code-reviewer" },
-	{ name: "code-reviewer-haiku", model: "anthropic/claude-haiku-5-5", thinking: "low", canonical: "code-reviewer" },
 	{ name: "code-reviewer-sonnet", model: "anthropic/claude-sonnet-5-5", thinking: "high", canonical: "code-reviewer" },
 	{ name: "code-reviewer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "code-reviewer" },
-	{ name: "code-reviewer-opus", model: "anthropic/claude-opus-5-5", thinking: "medium", canonical: "code-reviewer" },
 	{ name: "implementation-engineer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "implementation-engineer" },
 	{ name: "implementation-engineer-opus", model: "anthropic/claude-opus-5-5", thinking: "high", canonical: "implementation-engineer" },
 ])("the installed loader resolves $name without inferred overrides", ({ name, model, thinking, canonical }) => {
@@ -364,12 +360,6 @@ it.each([
 		assert.equal(profile.thinkingOverrides, undefined);
 		assert.equal(profile.tools, owner.tools);
 		assert.equal(profile.skills, owner.skills);
-		if (name === "code-reviewer-haiku") {
-			assert.equal(profile.timeout, 30);
-			assert.equal(profile.timeoutWarnThreshold, "false");
-			assert.equal(profile.onTimeout, "block-resume");
-			assert.deepEqual(resolveSubagentTimeoutState(profile), { timeoutBudget: { timeoutSeconds: 30 }, timeoutBlocksResume: true });
-		}
 		if (name === "live-verifier") {
 			assert.equal(profile.tools, "read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result");
 			assert.equal(profile.skills, "none");
@@ -529,8 +519,8 @@ test("dismissed material findings keep evidence-based reasons in the pass summar
 test("policy-selected review keeps complete independent coverage without a fixed worker topology", () => {
 	includesAll(techLead, ["consequential architectural", "prompts/eviscerate-diff.md", "eight live children", "capacity", "matrix-selected independent acceptance in this file", "Explicit deep review keeps its requested coverage"]);
 	includesAll(reviewPrompt, [
-		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus",
-		"eight live children", "complete pairs", "canonical `agents/live-verifier.md` role", "protected", "missing counterpart", "not votes",
+		"risk/coverage map", "identical briefs", "code-reviewer-sonnet", "code-reviewer-sol",
+		"eight live children", "counterpart pair", "canonical `agents/live-verifier.md` role", "protected", "missing counterpart", "not votes",
 		"thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "fresh selected reviewer-profile",
 		"canonical Direct/Focused/Full matrix in `tech-lead.md`", "ticket-close", "Direct work uses its consuming-surface check", "risk outranks size", "Name concrete reasons for added", "live-verification-success", "live-verification-attack", "not a target worker count",
 		"When independent live workers are not selected, the parent owns",  "Full uses separate fresh worker sessions and briefs", "Isolate disposable state and keep evidence separate by observation", "Join both live results", "attack worker does not duplicate that run",

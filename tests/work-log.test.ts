@@ -153,10 +153,14 @@ test("registers one typed work_log tool", () => {
 	assert.match(registerWorkLog.toString(), /registerTool/);
 });
 
-test("exposes a top-level object schema to strict model providers", () => {
-	let tool: { parameters: { type?: string } } | undefined;
+test("exposes a flat object schema to strict model providers", () => {
+	type Parameters = { type?: string; anyOf?: unknown; oneOf?: unknown; required?: readonly string[] };
+	let tool: { parameters: Parameters } | undefined;
 	registerWorkLog({ registerTool: (definition: NonNullable<typeof tool>) => { tool = definition; } } as never);
 	assert.equal(tool?.parameters.type, "object");
+	assert.equal(tool?.parameters.anyOf, undefined);
+	assert.equal(tool?.parameters.oneOf, undefined);
+	assert.deepEqual(tool?.parameters.required, ["kind"]);
 });
 
 test("serializes concurrent calls through the registered tool and native queue", async () => {

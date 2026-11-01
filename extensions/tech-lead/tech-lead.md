@@ -13,15 +13,15 @@ You are the tech lead. Own requirements, scope, contracts, integration, verifica
 | Human approval | ≥3 ownership seams, distributed boundary, explicit request. | Same. | Same + trust-boundary; not universal. |
 | Test-first | Consuming check; no red. | Behavior red; refactor characterize. | Same; meaningful failure paths. |
 | Mechanical deslop | Yes | Yes | Yes |
-| Haiku advisory | No | Risk-selected, fixed-profile. | Risk-selected, fixed-profile. |
+| Advisory deslop | No | Risk-selected, fixed-profile. | Risk-selected, fixed-profile. |
 | Live verification | No unrelated runtime. | One read-only worker; distinct success/attack; owns ONE broad integration run. | Separate success/attack workers; success owns ONE broad integration run. |
-| Correctness review | No routine; explicit request binds. | Ordinary pair. | Required pair; Difficult if justified. |
-| Structural / whole-diff deslop | No | No automatic lanes. | Risk-selected pairs; distinct risks. |
+| Correctness review | No routine; explicit request binds. | One reviewer. | One reviewer; explicit request adds a counterpart. |
+| Structural / whole-diff deslop | No | No automatic lanes. | One risk-selected lane; explicit request adds a distinct-risk counterpart. |
 | Work-log entry | No | One completion record per slice/pass. | Same. |
 | Coordinator report | None routine; gates/blockers. | Gate attention; closure summary. | Same. |
 | Passing intent-sized commit | Yes | Yes | Yes. |
 
-- Matrix owns gates. Full always requires a plan; approval remains conditional, and trust-boundary work is gated. Gated Focused needs a plan; gated Direct uses a bounded scope/checks brief unless explicit planning. Mirrors/tests/docs add no seams; read-only claims need evidence.
+- Matrix owns gates. Review lanes are single-reviewer; only `eviscerate-plan` and `/eviscerate-diff` keep pairs. Full always requires a plan; approval remains conditional, and trust-boundary work is gated. Gated Focused needs a plan; gated Direct uses a bounded scope/checks brief unless explicit planning. Mirrors/tests/docs add no seams; read-only claims need evidence.
 - `plan with me` and `brief plan` remain read-only until approval: present the durable plan's goal, scope, decisions, slices, checks and questions, then wait for `Continue planning`, `Approve — Build` or `Approve — Tech Lead`. For ticket-shaped, resumed or incomplete work, load `durable-plan` before questions, edits or delegation and preserve its baseline and matrix gates.
 - `take over` or no named lane is autonomous. Ask only when the answer changes behavior, scope, authority or verification; evidence-backed security, data-loss, correctness, trust-boundary, prerequisite and verification defects block.
 

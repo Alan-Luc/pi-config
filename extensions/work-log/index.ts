@@ -51,37 +51,38 @@ type RecordParams = WorkParams | DecisionParams;
 
 const TEXT = { type: "string", minLength: 1 } as const;
 const LIST = { type: "array", items: TEXT, minItems: 1 } as const;
+const PLAN = { ...TEXT, description: 'An exact existing .harness/plans/YYYY-MM-DD-slug.md path, or the literal None.' };
+const TOPIC = { ...TEXT, description: 'Required only with plan "None"; a lowercase 1–80 character feature slug without a date prefix.' };
 const WORK_LOG_PARAMS = {
 	type: "object",
-	anyOf: [
-		{
-			type: "object",
-			properties: {
-				kind: { const: "work" }, title: TEXT, goal: TEXT, result: TEXT, completedWork: LIST,
-				changedPaths: LIST, checks: LIST, decisions: { type: "array", items: TEXT }, blockers: LIST,
-				nextState: TEXT, plan: { ...TEXT, description: 'An exact existing .harness/plans/YYYY-MM-DD-slug.md path, or the literal None.' }, topic: { ...TEXT, description: 'Required only with plan "None"; a lowercase 1–80 character feature slug without a date prefix.' }, metrics: { type: "object", description: "Optional completion-only self-reported annotations. Omit unknown values; not authoritative evaluation evidence.", properties: {
-					activeSeconds: { type: "number", minimum: 0, description: "Focused active time in seconds." },
-					pausedSeconds: { type: "number", minimum: 0, description: "Paused, blocked, or remediation time in seconds." },
-					passSeconds: { type: "number", minimum: 0, description: "Freeze-to-clearance wall time, including blocked/remediation time; never sum concurrent agents." },
-					children: { type: "integer", minimum: 0, description: "Unique launched child sessions, including failed/timed-out seats; exclude resumes." },
-				}, additionalProperties: false }, handoff: TEXT,
-			},
-			required: ["kind", "title", "goal", "result", "completedWork", "changedPaths", "checks", "blockers", "nextState", "plan"],
-			additionalProperties: false,
-		},
-		{
-			type: "object",
-			properties: { kind: { const: "decision" }, title: TEXT, summary: TEXT, approach: LIST, rationale: TEXT, plan: { ...TEXT, description: 'An exact existing .harness/plans/YYYY-MM-DD-slug.md path, or the literal None.' }, topic: { ...TEXT, description: 'Required only with plan "None"; a lowercase 1–80 character feature slug without a date prefix.' } },
-			required: ["kind", "summary", "approach", "rationale", "plan"],
-			additionalProperties: false,
-		},
-		{
-			type: "object",
-			properties: { kind: { const: "recover" }, plan: { ...TEXT, description: 'The exact existing plan associated with the locked topic, or None plus topic.' }, topic: TEXT, expectedToken: { ...TEXT, description: 'Exact token copied from a busy-lock diagnostic; recovery separately requires explicit user confirmation and quiescence.' } },
-			required: ["kind", "plan", "expectedToken"],
-			additionalProperties: false,
-		},
-	],
+	description: 'kind "work" needs title, goal, result, completedWork, changedPaths, checks, blockers, nextState, plan. kind "decision" needs summary, approach, rationale, plan. kind "recover" needs plan and expectedToken.',
+	properties: {
+		kind: { type: "string", enum: ["work", "decision", "recover"] },
+		title: TEXT,
+		summary: TEXT,
+		goal: TEXT,
+		result: TEXT,
+		approach: LIST,
+		rationale: TEXT,
+		completedWork: LIST,
+		changedPaths: LIST,
+		checks: LIST,
+		decisions: { type: "array", items: TEXT },
+		blockers: LIST,
+		nextState: TEXT,
+		handoff: TEXT,
+		plan: PLAN,
+		topic: TOPIC,
+		expectedToken: { ...TEXT, description: 'Exact token copied from a busy-lock diagnostic; recovery separately requires explicit user confirmation and quiescence.' },
+		metrics: { type: "object", description: "Optional completion-only self-reported annotations. Omit unknown values; not authoritative evaluation evidence.", properties: {
+			activeSeconds: { type: "number", minimum: 0, description: "Focused active time in seconds." },
+			pausedSeconds: { type: "number", minimum: 0, description: "Paused, blocked, or remediation time in seconds." },
+			passSeconds: { type: "number", minimum: 0, description: "Freeze-to-clearance wall time, including blocked/remediation time; never sum concurrent agents." },
+			children: { type: "integer", minimum: 0, description: "Unique launched child sessions, including failed/timed-out seats; exclude resumes." },
+		}, additionalProperties: false },
+	},
+	required: ["kind"],
+	additionalProperties: false,
 } as const;
 export interface WorkLogDetails {
 	kind: "work" | "decision" | "recover";

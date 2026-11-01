@@ -10,7 +10,7 @@
  * - Up to three leading spaces are ignored, as Markdown renders them.
  */
 
-export type LinePattern = { readonly pattern: RegExp; readonly example: string };
+export type LinePattern = { readonly pattern: RegExp; readonly example: string; readonly label?: string };
 
 export type Section = {
 	readonly heading: string;
@@ -21,6 +21,8 @@ export type Section = {
 	readonly oneOf?: readonly string[];
 	/** Body must be exactly one line per pattern, in order. */
 	readonly lines?: readonly LinePattern[];
+	/** With `lines`: the required lines must come first, but further lines are accepted. */
+	readonly allowExtraLines?: boolean;
 	/** Body must be a list; every top-level item matches `pattern` and contains `labels` in order. */
 	readonly item?: LinePattern & { readonly labels?: readonly string[] };
 	/** With `item`: a body of exactly `None.` is also valid. */
@@ -122,12 +124,13 @@ export const SCHEMAS = {
 			{ heading: "Objective", hint: "the one outcome this agent must deliver" },
 			{
 				heading: "Context",
-				hint: "exactly four ordered, non-empty evidence lines",
+				hint: "four ordered, non-empty evidence lines; further lines are allowed",
+				allowExtraLines: true,
 				lines: [
-					{ pattern: /^- Source of truth: \S.*$/, example: "- Source of truth: <!-- fill: active plan and decision headings, or None -->" },
-					{ pattern: /^- Verified facts: \S.*$/, example: "- Verified facts: <!-- fill: directly confirmed facts and useful evidence -->" },
-					{ pattern: /^- Read first: \S.*$/, example: "- Read first: <!-- fill: smallest exact paths/ranges -->" },
-					{ pattern: /^- Open questions: \S.*$/, example: "- Open questions: <!-- fill: only questions owned by this worker -->" },
+					{ pattern: /^- Source of truth: \S.*$/, label: "Source of truth", example: "- Source of truth: <!-- fill: active plan and decision headings, or None -->" },
+					{ pattern: /^- Verified facts: \S.*$/, label: "Verified facts", example: "- Verified facts: <!-- fill: directly confirmed facts and useful evidence -->" },
+					{ pattern: /^- Read first: \S.*$/, label: "Read first", example: "- Read first: <!-- fill: smallest exact paths/ranges -->" },
+					{ pattern: /^- Open questions: \S.*$/, label: "Open questions", example: "- Open questions: <!-- fill: only questions owned by this worker -->" },
 				],
 			},
 			{ heading: "Scope", hint: "owned paths and explicit non-scope" },
@@ -222,9 +225,7 @@ export const PROTECTED: readonly { readonly path: RegExp; readonly reason: strin
 export const AGENT_OUTPUT: Readonly<Record<string, SchemaId | null>> = {
 	"code-explorer": "explorer",
 	"code-reviewer": "review",
-	"code-reviewer-haiku": "review",
 	"code-reviewer-sonnet": "review",
 	"code-reviewer-sol": "review",
-	"code-reviewer-opus": "review",
 };
 export const DEFAULT_OUTPUT: SchemaId = "worker";

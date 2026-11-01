@@ -42,7 +42,7 @@ function appendUser(session: SessionManager, text: string): string {
 it.each([
 	"implementation-engineer", "implementation-engineer-sol", "implementation-engineer-opus",
 	"test-automation-engineer", "live-verifier", "code-explorer", "mr-babysitter",
-	"code-reviewer", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-sonnet", "code-reviewer-haiku",
+	"code-reviewer", "code-reviewer-sol", "code-reviewer-sonnet",
 ])("%s explicitly exposes the schema-bound submission tool", async (role) => {
 	const source = await Bun.file(new URL(`../agents/${role}.md`, import.meta.url)).text();
 	const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1];
@@ -104,6 +104,23 @@ test("abandoning an unobserved acknowledgement clears the same-prefix submission
 	const correction = registered.turn_end({} as never) as { continue: boolean; entries: Array<{ content: string }> };
 	assert.equal(correction.continue, true);
 	assert.match(correction.entries[0].content, /structured result missing/);
+});
+
+test("reports a markdown heading inside a submitted field against that field", async () => {
+	const session = nativeSession();
+	appendUser(session, "heading assignment");
+	const registered = hooks(worker, undefined, true);
+	const context = { sessionManager: session };
+	registered.agent_start({} as never, context);
+	const proof = evidence("'bun' 'test' 'heading'");
+	const tool = registered.tools.get("submit_agent_result") as unknown as SubmitTool;
+	await assert.rejects(
+		tool.execute("submit-heading", {
+			status: "done", objective: "Assignment", currentState: "# next phase",
+			decisions: [], proofIds: [proof.id], observationIds: [], notRun: [], nextSteps: [], doNot: [],
+		}, undefined, undefined, context),
+		/currentState: expected non-empty single-line prose/,
+	);
 });
 
 test("new sessions and runtime replacement reset assignment-bound state", async () => {
@@ -667,7 +684,7 @@ test("selects schemas and does nothing outside children or for null schemas", ()
 	assert.deepEqual(hooks({}), {});
 });
 
-it.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer-haiku"])("selects the same review contract for counterpart %s", (agent) => {
+it.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol"])("selects the same review contract for counterpart %s", (agent) => {
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: agent }), "review");
 });
 
@@ -1151,7 +1168,7 @@ it("rejects unknown fields, oversized text, and foreign evidence IDs at structur
 		observationIds: [], notRun: [], nextSteps: [], doNot: [],
 	};
 	await assert.rejects(() => tool.execute("submit-1", { ...fields, invented: "field" }, undefined, undefined, context), /unknown field: invented/);
-	await assert.rejects(() => tool.execute("submit-2", { ...fields, currentState: "x".repeat(8001) }, undefined, undefined, context), /currentState: expected non-empty single-line text/);
+	await assert.rejects(() => tool.execute("submit-2", { ...fields, currentState: "x".repeat(8001) }, undefined, undefined, context), /currentState: expected non-empty single-line prose/);
 	await assert.rejects(() => tool.execute("submit-3", fields, undefined, undefined, context), /was not found in this child session/);
 });
 

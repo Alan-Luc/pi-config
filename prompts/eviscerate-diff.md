@@ -14,12 +14,12 @@ The canonical Direct/Focused/Full matrix in `tech-lead.md` owns ticket-close cov
 
 | Lane | Coverage |
 |---|---|
-| `thermonuclear-correctness-review` | Selected correctness pair, including security, integration, tests and obvious noise. |
+| `thermonuclear-correctness-review` | Selected correctness review, including security, integration, tests and obvious noise. |
 | `live-verification-success` / `live-verification-attack` | Focused combines its success and attack observations in one read-only live worker; Full uses separate fresh worker sessions and briefs. |
-| `thermonuclear-structural-review` | Risk-selected counterpart pair for a named structural risk. |
-| `deslop` | Risk-selected counterpart pair for distinct cumulative noise or missing coverage, not duplicate advisory. |
+| `thermonuclear-structural-review` | Risk-selected lane for a named structural risk. |
+| `deslop` | Risk-selected lane for distinct cumulative noise or missing coverage, not duplicate advisory. |
 
-Ordinary pair: `code-reviewer` + `code-reviewer-sonnet`. Difficult pair: `code-reviewer-sol` + `code-reviewer-opus`. Use persisted model/effort; no inferred overrides. Start a fresh selected reviewer-profile session per delta; never resume one for changed-source review. Capacity is eight live children, not a target worker count; reserve complete pairs and required live lanes. Launch every selected ready lane together.
+Default is one reviewer per selected lane: `code-reviewer`. Explicit `eviscerate-plan` or `/eviscerate-diff` keeps the counterpart pair — ordinary `code-reviewer` + `code-reviewer-sonnet`, difficult `code-reviewer-sol` + `code-reviewer-sonnet`. Use persisted model/effort; no inferred overrides. Start a fresh selected reviewer-profile session per delta; never resume one for changed-source review. Capacity is eight live children, not a target worker count; reserve pairs only where eviscerate retains them, plus required live lanes. Launch every selected ready lane together.
 
 Explicit `/eviscerate-diff` retains the requested independent coverage, never parent-only self-review. Solo mode, a missing counterpart or unavailable live prerequisite leaves coverage incomplete. When independent live workers are not selected, the parent owns required real-interface proof.
 

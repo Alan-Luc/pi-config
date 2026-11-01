@@ -45,10 +45,14 @@ test.each([
 	["blank", [...contextLines.slice(0, 2), "- Read first: ", contextLines[3]]],
 	["duplicate", [...contextLines.slice(0, 3), contextLines[2]]],
 	["reordered", [contextLines[1], contextLines[0], ...contextLines.slice(2)]],
-	["extra", [...contextLines, "- Extra: not allowed"]],
 ] as const)("brief Context rejects %s evidence packets", (_case, lines) => {
 	const brief = validBrief.replace(contextLines.join("\n"), lines.join("\n"));
 	assert.match(blocked(checkSubagentLaunch({ task: brief })), /Context|Source of truth|Verified facts|Read first|Open questions/);
+});
+
+test("brief Context accepts a further evidence line after the required four", () => {
+	const brief = validBrief.replace(contextLines.join("\n"), [...contextLines, "- Review target: worktree"].join("\n"));
+	assert.deepEqual(checkSubagentLaunch({ task: brief }), { block: false });
 });
 
 test("the rendered brief template owns the canonical evidence labels and remains unfilled", () => {
