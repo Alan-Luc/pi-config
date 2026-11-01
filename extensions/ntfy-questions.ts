@@ -2,13 +2,14 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	applyReply,
 	formatQuestion,
 	resolveTopic,
 	routeReply,
 	tagOf,
+	topicProblem,
 	type Draft,
 	type PromptPayload,
 	type PromptQuestion,
@@ -45,23 +46,27 @@ interface BlockedPayload {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** With NTFY_TOPIC set, the CLI publishes there and treats the topic argument as the message. */
+function ntfyEnv(): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	delete env.NTFY_TOPIC;
+	return env;
+}
+
 export default function (pi: ExtensionAPI): void {
 	const pending = new Map<string, Pending>();
 	let topic: string | undefined;
+	let ui: ExtensionContext["ui"] | undefined;
 
 	function currentTopic(): string | undefined {
 		if (topic === undefined) topic = resolveTopic(process.env, readSecrets());
 		return topic;
 	}
 
-	async function send(text: string): Promise<void> {
+	function publish(text: string): void {
 		const current = currentTopic();
 		if (!current) return;
-		try {
-			await pi.exec("ntfy", ["publish", current, text], { timeout: 10_000 });
-		} catch {
-			// An unreachable server must not break the questionnaire; the dialog still works.
-		}
+		spawn("ntfy", ["publish", current, text], { env: ntfyEnv(), stdio: "ignore" }).on("error", () => undefined);
 	}
 
 	function stop(toolCallId: string): void {
@@ -93,7 +98,7 @@ export default function (pi: ExtensionAPI): void {
 			[...pending.values()].map((candidate) => candidate.tag),
 		);
 		if (routed.kind === "hint") {
-			void send(`⚠️ ${routed.reason}`);
+			publish(`⚠️ ${routed.reason}`);
 			return;
 		}
 		if (pending.get(entry.toolCallId) !== entry || routed.tag !== entry.tag) return;
@@ -103,12 +108,12 @@ export default function (pi: ExtensionAPI): void {
 			case "ignore":
 				return;
 			case "hint":
-				void send(`⚠️ ${outcome.reason}`);
+				publish(`⚠️ ${outcome.reason}`);
 				return;
 			case "partial": {
 				entry.draft = outcome.draft;
 				const still = outcome.missing.map((index) => index + 1).join(", ");
-				void send(`got it — still need question ${still}`);
+				publish(`got it — still need question ${still}`);
 				return;
 			}
 			case "cancel":
@@ -124,9 +129,22 @@ export default function (pi: ExtensionAPI): void {
 		}
 	}
 
+	pi.on("session_start", async (_event, ctx) => {
+		ui = ctx.ui;
+		const configured = currentTopic();
+		if (!configured) return;
+		const problem = topicProblem(configured);
+		if (problem) ui.notify(`ntfy answers disabled: ${problem}`, "warning");
+	});
+
 	pi.events.on("rpiv:ask-user:prompt", (data: unknown) => {
 		const current = currentTopic();
 		if (!current || !isRecord(data)) return;
+		const problem = topicProblem(current);
+		if (problem) {
+			ui?.notify(`ntfy answers unavailable: ${problem}`, "warning");
+			return;
+		}
 		const payload = data as PromptPayload;
 		const toolCallId = payload.toolCallId;
 		const questions = payload.questions;
@@ -143,10 +161,11 @@ export default function (pi: ExtensionAPI): void {
 			seen: new Set(),
 		};
 		pending.set(toolCallId, entry);
-		void send(published);
+		publish(published);
 
 		// Seeds at the publish second and stays open: one idle connection, no repeat requests.
 		const child = spawn("ntfy", ["subscribe", `--since=${Math.floor(Date.now() / 1000)}`, current], {
+			env: ntfyEnv(),
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		entry.child = child;
@@ -167,7 +186,7 @@ export default function (pi: ExtensionAPI): void {
 		if (typeof verdict.toolCallId !== "string") return;
 		if (!pending.has(verdict.toolCallId)) return;
 		if (verdict.ok === true) {
-			void send("✅ answered");
+			publish("✅ answered");
 			stop(verdict.toolCallId);
 			return;
 		}
@@ -176,7 +195,7 @@ export default function (pi: ExtensionAPI): void {
 			return;
 		}
 		const reason = typeof verdict.reason === "string" ? `: ${verdict.reason}` : "";
-		void send(`⚠️ ${typeof verdict.code === "string" ? verdict.code : "refused"}${reason}`);
+		publish(`⚠️ ${typeof verdict.code === "string" ? verdict.code : "refused"}${reason}`);
 	});
 
 	pi.events.on("rpiv:ask-user:blocked", (data: unknown) => {

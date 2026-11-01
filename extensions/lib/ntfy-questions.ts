@@ -51,6 +51,15 @@ export function tagOf(toolCallId: string): string {
 	return toolCallId.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(-6);
 }
 
+/** ntfy answers a topic name over 64 characters with a bare 404, so refuse before publishing. */
+export function topicProblem(topic: string): string | undefined {
+	const name = topic.includes("/") ? topic.slice(topic.indexOf("/") + 1) : topic;
+	if (!name) return "the topic name is empty";
+	if (name.length > 64) return `the topic name is ${name.length} characters; ntfy allows 64`;
+	if (!/^[A-Za-z0-9_-]+$/.test(name)) return "the topic name has characters ntfy does not allow";
+	return undefined;
+}
+
 const letter = (index: number): string => String.fromCharCode(97 + index);
 const lettersOf = (question: PromptQuestion): string => question.options.map((_option, n) => letter(n)).join(", ");
 

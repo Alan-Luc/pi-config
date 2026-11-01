@@ -5,6 +5,7 @@ import {
 	resolveTopic,
 	routeReply,
 	tagOf,
+	topicProblem,
 	type PromptQuestion,
 } from "../extensions/lib/ntfy-questions.ts";
 
@@ -191,5 +192,17 @@ describe("applyReply", () => {
 
 	it("ignores an empty body", () => {
 		expect(applyReply({}, "  \n ", questions)).toEqual({ kind: "ignore" });
+	});
+});
+
+describe("topicProblem", () => {
+	it.each([
+		["ntfy.sh/sudoku-thirsting-outlast-moonrise-sneeze-partake-bullseye", undefined],
+		[`ntfy.sh/${"a".repeat(64)}`, undefined],
+		[`ntfy.sh/${"a".repeat(65)}`, "the topic name is 65 characters; ntfy allows 64"],
+		["ntfy.sh/bad name", "the topic name has characters ntfy does not allow"],
+		["ntfy.sh/", "the topic name is empty"],
+	])("judges %s", (topic, expected) => {
+		expect(topicProblem(topic)).toBe(expected);
 	});
 });
