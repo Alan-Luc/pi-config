@@ -64,4 +64,7 @@ Act as a picky Staff Engineer. Reuse existing patterns, and make the smallest co
 
 ## Comments
 
-- Comment only on non-obvious why, not what. Remove ticket references except follow-up TODO/stub markers. “Trim comments” means materially shorten or delete them, not paraphrase at the same length.
+- Default: no comments. Code should be self-explanatory; comments should never be added unless absolutely necessary.
+- If a comment exists, it is because it explains the why, never the what: no restating code, signature, types or control flow; no doc comments, header banners or section dividers.
+- “Absolutely necessary” means only: an external constraint invisible in this file, or a workaround whose reason cannot be derived from the code.
+- Remove ticket references except follow-up TODO/stub markers. “Trim comments” means materially shorten or delete them, not paraphrase at the same length.
