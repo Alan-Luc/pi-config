@@ -20,6 +20,7 @@
         "tests/mr-babysit.test.ts",
         "tests/mr-watch.test.ts",
         "tests/notify-user.test.ts",
+        "tests/ntfy-questions.test.ts",
         "tests/permission-policy.test.ts",
         "tests/pi-vim-autocomplete-enter.test.mjs",
         "tests/publication-authorization.test.ts",
