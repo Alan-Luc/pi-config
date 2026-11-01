@@ -67,8 +67,7 @@ export function topicProblem(topic: string): string | undefined {
 	return undefined;
 }
 
-const letter = (index: number): string => String.fromCharCode(97 + index);
-const lettersOf = (question: PromptQuestion): string => question.options.map((_option, n) => letter(n)).join(", ");
+const letter = (index: number): string => String.fromCharCode(97 + index);const lettersOf = (question: PromptQuestion): string => question.options.map((_option, n) => letter(n)).join(", ");
 
 export function formatQuestion(questions: readonly PromptQuestion[], tag?: string, only?: readonly number[]): string {
 	const chosen = questions.filter((_question, index) => !only || only.includes(index));
@@ -101,6 +100,14 @@ export function routeReply(text: string, tags: readonly string[]): RoutedReply {
 	return { kind: "hint", reason: `start the reply with one of ${tags.join(" or ")}` };
 }
 
+/**
+ * Answers may share a line when a separator is followed by another question marker, so
+ * "1. b, 2. a" is two answers while "2. a, c" stays one multi-select answer.
+ */
+function splitAnswers(text: string): string[] {
+	return text.split(/[,;]\s*(?=\d{1,2}\s*[.):]\s*\S)|\n/);
+}
+
 export function applyReply(draft: Draft, body: string, questions: readonly PromptQuestion[]): ReplyOutcome {
 	const text = body.trim();
 	if (!text) return { kind: "ignore" };
@@ -122,7 +129,7 @@ export function applyReply(draft: Draft, body: string, questions: readonly Promp
 
 	const next: Record<number, DraftEntry> = { ...draft };
 	let changed = false;
-	for (const rawLine of text.split("\n")) {
+	for (const rawLine of splitAnswers(text)) {
 		const line = rawLine.trim();
 		if (!line) continue;
 		const match = /^(\d{1,2})\s*[.):-]?\s*(.+)$/.exec(line);
@@ -153,8 +160,7 @@ export function applyReply(draft: Draft, body: string, questions: readonly Promp
 	};
 }
 
-function interpret(value: string, question: PromptQuestion, shown: string): DraftEntry | { reason: string } {
-	const squashed = value.replace(/[\s,]+/g, "").toLowerCase();
+function interpret(value: string, question: PromptQuestion, shown: string): DraftEntry | { reason: string } {	const squashed = value.replace(/[\s,]+/g, "").toLowerCase();
 	if (/^[a-z]+$/.test(squashed)) {
 		const indexes = [...new Set(squashed.split(""))].map((character) => character.charCodeAt(0) - 97);
 		if (indexes.every((index) => index < question.options.length)) {

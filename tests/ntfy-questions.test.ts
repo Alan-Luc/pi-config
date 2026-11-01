@@ -165,6 +165,27 @@ describe("applyReply", () => {
 		expect(applyReply({}, "b", questions)).toEqual({ kind: "hint", reason: '"b" is not shaped like "1. a"' });
 	});
 
+	it.each([
+		["1. b, 2. a", "comma"],
+		["1. b; 2. a", "semicolon"],
+	])("splits answers that share a line (%s, %s)", (body) => {
+		expect(applyReply({}, body, questions)).toEqual({
+			kind: "answer",
+			answers: [
+				{ questionIndex: 0, optionIndexes: [1] },
+				{ questionIndex: 1, optionIndexes: [0] },
+			],
+		});
+	});
+
+	it("keeps a multi-select list together on one line", () => {
+		expect(applyReply({}, "2. a, c", questions)).toEqual({
+			kind: "partial",
+			draft: { 1: { optionIndexes: [0, 2] } },
+			missing: [0],
+		});
+	});
+
 	it("accumulates answers across separate messages", () => {
 		const first = applyReply({}, "1. b", questions);
 		expect(first).toEqual({ kind: "partial", draft: { 0: { optionIndexes: [1] } }, missing: [1] });
