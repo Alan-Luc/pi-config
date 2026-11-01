@@ -151,6 +151,21 @@ export default function (pi: ExtensionAPI): void {
 		}
 	}
 
+	pi.registerCommand("ntfy-status", {
+		description: "Show whether answering ask_user_question from ntfy is active",
+		handler: async (_args, ctx) => {
+			const configured = currentTopic();
+			const problem = configured ? topicProblem(configured) : "no NTFY_QUESTION_TOPIC configured";
+			const open = pending.size;
+			ctx.ui.notify(
+				problem
+					? `ntfy answers: off — ${problem}`
+					: `ntfy answers: on · ${open} question${open === 1 ? "" : "s"} waiting`,
+				problem ? "warning" : "info",
+			);
+		},
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
 		ui = ctx.ui;
 		const configured = currentTopic();
