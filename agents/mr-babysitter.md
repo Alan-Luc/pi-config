@@ -4,9 +4,9 @@ description: Explicitly requested, bounded, read-only GitLab MR observation; nev
 mode: background
 async: true
 auto-exit: true
-model: openai-codex/gpt-6-luna
+model: deepseek/deepseek-flash
 allow-model-override: true
-thinking: medium
+thinking: low
 flags: --no-mcp
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 skills: mr-babysit

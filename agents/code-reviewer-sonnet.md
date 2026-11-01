@@ -4,7 +4,7 @@ description: Focused Sonnet review counterpart; use only for a risk-selected sea
 mode: background
 async: true
 auto-exit: true
-model: anthropic/claude-sonnet-5-5
+model: deepseek/deepseek-flash
 allow-model-override: true
 thinking: high
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result

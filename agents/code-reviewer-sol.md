@@ -4,7 +4,7 @@ description: Sol review profile for difficult selected risks, paired with code-r
 mode: background
 async: true
 auto-exit: true
-model: openai-codex/gpt-6.1-sol
+model: deepseek/deepseek-v4-pro
 allow-model-override: true
 thinking: high
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result

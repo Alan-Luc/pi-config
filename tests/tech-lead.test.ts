@@ -314,12 +314,11 @@ test("the roster includes the canonical live verifier and explicit MR observer w
 	}
 	assert.ok(globalInstructions.includes("Not run: <reason>"));
 	assert.match(agents["code-explorer"], /^thinking: low$/m);
-	assert.match(agents["code-reviewer"], /^thinking: high$/m);
-	assert.match(agents["implementation-engineer"], /^thinking: medium$/m);
-	assert.match(agents["test-automation-engineer"], /^thinking: high$/m);
+	assert.match(agents["code-reviewer"], /^thinking: low$/m);
+	assert.match(agents["implementation-engineer"], /^thinking: low$/m);
+	assert.match(agents["test-automation-engineer"], /^thinking: low$/m);
 	assert.deepEqual(settings.modelThinkingLevels, {
-		"openai-codex/gpt-6.1-sol": "medium",
-		"openai-codex/gpt-6-luna": "high",
+		"deepseek/deepseek-flash": "low",
 	});
 	for (const name of ["code-explorer", "code-reviewer"]) {
 		assert.doesNotMatch(agents[name], /^tools: .*\bTask(?:Create|List|Get|Update)\b/m);
@@ -336,16 +335,16 @@ test("the roster includes the canonical live verifier and explicit MR observer w
 });
 
 it.each([
-	{ name: "code-explorer", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "code-explorer" },
-	{ name: "mr-babysitter", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "mr-babysitter" },
-	{ name: "implementation-engineer", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "implementation-engineer" },
-	{ name: "test-automation-engineer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "test-automation-engineer" },
-	{ name: "live-verifier", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "live-verifier" },
-	{ name: "code-reviewer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "code-reviewer" },
-	{ name: "code-reviewer-sonnet", model: "anthropic/claude-sonnet-5-5", thinking: "high", canonical: "code-reviewer" },
-	{ name: "code-reviewer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "code-reviewer" },
-	{ name: "implementation-engineer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "implementation-engineer" },
-	{ name: "implementation-engineer-opus", model: "anthropic/claude-opus-5-5", thinking: "high", canonical: "implementation-engineer" },
+	{ name: "code-explorer", model: "deepseek/deepseek-flash", thinking: "low", canonical: "code-explorer" },
+	{ name: "mr-babysitter", model: "deepseek/deepseek-flash", thinking: "low", canonical: "mr-babysitter" },
+	{ name: "implementation-engineer", model: "deepseek/deepseek-flash", thinking: "low", canonical: "implementation-engineer" },
+	{ name: "test-automation-engineer", model: "deepseek/deepseek-flash", thinking: "low", canonical: "test-automation-engineer" },
+	{ name: "live-verifier", model: "deepseek/deepseek-flash", thinking: "low", canonical: "live-verifier" },
+	{ name: "code-reviewer", model: "deepseek/deepseek-flash", thinking: "low", canonical: "code-reviewer" },
+	{ name: "code-reviewer-sonnet", model: "deepseek/deepseek-flash", thinking: "high", canonical: "code-reviewer" },
+	{ name: "code-reviewer-sol", model: "deepseek/deepseek-v4-pro", thinking: "high", canonical: "code-reviewer" },
+	{ name: "implementation-engineer-sol", model: "deepseek/deepseek-v4-pro", thinking: "high", canonical: "implementation-engineer" },
+	{ name: "implementation-engineer-opus", model: "deepseek/deepseek-v4-pro", thinking: "high", canonical: "implementation-engineer" },
 ])("the installed loader resolves $name without inferred overrides", ({ name, model, thinking, canonical }) => {
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = new URL("../", import.meta.url).pathname;
@@ -376,7 +375,7 @@ it.each([
 
 test("live verifier is a distinct fixed-low read-only role and test writing stays with its owner", () => {
 	const verifier = agents["live-verifier"];
-	assert.match(verifier, /^model: openai-codex\/gpt-6-luna$/m);
+	assert.match(verifier, /^model: deepseek\/deepseek-flash$/m);
 	assert.match(verifier, /^thinking: low$/m);
 	assert.match(verifier, /^allow-model-override: true$/m);
 	assert.match(verifier, /^tools: read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result$/m);
@@ -394,7 +393,7 @@ test("live verifier is a distinct fixed-low read-only role and test writing stay
 	]);
 	assert.doesNotMatch(verifier, /(?:^|,)\s*(?:edit|write|subagent|TaskCreate|TaskUpdate)(?:,|$)/m);
 	assert.doesNotMatch(verifier, /^thinking-overrides:/m);
-	assert.match(agents["test-automation-engineer"], /^thinking: high$/m);
+	assert.match(agents["test-automation-engineer"], /^thinking: low$/m);
 	assert.match(agents["test-automation-engineer"], /Add the smallest explicit, deterministic cases/);
 	assert.doesNotMatch(agents["test-automation-engineer"], /For the full-review live-verification lane/);
 });
@@ -403,7 +402,7 @@ test("implementation and review roles preserve material behavior", () => {
 	includesAll(globalInstructions, ["trust-boundary validation", "accessibility", "strict types"]);
 	includesAll(agents["implementation-engineer"], ["focused happy and meaningful failure-path tests", "verification_evidence"]);
 	includesAll(agents["code-reviewer"], ["Patch artifact:", "Review paths:", "Use at most 12 combined", "wider risk", "P0", "P1", "P2", "Never edit"]);
-	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-6-luna$/m);
+	assert.match(agents["code-reviewer"], /^model: deepseek\/deepseek-flash$/m);
 	assert.ok(reviewPrompt.includes("`Review range: HEAD` for current worktree changes"));
 	assert.ok(reviewPrompt.includes("`Review range: <base>...<head>` for a committed branch"));
 	assert.ok(reviewPrompt.includes("review remediation deltas plus affected contracts, and repeat autonomously"));

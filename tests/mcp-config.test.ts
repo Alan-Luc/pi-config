@@ -17,7 +17,7 @@ function fixture() {
 	writeFileSync(join(root, "settings.json"), "{}\n");
 	writeFileSync(join(root, "auth.json"), "fixture-auth-must-not-change\n");
 	writeFileSync(join(root, "mcp.json"), JSON.stringify({ unrelated: true, mcpServers: { existing: { url: "https://fixture.invalid/mcp" } } }));
-	writeFileSync(join(root, "agents/mr-babysitter.md"), template.replace("model: openai-codex/gpt-6-luna", "model: fixture/preserved-model").replace("deny-tools: mcp,", "deny-tools: fixture_blocked,mcp,"));
+	writeFileSync(join(root, "agents/mr-babysitter.md"), template.replace(/^model: .*$/m, "model: fixture/preserved-model").replace("deny-tools: mcp,", "deny-tools: fixture_blocked,mcp,"));
 	chmodSync(root, 0o750);
 	return root;
 }

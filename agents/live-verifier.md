@@ -4,7 +4,7 @@ description: Exercise an approved changed interface against requirement-derived 
 mode: background
 async: true
 auto-exit: true
-model: openai-codex/gpt-6-luna
+model: deepseek/deepseek-flash
 allow-model-override: true
 thinking: low
 tools: read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result

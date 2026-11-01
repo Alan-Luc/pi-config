@@ -4,7 +4,7 @@ description: Sol implementation-role profile for consequential design proposals;
 mode: background
 async: true
 auto-exit: true
-model: openai-codex/gpt-6.1-sol
+model: deepseek/deepseek-v4-pro
 allow-model-override: true
 thinking: high
 tools: read,bash,edit,write,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate,submit_agent_result

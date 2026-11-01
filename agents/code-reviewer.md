@@ -4,9 +4,9 @@ description: Review an exact bounded plan or patch for material correctness, sec
 mode: background
 async: true
 auto-exit: true
-model: openai-codex/gpt-6-luna
+model: deepseek/deepseek-flash
 allow-model-override: true
-thinking: high
+thinking: low
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 flags: --no-mcp
 deny-env: GITLAB_PERSONAL_ACCESS_TOKEN

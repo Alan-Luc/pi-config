@@ -4,7 +4,7 @@ description: Opus implementation-role profile for consequential design proposals
 mode: background
 async: true
 auto-exit: true
-model: anthropic/claude-opus-5-5
+model: deepseek/deepseek-v4-pro
 allow-model-override: true
 thinking: high
 tools: read,bash,edit,write,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,TaskCreate,TaskList,TaskGet,TaskUpdate,submit_agent_result

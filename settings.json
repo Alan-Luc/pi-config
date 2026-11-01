@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "1.4.0",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6.1-sol",
+  "defaultProvider": "deepseek",
+  "defaultModel": "deepseek-flash",
   "packages": [
     "npm:@dietrichgebert/ponytail",
     "npm:pi-web-access",
@@ -24,8 +24,7 @@
   "fullscreenCopyOnSelect": true,
   "tuiMode": "fullscreen",
   "modelThinkingLevels": {
-    "openai-codex/gpt-6.1-sol": "medium",
-    "openai-codex/gpt-6-luna": "high"
+    "deepseek/deepseek-flash": "low"
   },
   "hideThinkingBlock": true,
   "showHardwareCursor": true
