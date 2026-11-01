@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
 	applyReply,
+	CONTROL_PREFIX,
 	formatQuestion,
+	isControlMessage,
 	resolveTopic,
 	routeReply,
 	tagOf,
@@ -192,6 +194,50 @@ describe("applyReply", () => {
 
 	it("ignores an empty body", () => {
 		expect(applyReply({}, "  \n ", questions)).toEqual({ kind: "ignore" });
+	});
+});
+
+describe("re-prompt formatting", () => {
+	it("keeps original numbering for a subset and still lists the options", () => {
+		const text = formatQuestion(questions, undefined, [1]);
+		expect(text).toContain("2. Checks: Which checks?");
+		expect(text).not.toContain("1. Storage");
+		expect(text).toContain("   a. unit — fast");
+		expect(text).toContain("Pi asks 1 question");
+	});
+});
+
+describe("own control messages", () => {
+	it.each([
+		[`${CONTROL_PREFIX}✅ answered`, true],
+		[`${CONTROL_PREFIX}⚠️ question 1 has no "e"`, true],
+		["1. a", false],
+		["my own freeform answer", false],
+	])("classifies %s", (body, expected) => {
+		expect(isControlMessage(body)).toBe(expected);
+	});
+});
+
+describe("single-question bare replies", () => {
+	const one = [questions[0]!];
+
+	it("takes bare letters as the option", () => {
+		expect(applyReply({}, "b", one)).toEqual({ kind: "answer", answers: [{ questionIndex: 0, optionIndexes: [1] }] });
+	});
+
+	it("takes bare words as custom text", () => {
+		expect(applyReply({}, "my instant Vietnamese coffee", one)).toEqual({
+			kind: "answer",
+			answers: [{ questionIndex: 0, text: "my instant Vietnamese coffee" }],
+		});
+	});
+
+	it("still refuses a lone letter that is not an option", () => {
+		expect(applyReply({}, "1. e", one)).toMatchObject({ kind: "hint" });
+	});
+
+	it("keeps requiring numbering when several questions are open", () => {
+		expect(applyReply({}, "hello there", questions)).toMatchObject({ kind: "hint" });
 	});
 });
 

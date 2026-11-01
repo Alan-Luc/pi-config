@@ -35,6 +35,13 @@ export type RoutedReply = { kind: "hint"; reason: string } | { kind: "routed"; t
 
 const TOPIC_KEY = "NTFY_QUESTION_TOPIC";
 
+/** Control replies are ours; reading them back would answer our own hints forever. */
+export const CONTROL_PREFIX = "🤖 ";
+
+export function isControlMessage(body: string): boolean {
+	return body.startsWith(CONTROL_PREFIX);
+}
+
 /** Env first: pi may be started without a login shell, so the secrets file is the fallback. */
 export function resolveTopic(env: Record<string, string | undefined>, secretsText: string): string | undefined {
 	const fromEnv = env[TOPIC_KEY]?.trim();
@@ -63,12 +70,14 @@ export function topicProblem(topic: string): string | undefined {
 const letter = (index: number): string => String.fromCharCode(97 + index);
 const lettersOf = (question: PromptQuestion): string => question.options.map((_option, n) => letter(n)).join(", ");
 
-export function formatQuestion(questions: readonly PromptQuestion[], tag?: string): string {
-	const count = questions.length;
+export function formatQuestion(questions: readonly PromptQuestion[], tag?: string, only?: readonly number[]): string {
+	const chosen = questions.filter((_question, index) => !only || only.includes(index));
+	const count = chosen.length;
 	const total = `${count} question${count === 1 ? "" : "s"}`;
 	const address = tag ? ` · start with ${tag}` : "";
 	const lines = [`Pi asks ${total} — reply "1. a"${address}`];
 	questions.forEach((question, index) => {
+		if (only && !only.includes(index)) return;
 		const pick = question.multiSelect ? `pick several, e.g. "${index + 1}. a, c"` : "pick one";
 		lines.push("", `${index + 1}. ${question.header}: ${question.question} — ${pick}`);
 		question.options.forEach((option, n) => lines.push(`   ${letter(n)}. ${option.label} — ${option.description}`));
@@ -96,6 +105,20 @@ export function applyReply(draft: Draft, body: string, questions: readonly Promp
 	const text = body.trim();
 	if (!text) return { kind: "ignore" };
 	if (/^(x|cancel)$/i.test(text)) return { kind: "cancel" };
+
+	// A one-question questionnaire takes a bare reply: typing "2" or "my own words" is enough.
+	if (questions.length === 1 && !/^\s*\d{1,2}\s*[.):-]?\s/m.test(text)) {
+		const entry = interpret(text, questions[0]!, "1");
+		if ("reason" in entry) return { kind: "hint", reason: entry.reason };
+		return {
+			kind: "answer",
+			answers: [
+				"text" in entry
+					? { questionIndex: 0, text: entry.text }
+					: { questionIndex: 0, optionIndexes: entry.optionIndexes },
+			],
+		};
+	}
 
 	const next: Record<number, DraftEntry> = { ...draft };
 	let changed = false;

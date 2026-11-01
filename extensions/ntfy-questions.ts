@@ -5,7 +5,9 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	applyReply,
+	CONTROL_PREFIX,
 	formatQuestion,
+	isControlMessage,
 	resolveTopic,
 	routeReply,
 	tagOf,
@@ -19,9 +21,12 @@ interface Pending {
 	toolCallId: string;
 	questions: readonly PromptQuestion[];
 	tag: string;
+	tagShown: string | undefined;
 	draft: Draft;
 	published: string;
 	seen: Set<string>;
+	lastHint: string | undefined;
+	lastHintAt: number;
 	child?: ReturnType<typeof spawn>;
 }
 
@@ -69,6 +74,23 @@ export default function (pi: ExtensionAPI): void {
 		spawn("ntfy", ["publish", current, text], { env: ntfyEnv(), stdio: "ignore" }).on("error", () => undefined);
 	}
 
+	function publishControl(text: string): void {
+		publish(`${CONTROL_PREFIX}${text}`);
+	}
+
+	/**
+	 * Rejections re-send the questions: on a phone the newest message is the only one in view, and
+	 * the options must not have to be found by scrolling back.
+	 */
+	function reprompt(entry: Pending, reason: string, only?: readonly number[]): void {
+		const now = Date.now();
+		const key = `${reason}|${only?.join(",") ?? ""}`;
+		if (entry.lastHint === key && now - entry.lastHintAt < 10_000) return;
+		entry.lastHint = key;
+		entry.lastHintAt = now;
+		publishControl(`⚠️ ${reason}\n\n${formatQuestion(entry.questions, entry.tagShown, only)}`);
+	}
+
 	function stop(toolCallId: string): void {
 		const entry = pending.get(toolCallId);
 		if (!entry) return;
@@ -89,7 +111,7 @@ export default function (pi: ExtensionAPI): void {
 		if (message.event !== "message") return;
 		const id = typeof message.id === "string" ? message.id : undefined;
 		const body = typeof message.message === "string" ? message.message : "";
-		if (!body || body === entry.published) return;
+		if (!body || body === entry.published || isControlMessage(body)) return;
 		if (id !== undefined && entry.seen.has(id)) return;
 		if (id !== undefined) entry.seen.add(id);
 
@@ -98,7 +120,7 @@ export default function (pi: ExtensionAPI): void {
 			[...pending.values()].map((candidate) => candidate.tag),
 		);
 		if (routed.kind === "hint") {
-			publish(`⚠️ ${routed.reason}`);
+			reprompt(entry, routed.reason);
 			return;
 		}
 		if (pending.get(entry.toolCallId) !== entry || routed.tag !== entry.tag) return;
@@ -108,12 +130,12 @@ export default function (pi: ExtensionAPI): void {
 			case "ignore":
 				return;
 			case "hint":
-				publish(`⚠️ ${outcome.reason}`);
+				reprompt(entry, outcome.reason);
 				return;
 			case "partial": {
 				entry.draft = outcome.draft;
 				const still = outcome.missing.map((index) => index + 1).join(", ");
-				publish(`got it — still need question ${still}`);
+				reprompt(entry, `still need question ${still}`, outcome.missing);
 				return;
 			}
 			case "cancel":
@@ -151,14 +173,18 @@ export default function (pi: ExtensionAPI): void {
 		if (!toolCallId || !questions?.length) return;
 
 		stop(toolCallId);
-		const published = formatQuestion(questions, pending.size > 0 ? tagOf(toolCallId) : undefined);
+		const tagShown = pending.size > 0 ? tagOf(toolCallId) : undefined;
+		const published = formatQuestion(questions, tagShown);
 		const entry: Pending = {
 			toolCallId,
 			questions,
 			tag: tagOf(toolCallId),
+			tagShown,
 			draft: {},
 			published,
 			seen: new Set(),
+			lastHint: undefined,
+			lastHintAt: 0,
 		};
 		pending.set(toolCallId, entry);
 		publish(published);
@@ -184,9 +210,10 @@ export default function (pi: ExtensionAPI): void {
 		if (!isRecord(data)) return;
 		const verdict = data as AnswerVerdict;
 		if (typeof verdict.toolCallId !== "string") return;
-		if (!pending.has(verdict.toolCallId)) return;
+		const entry = pending.get(verdict.toolCallId);
+		if (!entry) return;
 		if (verdict.ok === true) {
-			publish("✅ answered");
+			publishControl("✅ answered");
 			stop(verdict.toolCallId);
 			return;
 		}
@@ -194,8 +221,9 @@ export default function (pi: ExtensionAPI): void {
 			stop(verdict.toolCallId);
 			return;
 		}
+		const code = typeof verdict.code === "string" ? verdict.code : "refused";
 		const reason = typeof verdict.reason === "string" ? `: ${verdict.reason}` : "";
-		publish(`⚠️ ${typeof verdict.code === "string" ? verdict.code : "refused"}${reason}`);
+		reprompt(entry, `${code}${reason}`);
 	});
 
 	pi.events.on("rpiv:ask-user:blocked", (data: unknown) => {
