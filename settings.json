@@ -5,19 +5,21 @@
   "defaultTools": ["+codemode"],
   "packages": [
     "npm:@dietrichgebert/ponytail",
-    "npm:pi-web-access",
     "npm:@ff-labs/pi-fff",
-    "npm:@tryinget/pi-telemetry",
     "npm:@juicesharp/rpiv-ask-user-question",
+    "npm:@tryinget/pi-telemetry",
+    "npm:pi-btw",
+    "npm:pi-web-access",
+
     "git:github.com/Alan-Luc/coordinate",
-    "git:github.com/Alan-Luc/pi-subagents",
-    "git:github.com/Alan-Luc/pi-permission-system",
+    "git:github.com/Alan-Luc/pi-background-tasks@main",
     "git:github.com/Alan-Luc/pi-cc-extensions",
-    "git:github.com/Alan-Luc/pi-tasks",
-    "git:github.com/Alan-Luc/pi-vim",
     "git:github.com/alan-luc/pi-inspect-change@main",
     "git:github.com/Alan-Luc/pi-inspect-context@main",
-    "git:github.com/Alan-Luc/pi-background-tasks@main"
+    "git:github.com/Alan-Luc/pi-permission-system",
+    "git:github.com/Alan-Luc/pi-subagents",
+    "git:github.com/Alan-Luc/pi-tasks",
+    "git:github.com/Alan-Luc/pi-vim"
   ],
   "quietStartup": true,
   "steeringMode": "one-at-a-time",
@@ -29,5 +31,8 @@
     "openai-codex/gpt-6-luna": "high"
   },
   "hideThinkingBlock": true,
-  "showHardwareCursor": true
+  "showHardwareCursor": true,
+  "extensions": [
+    "/opt/draios/etc/pi-extension.ts"
+  ]
 }
