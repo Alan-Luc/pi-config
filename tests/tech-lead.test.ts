@@ -200,10 +200,15 @@ test("one recipe skill owns card selection and six checkable cards without a sec
 		"Bug fix", "Feature", "Refactor", "Investigation", "Review", "Harness change",
 	]);
 	for (const card of recipeCards.split(/^## /m).slice(1)) {
-		assert.match(card, /^\d+\. /m, "each card has copyable steps");
-		assert.match(card, /\*\*Done:\*\*/, "each card ends in a checkable result");
+		const steps = card.split("\n").filter((line) => /^\d+\. /.test(line));
+		assert.ok(steps.length > 0, "each card has copyable steps");
+		for (const [index, step] of steps.entries()) {
+			assert.ok(step.startsWith(`${index + 1}. `), "steps use consecutive numbers");
+			assert.match(step, /^\d+\. .+\. ✓ .+$/, "each step has an action and an observable check");
+		}
+		assert.match(card, /\*\*Done means:\*\* .+/, "each card ends in a checkable result");
 	}
-	includesAll(recipeCards, ["assertion that fails for the intended reason", "passing tests rather than inventing", "Diagnose before proposing a patch", "prompts/spike.md", "prompts/eviscerate-diff.md", "plausible broken condition", "representative safe rerun or interruption"]);
+	includesAll(recipeCards, ["assertion fails for the intended reason", "Tests pass before the refactor; no failing test is invented", "Diagnose before proposing a patch", "prompts/spike.md", "prompts/eviscerate-diff.md", "plausible broken condition", "representative safe rerun or interruption"]);
 	for (const path of ["skills/task-recipe/SKILL.md", "skills/task-recipe/references/recipes.md"]) {
 		const file = new URL(`../${path}`, import.meta.url);
 		for (const match of readFileSync(file, "utf8").matchAll(/\]\(([^)]+)\)/g)) {
