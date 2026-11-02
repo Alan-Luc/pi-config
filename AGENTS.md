@@ -1,8 +1,8 @@
 # Development Guidelines
 
-Maintaining these rules: when an agent misbehaves, first find and fix the instruction that caused it. Add a rule only when none did; cite the ticket it would have changed, and stay within budget by cutting another. Ponytail owns deletion, reuse, YAGNI, and smallest-complete-change decisions; do not duplicate them.
+Fix instructions that cause agent misbehavior. Otherwise, cite the affected ticket when adding rules; cut another rule to stay within budget. Ponytail owns deletion, reuse, YAGNI, and smallest-complete-change decisions.
 
-Act as a picky Staff Engineer. Reuse existing patterns, and make the smallest complete change. Stop after three failed attempts to reassess; if two fixes on the same premise fail the same gate, test the premise before a third.
+Reuse patterns; make the smallest complete change. Reassess after three failed attempts. Test a premise before a third fix when two fixes fail the same gate.
 
 ## Hard lines
 
@@ -14,57 +14,63 @@ Act as a picky Staff Engineer. Reuse existing patterns, and make the smallest co
 
 ## Authorization and Git
 
-- The parent may create coherent passing local commits during implementation.
-- Commit each coherent, passing intent-sized slice when ready; keep behavior and tests together and experiment/model configuration separate. Use one terse imperative subject, with no ticket, body, or co-author trailer. Commit only passing checkpoints.
-- Keep experiments on `benchmark/<run-id>`; promote only the approved final diff as a fresh, clean commit.
-- After the final task commit, inspect the exact base-to-HEAD patch for unintended changes; do not independently rereview an unchanged patch.
+- The parent may commit during implementation. Commit each coherent, passing intent-sized slice when ready; keep behavior and tests together, experiment/model configuration separate. Use one terse imperative subject without ticket, body, or co-author trailer.
+- Keep experiments on `benchmark/<run-id>`; promote only approved final diffs as fresh, clean commits.
+- After the final commit, inspect the exact base-to-HEAD patch for unintended changes; do not independently rereview unchanged patches.
 
 ## Communication
 
-- Use BLUF.
-- Before extended reasoning or non-trivial investigation, tools, or delegation, send a 1–3 sentence preflight: objective, immediate next step, and completion evidence, before working through the solution.
-- Break prolonged analysis with a concise progress checkpoint before continuing: what you learned, what you are trying next, and any blocker or decision needed. Alan can interrupt at any time; questions do not cancel approved work. Honor explicit pause/stop requests.
+- Use BLUF. Apply the writing rules below to all agent communication.
+- Before non-trivial work, send a 1–3 sentence preflight: objective, next step, and completion evidence.
+- During prolonged analysis, report findings, next steps, and blockers. Questions leave approved work active. Honor pause/stop requests.
 - Label artifact links with their repo-relative paths: Plan, Work log, Handoff, Decision, or Report.
-- Quiz Alan only when explicitly asked: one Socratic or evidence-linked Five Whys question per turn.
-- For a requested walkthrough, explain each change with an example before editing, then wait for readiness.
-- On pushback, restate Alan's position and ask what outcome should change before reversing. Surface conflicts with recorded decisions rather than silently changing them.
-- Before reviewer-requested defense in depth, identify an input that bypasses the existing check. If the proposal needs `as any`, retain the type-level gate.
+- Quiz only on request: one Socratic or evidence-linked Five Whys question per turn.
+- For requested walkthroughs, explain changes with examples before editing; wait for readiness.
+- On pushback, restate Alan's position; ask which outcome should change before reversing. Surface recorded-decision conflicts.
+- Before reviewer-requested defense in depth, identify an existing-check bypass. Retain type-level gates when proposals need `as any`.
+
+### Writing rules
+
+- Use ASD-STE100 Simplified Technical English: approved words/meanings where known, consistent technical terms, direct verbs, active voice, explicit actors/actions/objects. Explain necessary terms; omit idioms, figurative language, ambiguity, and unnecessary words. Claim formal compliance only after checking the standard and dictionary.
+- Use one topic per paragraph. Instructions: imperative, one action per step, ≤20 words/sentence. Descriptions: ≤25 words/sentence. Exceed limits when shortening loses meaning.
+- Preserve exact code, commands, paths, identifiers, quotes, required headings, and schemas; simplify explanations only. Preserve requirement strength, uncertainty, conditions, exceptions, risks, and verification evidence. Add no unsupported facts, causes, or guarantees.
+- Before sending, check lengths, terms, actors/actions; distinguish expected/observed results; state missing checks and unresolved questions.
+- Briefs must include these rules or require reading this file’s Writing rules section through an exact readable path. Require them for replies/subsequent delegation regardless of assumed prior loading.
 
 ## Delivery
 
-- Preflight the required runtime, command or script, and relevant network, authentication, database, or external-service identity before long work.
-- For ticket-shaped, resumed, or related work, reuse the governing plan and relevant dated logs. First map ownership, callers, contracts, risks, and checks; stop reconnaissance once implementation is safe.
+- Before long work, check runtime, commands, network, authentication, database, and service identities.
+- For ticket-shaped, resumed, or related work, reuse governing plans and dated logs. Map ownership, callers, contracts, risks, and checks; stop reconnaissance when implementation is safe.
 - Track meaningful multi-step work with live tasks; plans are the cross-session contract.
-- For behavior changes, use `live-verification`; use `build-live-verification` when reusable tooling is needed. Run relevant live checks alongside tests in parallel when independent; sequence real prerequisites or shared mutable state. Require both results before claiming verified completion.
-- Run reportable checks via `verification_evidence` with exact argv, repo-relative cwd, and timeout; default to background `start`/`collect`. Use synchronous `run` only when the service is unavailable, explicitly requested, or needed for lifecycle or correctness. Report unavailable checks as `Not run: <reason>`; claim only verified results.
+- For behavior changes, use `live-verification`; use `build-live-verification` for needed reusable tooling. Parallelize independent live checks and tests; sequence prerequisites/shared mutable state. Require both results before claiming verified completion.
+- Run reportable checks through `verification_evidence`: exact argv, repo-relative cwd, timeout; default background `start`/`collect`. Synchronous `run` requires service unavailability, explicit request, or lifecycle/correctness need. Report unavailable checks as `Not run: <reason>`; claim only verified results.
 - Dogfood purpose-built tools using `extensions/extension-dogfooding.md`; use `{}` for uncommitted `inspect_change`, explicit `base`/`head` for committed work.
-- Verify claims on the same surface, including persisted effects; unit tests or screenshots alone do not prove integration. Use local/test identities and owned resources. Missing prerequisites block claims. Follow `live-verification` for startup, observation, and cleanup.
+- Verify claims on the same surface, including persistence; unit tests/screenshots alone cannot prove integration. Use local/test identities and owned resources. Missing prerequisites block claims. Follow `live-verification` for startup, observation, cleanup.
 - The [guardrails threat model](extensions/guardrails/README.md) owns the supported command surface and out-of-model boundary; reviewers explicitly dismiss only out-of-model inputs with that reason.
 
 ## Web Search
 
-- Use Kagi MCP for web search. Start with a specific query and few results; reuse them and broaden only if needed. Searches are billed.
+- Use billed Kagi MCP searches: specific queries, few results; reuse before broadening.
 
 ## Implementation
 
-- Follow repository build, test, style, and architecture conventions. Preserve existing behavior outside the brief, trust-boundary validation, useful errors, accessibility, semantic HTML, established state/styling patterns, strict types, and error handling that prevents data loss. Reject `any`, unjustified casts, disabled tests, swallowed errors, and dead or debug code.
+- Follow repository conventions. Preserve out-of-scope behavior, trust-boundary validation, useful errors, accessibility, semantic HTML, state/styling patterns, strict types, and data-loss protection. Reject `any`, unjustified casts, disabled tests, swallowed errors, and dead/debug code.
 - Prove pivotal outside-diff assumptions in existing acceptance or log evidence. Repeated casts, always-present optionals, or special cases warrant design inspection, not regex deletion.
 - Model valid states and transitions; distinguish semantic identifiers. Parse external input at its boundary and derive authoritative schema types, then use validated models internally without redundant guards.
 - Use purpose-first names: action verbs for operations and precise nouns for values, types, and files. Avoid vague `data`, `utils`, `manager`, `handler`, or `process` unless it is the exact domain term. Do not compensate with comments.
-- Use named fields for heterogeneous business data rather than magic indexes or parallel arrays. Preserve indexes when order is the external contract, then convert once. Text files end with a newline.
+- Use named fields instead of magic indexes or parallel arrays. Preserve indexes for externally required order, then convert once. End text files with a newline.
 - When overlap or a real dependency requires sequencing, complete one narrow increment, run its focused check, inspect it, then continue.
-- Before production behavior edits, establish requirement-derived expectations and an intended assertion failure; use red/green/refactor. Mechanical/docs edits use direct checks. For refactors, characterize existing behavior with passing tests rather than manufacturing a red.
-- If automated TDD is genuinely impractical, establish the closest executable acceptance check before editing and disclose the missing red/green evidence. This is not a size or testing-cost exemption.
-- Tests protect observable contracts and failure paths: a plausible violation should fail, while an internal refactor should pass. Reject tautological fixture/mock-only assertions, expectations computed by the implementation, and setup errors mistaken for red. Do not weaken expectations to fit incorrect code.
+- Before production behavior edits, establish requirement-derived expectations and an intended assertion failure: red/green/refactor. Mechanical/docs: direct checks. Refactors: characterize existing behavior with passing tests, not manufactured failures.
+- If automated TDD is genuinely impractical, establish the closest executable acceptance check before editing; disclose missing red/green evidence. Size/testing cost grants no exemption.
+- Test observable contracts and failure paths: plausible violations fail; internal refactors pass. Reject tautological fixture/mock-only assertions, implementation-computed expectations, and setup errors mistaken for red. Do not weaken expectations for incorrect code.
 
 ## Tests
 
-- Run the narrowest relevant check while implementing; reserve broad suites for final integration. Rerun an unchanged expensive suite only when a change reaches it. Use `it.each([...])` to make scenarios visible.
+- Implement with the narrowest relevant checks; reserve broad suites for final integration. Rerun expensive suites only for changes reaching them. Use `it.each([...])` for visible scenarios.
 - Use “malicious,” not “nasty,” for attacker-controlled inputs.
 
 ## Comments
 
-- Default: no comments. Code should be self-explanatory; comments should never be added unless absolutely necessary.
-- If a comment exists, it is because it explains the why, never the what: no restating code, signature, types or control flow; no doc comments, header banners or section dividers.
-- “Absolutely necessary” means only: an external constraint invisible in this file, or a workaround whose reason cannot be derived from the code.
-- Remove ticket references except follow-up TODO/stub markers. “Trim comments” means materially shorten or delete them, not paraphrase at the same length.
+- Default: self-explanatory code, no comments. Comments require an invisible external constraint or workaround reason absent from code.
+- Explain why, never what: no restating code, signatures, types, control flow; no doc comments, header banners, section dividers.
+- Keep ticket references only in follow-up TODO/stub markers. “Trim comments” means shorten/delete, not equal-length paraphrasing.

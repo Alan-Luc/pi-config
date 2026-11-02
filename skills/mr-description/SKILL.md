@@ -24,6 +24,8 @@ Write an MR-ready description with exactly these sections:
 
 ## Style
 
+Apply the [writing rules in AGENTS.md](../../AGENTS.md#writing-rules). Keep the required sections and exact technical strings.
+
 Be specific and intentionally shorter than `/skill:walkthrough`. Do not include file-by-file analysis, code snippets, exhaustive verification steps, unrelated history, or extra boilerplate.
 
 ## Example
@@ -31,10 +33,12 @@ Be specific and intentionally shorter than `/skill:walkthrough`. Do not include 
 ```markdown
 ### Summary
 
-- Routes failed-test filters by spec so identical test names in other specs no longer trigger unrelated retries.
-- Rejects malformed or ambiguous retry state before test execution.
+- The test runner uses the spec path to select tests for retry. Matching test names in other specs do not cause unrelated retries.
+- The test runner rejects malformed or ambiguous retry state before it runs tests.
 
 ### How to observe
 
-- Run `compose test --filter-from test_reports/failed_tests.txt` with `specs/a.yml<TAB>shared`; only the `shared` test from `specs/a.yml` runs, while the same name in `specs/b.yml` is skipped.
+- Put `specs/a.yml<TAB>shared` in `test_reports/failed_tests.txt`.
+- Run `compose test --filter-from test_reports/failed_tests.txt`.
+- Only the `shared` test in `specs/a.yml` runs. The test runner skips the test with the same name in `specs/b.yml`.
 ```

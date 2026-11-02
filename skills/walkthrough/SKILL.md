@@ -7,6 +7,10 @@ description: Explain and verify this session's changes when the user asks for a 
 
 Only when the user invokes this skill or explicitly asks for a walkthrough with phrases such as "walk me through it", "what did you change", "summarize the changes", or "close it out". Do not run it automatically after ordinary multi-file work.
 
+## Writing rules
+
+Apply the [writing rules in AGENTS.md](../../AGENTS.md#writing-rules). Keep the required headings and exact technical strings. Use separate sentences or steps to explain each action and result. Do not omit evidence or file connections to meet sentence limits.
+
 ## Presentation scaffold
 
 Use this output spine:
