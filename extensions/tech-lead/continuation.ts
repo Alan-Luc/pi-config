@@ -1,4 +1,4 @@
-import type { BoundaryResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isSubagentChildEnvironment } from "../lib/shared.ts";
 import { registerHumanInputTracker } from "../lib/human-input.ts";
 import { requestWorkStatus } from "../lib/work-status.ts";
@@ -14,7 +14,6 @@ export function registerContinuationGuard(pi: ExtensionAPI, env: Readonly<Record
 	if (isSubagentChildEnvironment(env)) return;
 	const humanInputs = registerHumanInputTracker(pi);
 	const usedInputKeys = new Set<string>();
-	const announcedInputKeys = new Set<string>();
 	let taskToolsUsed = false;
 	let sessionId: string | undefined;
 	pi.on("session_start", (_event, ctx) => {
@@ -25,12 +24,6 @@ export function registerContinuationGuard(pi: ExtensionAPI, env: Readonly<Record
 	pi.on("tool_result", (event) => {
 		if (["TaskCreate", "TaskGet", "TaskList", "TaskUpdate"].includes(event.toolName)) taskToolsUsed = true;
 	});
-
-	function unfinished(key: string, reason: string): BoundaryResult | undefined {
-		if (announcedInputKeys.has(key)) return undefined;
-		announcedInputKeys.add(key);
-		return { entries: [{ type: "custom_message", customType: "workflow-continuation-status", content: `Unfinished work: ${reason}. No automatic turn requested.`, display: true }] };
-	}
 
 	function eligible(snapshot: TaskSnapshot, ctx: ExtensionContext, inputEntryId: string): boolean {
 		const record = snapshot.continuation;
@@ -53,18 +46,18 @@ export function registerContinuationGuard(pi: ExtensionAPI, env: Readonly<Record
 		const tasks = requestWorkStatus(pi.events, "tasks", currentSessionId);
 		if (tasks && tasks.tasks.every((task) => task.status === "completed")) return;
 		if (!tasks && !taskToolsUsed) return;
-		if (!tasks || !input || !eligible(tasks, ctx, input.entryId)) return unfinished(key, "current-input continuation is unknown, unreconciled, or gated");
-		if (usedInputKeys.has(key)) return unfinished(key, "the originating human input's one-turn allowance is exhausted");
+		if (!tasks || !input || !eligible(tasks, ctx, input.entryId)) return;
+		if (usedInputKeys.has(key)) return;
 		const verification = requestWorkStatus(pi.events, "verification", currentSessionId);
 		const delegation = requestWorkStatus(pi.events, "delegation", currentSessionId);
-		if (!verification || !delegation) return unfinished(key, "async ownership state is unavailable");
+		if (!verification || !delegation) return;
 		if (verification.starting > 0 || verification.uncollectedTaskIds.length > 0
-			|| delegation.runningChildIds.length > 0 || delegation.pendingResultIds.length > 0) return unfinished(key, "owned work or results still require reconciliation");
+			|| delegation.runningChildIds.length > 0 || delegation.pendingResultIds.length > 0) return;
 		try {
 			const background = await requestBackgroundTask(pi.events, "status", {}, 500);
-			if (background.tasks.some((task) => task.status === "running" || (task.notifyOnCompletion && !task.notified))) return unfinished(key, "background work or its notification is pending");
+			if (background.tasks.some((task) => task.status === "running" || (task.notifyOnCompletion && !task.notified))) return;
 		} catch {
-			return unfinished(key, "background ownership status is unavailable");
+			return;
 		}
 		if (ctx.signal?.aborted || ctx.hasPendingMessages()) return;
 		const latestInput = humanInputs.current(ctx);
@@ -75,7 +68,7 @@ export function registerContinuationGuard(pi: ExtensionAPI, env: Readonly<Record
 			|| !latestTasks || !latestVerification || !latestDelegation
 			|| observationState(latestTasks) !== observationState(tasks)
 			|| observationState(latestVerification) !== observationState(verification)
-			|| observationState(latestDelegation) !== observationState(delegation)) return unfinished(key, "input or ownership state changed during observation");
+			|| observationState(latestDelegation) !== observationState(delegation)) return;
 		usedInputKeys.add(key);
 		return {
 			entries: [{ type: "custom_message", customType: "workflow-continuation", content: "Continue the next already-authorized ready action and reconcile its result. No new approval or permission is granted.", display: false }],

@@ -98,16 +98,16 @@ async function runNativeScenario(scenario: NativeScenario) {
 		await session.bindExtensions({ mode: "print" });
 		await session.prompt("Continue the already-authorized bounded request after answering status.", { source: "rpc" });
 		assert.ok(sessionId && requestEntryId, "native session and appended user identity controls must execute");
+		assert.equal(session.messages.filter((message) => message.role === "custom" && message.customType === "workflow-continuation-status").length, 0, "continuation gates must not add status chatter to the conversation");
 		if (scenario !== "ready") {
 			assert.equal(requests, 1, `${scenario} must not request an automatic provider turn`);
-			if (scenario === "background-running" || scenario === "background-notification") assert.ok(session.messages.some((message) => message.role === "custom" && typeof message.content === "string" && message.content.includes("background work or its notification is pending")), "a valid busy status, not a malformed fixture, must suppress continuation");
+			if (scenario === "background-running" || scenario === "background-notification") assert.equal(backgroundQueries, 1, "background status must be observed before suppressing continuation");
 			if (scenario === "operator-stop") assert.equal(abortedSettlement, true, "the native SDK must confirm an actual operator-aborted settlement, not merely a no-nudge fixture");
 			assert.equal(networkRequests, 0);
 			return;
 		}
 		assert.equal(requests, 2, `one eligible stop must request exactly one next native provider turn; ${JSON.stringify({ boundaries, backgroundQueries, messages: session.messages.filter((message) => message.role === "custom") })}`);
 		assert.ok(backgroundQueries > 0, "the existing background status interface must be observed");
-		assert.ok(session.messages.some((message) => message.role === "custom" && message.customType === "workflow-continuation-status" && typeof message.content === "string" && /unfinished/i.test(message.content)), "the later capped stop must stay visibly unfinished");
 		await session.prompt("Extension result notification", { source: "extension" });
 		assert.equal(requests, 3, "a notification cannot replenish the prior human allowance");
 		await session.prompt("Pause this work.", { source: "rpc" });
