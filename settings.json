@@ -2,6 +2,7 @@
   "lastChangelogVersion": "1.4.0",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6.1-sol",
+  "defaultTools": ["+codemode"],
   "packages": [
     "npm:@dietrichgebert/ponytail",
     "npm:pi-web-access",
