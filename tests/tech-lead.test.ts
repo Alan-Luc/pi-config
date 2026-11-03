@@ -208,7 +208,7 @@ test("one recipe skill owns card selection and six checkable cards without a sec
 		}
 		assert.match(card, /\*\*Done means:\*\* .+/, "each card ends in a checkable result");
 	}
-	includesAll(recipeCards, ["assertion fails for the intended reason", "Tests pass before the refactor; no failing test is invented", "Diagnose before proposing a patch", "prompts/spike.md", "prompts/eviscerate-diff.md", "plausible broken condition", "representative safe rerun or interruption"]);
+	includesAll(recipeCards, ["assertion fails for the intended reason", "Tests pass before refactoring; no failing test is invented", "Diagnose before proposing a patch", "prompts/spike.md", "prompts/eviscerate-diff.md", "plausible broken condition", "representative safe rerun or interruption"]);
 	for (const path of ["skills/task-recipe/SKILL.md", "skills/task-recipe/references/recipes.md"]) {
 		const file = new URL(`../${path}`, import.meta.url);
 		for (const match of readFileSync(file, "utf8").matchAll(/\]\(([^)]+)\)/g)) {
