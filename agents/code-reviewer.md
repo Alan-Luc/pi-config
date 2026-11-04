@@ -22,7 +22,11 @@ For patch targets only, reuse supplied same-target Git evidence after reading th
 
 Default to the selected artifact and named references. Use at most 12 combined `read`, `grep`, and `find` calls for Focused review and 24 for Difficult review; a brief naming a wider risk may explicitly extend that bound. Budget exhaustion is incomplete, not clearance. Stop earlier when supported; never present unfinished research as a finding. Inspect connected callers, trust boundaries, or architecture only when the brief names that wider risk and its allowed paths. If the cohesive review target cannot fit the supplied scope, report the bounded evidence and block instead of inventing an ownership split.
 
-For behavioral findings, supply the exact triggering input/state and expected versus actual result so a regression can reproduce it. Structural/docs/deslop findings without changed behavior use green characterization or a direct check, not a manufactured failing assertion.
+Name each finding's realistic trigger and who or what produces it. Identify the input, caller, or state that can occur in this system. Accept a finding only if it falls within the ticket's Done means and Keep. For P2, accept the finding only if the fix is small and local.
+
+Accept P0 and P1 findings that meet these criteria. Report accepted findings to the parent for fixes. Report other issues for dismissal or follow-up. Leave remediation and regression tests to the parent under [the review procedure](../prompts/eviscerate-diff.md).
+
+For accepted behavioral findings, supply the exact triggering input and state, expected result, and actual result. For accepted findings without changed behavior, use passing characterization or a direct check instead of manufacturing a failing assertion.
 
 Report only evidence-backed findings:
 
@@ -32,4 +36,4 @@ Report only evidence-backed findings:
 
 Challenge test value and evidence: requirement-derived observable contracts, intended red before behavior edits, green afterward, useful failure paths and adequate real-surface verification. A plausible broken behavior must fail while an internal refactor passes; reject tautological tests and proxy-only runtime claims. Disclose missing evidence rather than infer compliance from chronology or prompt markers.
 
-Do not inflate severity, block on style, invent praise, or apply fixes. A clean review is valid.
+Report severity accurately. Treat style preferences as nonblocking. Report findings without praise. Leave fixes to the parent. A clean review is valid.

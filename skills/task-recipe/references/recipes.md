@@ -1,55 +1,57 @@
 # Task recipe cards
 
-Copy selected card steps verbatim into Focused/Full live tasks; retain inapplicable steps as `skipped: <reason>`. Direct work needs no recipe/task-copy ceremony. The canonical tier matrix in `tech-lead.md` selects coverage. A staged [Haiku/low advisory](../../deslop/SKILL.md) is risk-selected; oversized patches are skipped, and timeouts are incomplete (`deslop: timed out`). Never treat worktree review as staged review.
+For Focused and Full work, copy the selected card's steps verbatim into live tasks. Retain inapplicable steps as `skipped: <reason>`. For Direct work, skip recipe selection and task copying. Use the canonical tier matrix in `tech-lead.md` to select coverage.
+
+If risk warrants it, use the staged [Haiku advisory at low effort](../../deslop/SKILL.md). Skip oversized patches. Report timeouts as incomplete with `deslop: timed out`. Review worktree changes separately from staged changes.
 
 ## Bug fix
 
-1. Define the failure. ✓ Expected behavior, callers, exact trigger and a meaningful failure case are explicit.
-2. Reproduce before fixing. ✓ An assertion fails for the intended reason; behavioral findings use the reviewer's exact triggering input/state. Findings without behavior changes use green characterization or a direct check, never manufactured red.
-3. Fix the shared root cause. ✓ The retained regression passes; callers remain compatible.
-4. Verify the change. ✓ Focused checks pass during iteration; real-surface behavior and failure cases pass at the pass.
+1. Define the failure. ✓ State the expected behavior, callers, exact trigger, and a meaningful failure case.
+2. Reproduce before fixing. ✓ Confirm that an assertion fails for the intended reason. For accepted behavioral findings, use the reviewer's exact triggering input and state. For findings without behavior changes, use passing characterization or a direct check instead of manufacturing a failure.
+3. Fix the shared root cause. ✓ Confirm that the retained regression passes and callers remain compatible.
+4. Verify the change. ✓ Run focused checks during iteration. At the pass, verify behavior and failure cases through the real interface.
 
-**Done means:** the defect is fixed without caller regressions.
+**Done means:** The defect is fixed without caller regressions.
 
 ## Feature
 
-1. Define the contract before editing. ✓ User-visible success and failure outcomes and trust boundaries are explicit.
-2. Test behavior before implementation. ✓ Callers and existing patterns are known; tests express the contract.
-3. Implement the smallest complete change. ✓ Promised behavior and meaningful failure paths match the contract.
-4. Verify the change. ✓ Focused checks pass during iteration; real interface, failure paths and persisted or external effects match the contract at the pass.
+1. Define the contract before editing. ✓ State user-visible success and failure outcomes. Identify trust boundaries.
+2. Test behavior before implementation. ✓ Identify callers and existing patterns. Write tests that express the contract.
+3. Implement the smallest complete change. ✓ Confirm that promised behavior and meaningful failure paths match the contract.
+4. Verify the change. ✓ Run focused checks during iteration. At the pass, check the real interface and failure paths. Confirm that persisted or external effects match the contract.
 
-**Done means:** the contract holds, including failure paths and effects.
+**Done means:** The contract holds, including failure paths and effects.
 
 ## Refactor
 
-1. Map existing behavior. ✓ Owned paths, callers and the preserved contract are explicit.
-2. Characterize behavior. ✓ Tests pass before refactoring; no failing test is invented.
-3. Refactor. ✓ Contract, error handling, validation, accessibility and state protections remain unchanged.
-4. Verify the refactor. ✓ Characterization and focused checks pass during iteration; observable behavior is compared at the pass where warranted.
+1. Map existing behavior. ✓ Identify owned paths, callers, and the preserved contract.
+2. Characterize behavior. ✓ Confirm that tests pass before refactoring. Use characterization instead of inventing a failing test.
+3. Refactor. ✓ Preserve the contract, error handling, validation, accessibility, and state protections.
+4. Verify the refactor. ✓ Run characterization and focused checks during iteration. If warranted, compare observable behavior at the pass.
 
-**Done means:** behavior and caller compatibility remain unchanged.
+**Done means:** Behavior and caller compatibility remain unchanged.
 
 ## Investigation
 
-1. Define the question. ✓ Evidence distinguishes plausible causes; resumed work uses governing plan/log context.
-2. Diagnose before proposing a patch. ✓ Live signal identifies the mechanism and its source. Use [the spike procedure](../../../prompts/spike.md) for bounded local proof when useful.
-3. Limit temporary instrumentation to owned local/test instances. ✓ Shared or production hotfixes require authorization.
+1. Define the question. ✓ Use evidence to distinguish plausible causes. If resuming work, read the governing plan and work log.
+2. Diagnose before proposing a patch. ✓ Use live observations to identify the mechanism and its source. If bounded local proof helps, follow [the spike procedure](../../../prompts/spike.md).
+3. Limit temporary instrumentation to owned local or test instances. ✓ Before applying shared or production hotfixes, obtain authorization.
 
-**Done means:** report evidence-backed findings, exact scope and unknowns; production changes require separate authorization.
+**Done means:** The report states findings supported by evidence, exact scope, and unknowns. Production changes require separate authorization.
 
 ## Review
 
-1. Freeze the exact candidate. ✓ Task-owned scope, callers, contracts and evidence are identified.
-2. Follow [the full adversarial review procedure](../../../prompts/eviscerate-diff.md). ✓ Unresolved prerequisite, authorization or tooling blockers and coverage gaps are reported.
+1. Freeze the exact candidate. ✓ Identify the scope owned by this ticket, callers, contracts, and evidence.
+2. Follow [the full adversarial review procedure](../../../prompts/eviscerate-diff.md). ✓ Report unresolved prerequisites, authorization or tooling blockers, and coverage gaps.
 
-**Done means:** complete selected review, integration and live clearance cover the final candidate. Lanes/checks are accounted for; findings are fixed or dismissed with evidence and reason in the pass summary.
+**Done means:** Complete selected review, integration, and live clearance cover the final candidate. Account for each lane and check. In the pass summary, record fixes or dismissals with evidence and a reason.
 
 ## Harness change
 
-1. Define the workflow. ✓ Exact invocation, independent expected outcome and a plausible broken condition are explicit.
-2. Reuse runtime, runner, evidence format and owned disposable state. ✓ Source/input identities are preserved; new infrastructure has demonstrated need.
-3. Test rejection. ✓ The broken condition is rejected; focused checks pass.
-4. Execute the documented workflow through the real consumer at the pass. ✓ Observed effects and evidence match expectations.
-5. Check a representative safe rerun or interruption for lifecycle commands, retries or migrations. ✓ Only owned state is reconciled.
+1. Define the workflow. ✓ State the exact invocation, independent expected outcome, and a plausible broken condition. For instruction changes, follow [Writing rules](../../../AGENTS.md#writing-rules).
+2. Reuse the runtime, runner, evidence format, and owned disposable state. ✓ Preserve source and input identities. Justify new infrastructure with demonstrated need.
+3. Test rejection. ✓ Confirm that the broken condition is rejected and focused checks pass.
+4. Execute the documented workflow through the real consumer at the pass. ✓ Compare observed effects and evidence with expectations.
+5. For lifecycle commands, retries, or migrations, check a representative safe rerun or interruption. ✓ Reconcile only owned state.
 
-**Done means:** the workflow passes; evidence is inspectable, owned resources are safely cleaned up and unverified prerequisites are explicit.
+**Done means:** The workflow passes, evidence is inspectable, and owned resources are safely cleaned up. State unverified prerequisites explicitly.

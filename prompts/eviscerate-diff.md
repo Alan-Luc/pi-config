@@ -35,9 +35,15 @@ Live briefs include the canonical `agents/live-verifier.md` role and `skills/liv
 
 Join all selected results before adjudication. Join both live results for Full, both observations for Focused. Missing, failed or stale results prevent clearance; attack silence is not success proof. Keep judgments independent; adjudicate triggers/evidence, not votes. One targeted retry may recover transient/malformed dropout, never reproducible defects.
 
-For accepted behavioral findings, use the exact triggering input/state to establish an exact-trigger failing regression before fixing it. Nonbehavior findings use passing characterization or a direct check. Rerun affected checks and refresh affected lane pairs and live proof on the new candidate. Reuse unchanged coverage; review remediation deltas plus affected contracts, and repeat autonomously until findings are fixed or explicitly dismissed with evidence.
+Apply [the canonical finding criteria](../agents/code-reviewer.md) before accepting findings for remediation.
 
-Live success proves promised effects; attack exercises bounded failure/malicious-input/boundary/retry/cancellation cases and negative effects. Use owned local/test resources, never production/customer effects. The success worker runs the relevant broad integration recipe once against the frozen candidate; the attack worker does not duplicate that run. Recapture candidate/input identity and collect exact verification receipts; tests and live effects do not replace each other.
+Fix accepted findings. For every other finding, give a one-line dismissal reason or record a follow-up outside this ticket.
+
+Add regression tests only for accepted findings. Before fixing accepted behavioral findings, reproduce the reviewer's exact triggering input and state with an assertion that fails for the intended reason. For accepted nonbehavior findings, use passing characterization or a direct check.
+
+Rerun affected checks and refresh affected lane pairs and live proof on the new candidate. Reuse unchanged coverage. Review remediation deltas plus affected contracts, and repeat autonomously until accepted findings are fixed. Record dismissals and follow-ups in the pass summary.
+
+Live success proves promised effects. Use attack inputs that can reach the system through a real interface. Exercise bounded failures, malicious inputs, boundaries, retries, cancellation, and negative effects. Use owned local or test resources without production or customer effects. The success worker runs the relevant broad integration recipe once against the frozen candidate; the attack worker does not duplicate that run. Recapture candidate/input identity and collect exact verification receipts; tests and live effects do not replace each other.
 
 Stop only when the final candidate has complete selected review, integration and live clearance, or a concrete authorization/prerequisite/tooling gap requires input. Do not stop at findings, silently defer a blocker, retry until green or request another continue. Reassess repeated failed premises; never weaken trust-boundary validation, data-loss protection, cancellation, useful errors, accessibility or cleanup. After the final commit, inspect the complete task-base-to-HEAD patch; do not independently rereview an unchanged patch.
 
