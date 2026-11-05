@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { it, test } from "bun:test";
 
 const instructions = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
-const writingRules = instructions.split("### Writing rules\n")[1]?.split("\n## Delivery")[0];
+const writingRules = instructions.split("## Writing rules\n")[1]?.split("\n## Delivery")[0];
 assert.ok(writingRules, "Writing rules section is required");
 const recipes = readFileSync(new URL("../skills/task-recipe/references/recipes.md", import.meta.url), "utf8");
 

@@ -9,22 +9,21 @@ const lead = read("extensions/tech-lead/tech-lead.md");
 
 test("reviewers require reachable triggers, scope, and bounded severity", () => {
 	for (const sentence of [
-		"Name each finding's realistic trigger and who or what produces it.",
-		"Accept a finding only if it falls within the ticket's Done means and Keep.",
-		"For P2, accept the finding only if the fix is small and local.",
-		"Accept P0 and P1 findings that meet these criteria.",
-		"Report accepted findings to the parent for fixes.",
+		"Name the realistic input, caller, or state and its producer to establish that the trigger can occur here.",
+		"Require scope within the ticket's Done means and Keep to prevent unrelated remediation.",
+		"Recommend a P2 fix only when small and local to keep minor cleanup bounded.",
+		"Recommend fixes for qualifying P0 and P1 findings to address material failures.",
+		"Leave acceptance, fixes, and regression tests to the parent to keep adjudication separate.",
 	]) assert.ok(reviewer.includes(sentence), sentence);
 	for (const sentence of [
-		"Apply [the canonical finding criteria](../agents/code-reviewer.md) before accepting findings for remediation.",
-		"Fix accepted findings.",
-		"For every other finding, give a one-line dismissal reason or record a follow-up outside this ticket.",
-		"Add regression tests only for accepted findings.",
+		"Require each finding's realistic trigger and producer to exclude hypothetical failures.",
+		"Fix qualifying P0 and P1 findings; fix P2 only when small and local to bound cleanup.",
+		"Dismiss everything else with a one-line reason or record an outside-ticket follow-up to preserve disposition.",
+		"Add regression tests only for accepted findings to exclude rejected premises.",
 	]) assert.ok(procedure.includes(sentence), sentence);
-	assert.ok(reviewer.includes("Leave remediation and regression tests to the parent under [the review procedure](../prompts/eviscerate-diff.md)"));
+	assert.ok(reviewer.includes("Leave acceptance, fixes, and regression tests to the parent"));
 	assert.ok(!reviewer.includes("fix it"), "the read-only reviewer does not receive fix commands");
-	assert.ok(!procedure.includes("Name each finding's realistic trigger"), "the procedure links to the criteria owner");
-	assert.ok(procedure.includes("Use attack inputs that can reach the system through a real interface."));
+	assert.ok(procedure.includes("Require attack inputs reachable through a real interface"));
 	for (const name of ["code-reviewer-sol", "code-reviewer-sonnet"]) {
 		assert.ok(read(`agents/${name}.md`).includes("canonical role body in `agents/code-reviewer.md`"));
 	}
@@ -32,11 +31,10 @@ test("reviewers require reachable triggers, scope, and bounded severity", () => 
 
 test("ticket completion has an observable boundary and accounts for additions", () => {
 	for (const sentence of [
-		"State Done means for every ticket as an outcome that can be run or inspected.",
-		"State Keep for every ticket as behavior that must remain unchanged.",
-		"When Done means is true, Keep holds, and the pass for the ticket's tier is clear, finish the ticket.",
-		"Stop there.",
-		"Before the freeze, remove additions that lack a reason beyond Done means.",
-		"At close, list each addition beyond Done means and give its reason.",
+		"State “Done means …” for every ticket with a runnable or inspectable outcome to make completion testable.",
+		"State “Keep …” with behavior that must remain unchanged to prevent regressions.",
+		"Finish when Done means is true, Keep holds, and the tier's pass is clear.",
+		"Before the freeze, remove unexplained additions beyond Done means to bound the candidate.",
+		"At close, list remaining additions and their reasons to expose their cost.",
 	]) assert.ok(lead.includes(sentence), sentence);
 });

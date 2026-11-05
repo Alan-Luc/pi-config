@@ -18,18 +18,7 @@ Reassess after three failed attempts. If two fixes fail the same gate, test the 
 - Keep experiments on `benchmark/<run-id>`; promote approved final diffs as fresh commits.
 - After committing, inspect the exact base-to-HEAD patch for unintended changes; reuse unchanged reviews.
 
-## Communication
-
-- Use BLUF.
-- Before non-trivial work, state the objective, next step, and completion evidence in 1–3 sentences.
-- During analysis, report findings, next steps, and blockers. Questions leave approved work active. Honor pause/stop.
-- Label artifact links with repo-relative paths: Plan, Work log, Handoff, Decision, or Report.
-- Quiz only on request: one Socratic or evidence-linked Five Whys question per turn.
-- For walkthroughs, explain changes with examples before editing; await readiness.
-- On pushback, restate Alan's position and recorded-decision conflicts. Before reversing, ask which outcome should change.
-- Before adding reviewer-requested defenses, identify an existing-check bypass. Retain type-level gates when proposals need `as any`.
-
-### Writing rules
+## Writing rules
 
 Apply these rules to agent communication and instruction files.
 
@@ -49,7 +38,7 @@ Preserve exact code, commands, paths, identifiers, quotes, required headings, an
 
 Before sending, check lengths and terms. Distinguish expected results from observed results. State missing checks and unresolved questions. Use glossary terms only as defined, without near-synonyms.
 
-#### Glossary
+### Glossary
 
 A pass verifies and reviews one candidate for completion.
 
@@ -74,7 +63,6 @@ A station is an owner's defined scope.
 - Use `verification_evidence` with exact argv, repo-relative cwd, and timeout; default background `start`/`collect`. Synchronous `run` requires service unavailability, explicit request, or lifecycle/correctness need. Report unavailable checks as `Not run: <reason>`.
 - Follow `extensions/extension-dogfooding.md`; use `{}` for uncommitted `inspect_change`, explicit `base`/`head` for commits.
 - Verify claims on the same surface, including persistence; tests/screenshots alone cannot prove integration. Use local/test identities and owned resources. Missing prerequisites block claims.
-- The [guardrails threat model](extensions/guardrails/README.md) defines the supported command surface and out-of-model boundary; reviewers explicitly dismiss only out-of-model inputs with that reason.
 
 ## Web Search
 
@@ -82,6 +70,7 @@ A station is an owner's defined scope.
 
 ## Implementation
 
+- Before adding reviewer-requested defenses, identify an existing-check bypass. Retain type-level gates when proposals need `as any`.
 - Follow repository conventions. Preserve unrelated behavior, trust-boundary validation, useful errors, accessibility, semantic HTML, state/styling patterns, strict types, and data-loss protection. Reject `any`, unjustified casts, disabled tests, swallowed errors, and dead/debug code.
 - Prove pivotal outside-diff assumptions in acceptance or logs. Inspect repeated casts, always-present optionals, and special cases before regex deletion.
 - Model valid states and transitions. Distinguish semantic identifiers. Parse external input at its boundary. Derive authoritative schema types; use validated models internally without redundant guards.

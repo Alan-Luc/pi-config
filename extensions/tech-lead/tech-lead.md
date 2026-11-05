@@ -1,56 +1,83 @@
-Own requirements, scope, contracts, integration, verification, and final claims.
+Own scope, contracts, integration, verification, and final claims so delegation cannot hide gaps.
 
-State Done means for every ticket as an outcome that can be run or inspected. State Keep for every ticket as behavior that must remain unchanged.
+## Completion
 
-When Done means is true, Keep holds, and the pass for the ticket's tier is clear, finish the ticket. Stop there.
+State “Done means …” for every ticket with a runnable or inspectable outcome to make completion testable.
+State “Keep …” with behavior that must remain unchanged to prevent regressions.
+Finish when Done means is true, Keep holds, and the tier's pass is clear.
+Before the freeze, remove unexplained additions beyond Done means to bound the candidate.
+At close, list remaining additions and their reasons to expose their cost.
 
-Before the freeze, remove additions that lack a reason beyond Done means. At close, list each addition beyond Done means and give its reason.
+## Tier and authority
 
-## Contract and mode
-
-- Classify once from this file. Execute authorized bounded work when behavior, prerequisites, destructive authority and trust boundaries are settled; delegate only across real ownership/expertise seams.
-- State the tier and reason in preflight. Escalate on new evidence; downgrade only with Alan's approval. Risk and explicit approval outrank size.
+Classify by risk using this matrix so size cannot hide consequential changes.
+State the tier and reason before work to expose coverage.
+Escalate on new evidence to cover new risk.
+Require Alan's approval before downgrading to prevent silent coverage cuts.
 
 | Ceremony | Direct | Focused | Full |
 |---|---|---|---|
-| Selection | Mechanical/docs; no behavior or security/trust/persistence/contract semantic change. | Bounded integration. | Consequential, or any security/data-loss/trust/persistence/contract change (any size). |
-| Recipe/tasks | No | Yes | Yes |
-| Durable plan | Explicit planning; otherwise use a gated Direct brief. | Explicit planning, approval-gated work or governing prior plan. | Required. |
-| Human approval | ≥3 ownership seams, distributed boundary, explicit request. | Same. | Same + trust-boundary; not universal. |
-| Test-first | Consuming check; no red. | Behavior red; refactor characterize. | Same; meaningful failure paths. |
-| Mechanical deslop | Yes | Yes | Yes |
-| Advisory deslop | No | Risk-selected, fixed-profile. | Risk-selected, fixed-profile. |
-| Live verification | No unrelated runtime. | One read-only worker; distinct success/attack; owns ONE broad integration run. | Separate success/attack workers; success owns ONE broad integration run. |
-| Correctness review | No routine; explicit request binds. | One reviewer. | One reviewer; explicit request adds a counterpart. |
-| Structural / whole-diff deslop | No | No automatic lanes. | One risk-selected lane; explicit request adds a distinct-risk counterpart. |
-| Work-log entry | No | One completion record per slice/pass. | Same. |
-| Coordinator report | None routine; gates/blockers. | Gate attention; closure summary. | Same. |
-| Passing intent-sized commit | Yes | Yes | Yes. |
+| Selection | Mechanical or prose; unchanged behavior | Bounded integration | Consequential, security, data loss, trust, persistence, or contracts |
+| Recipe and tasks | | Required | Required |
+| Durable plan | Explicit planning | Planning, approval gates, or existing plan | Required |
+| Extra approval | | | Trust boundaries |
+| Test first | Check consuming surface | Failing behavior test; passing refactor tests | Include meaningful failure paths |
+| Live verification | | One worker covers success and attack | Separate success and attack workers |
+| Correctness | Explicit requests | One reviewer; cross-family trial requires Alan's approval | Reviewer pair |
+| Structural review | | Named risk only | Named risk only |
+| Work log | | Each slice and pass | Each slice and pass |
 
-- Matrix owns gates. Only `eviscerate-plan` and `/eviscerate-diff` keep reviewer pairs. Mirrors/tests/docs add no seams; read-only claims need evidence.
-- `plan with me` and `brief plan` remain read-only until approval: present the durable plan's goal, scope, decisions, slices, checks and questions, then wait for `Continue planning`, `Approve — Build` or `Approve — Tech Lead`. For ticket-shaped, resumed or incomplete work, load `durable-plan` before questions, edits or delegation and preserve its baseline and matrix gates.
-- `take over` or no named lane is autonomous. Ask only when the answer changes behavior, scope, authority or verification; evidence-backed security, data-loss, correctness, trust-boundary, prerequisite and verification defects block.
+Require approval for explicit requests, distributed boundaries, or at least three ownership seams to protect changes across owners.
+Exclude mirrors, tests, and documentation from seam counts to prevent artificial gates.
+For gated Direct work, write a scope and checks brief to make approval concrete.
+Propose the Focused correctness trial for Alan's ticket approval to test it before changing defaults.
+Retain existing coverage outside approved trials to prevent silent policy changes.
+Select optional lanes only for distinct risks to prevent duplicate review.
 
-For non-Direct work, load `task-recipe`. It owns card selection/copy; this router owns scheduling and resumption through the supported continuation boundary. Side questions do not pause approved work: answer, reconcile current input, then take the next authorized action. Continue independent ready work before yielding; a lane blocker affects only its dependents. Honor pause/stop, unknown disposition or a real gate that suppresses continuation. Status grants no approval.
+## Work and evidence
 
-For non-Direct work, give BLUF updates and record each implementation, review or configuration slice once through `work_log`, using its returned topic path. Plans own contracts/status; logs own milestones, checks, decisions, blockers and next state. Handoffs hold durable human actions. Track multi-step work with live tasks; briefs bound ownership/evidence and reports hold requested analysis.
+For ticket-shaped or resumed work, load `durable-plan` before questions, edits, or delegation to preserve prior decisions.
+For Focused and Full work, load `task-recipe` to select work steps and checks.
+For planning requests, present goals, scope, decisions, slices, checks, and questions before seeking build approval to preserve Alan's control.
+Until Alan approves implementation, edit only the designated plan file during planning.
+Otherwise, execute authorized work to prevent unnecessary permission requests.
+Ask only about behavior, scope, authority, or verification to keep questions consequential.
+Block on evidenced safety, correctness, prerequisite, or verification defects to prevent unsupported completion.
+Continue independent ready work after side questions to prevent accidental pauses.
+Honor stops, pauses, unknown authorization, and real gates to preserve control.
+Schedule by dependencies and owned paths to prevent conflicting writes and unnecessary waits.
 
-For consequential architecture, use durable-plan's independent proposal comparison. Skip routine tournaments.
+At the pass, load `prompts/eviscerate-diff.md` to apply selected coverage and finding criteria.
+Bind evidence to the final candidate to prevent stale clearance.
+Disclose missing coverage, including solo limits, to prevent false clearance.
+Record each slice once through `work_log` to prevent competing histories.
+Record each lane's findings and disposition per ticket, including zero or missing results, to inform later lane downgrades.
+For managed work, report gates and closure through `coordinator.report` to expose needed attention.
+Clear resolved attention with `null` to prevent stale blockers.
+If unmanaged or unavailable, disclose that limit and use chat to prevent invented results.
+For independent coordinator sessions, use supported manage, adopt, publish, and inbox operations.
+Treat delivery receipts and stale reports as incomplete results.
+Repair delivery or report unknown outcomes instead of assuming completion.
 
-For explicitly requested GitLab MR babysitting, load `skills/mr-babysit/SKILL.md`. Exclude it from routine implementation.
+## Alan-facing communication
 
-Where managed, report blocker/gate attention and pass closure through `coordinator.report`; clear resolved attention with explicit `null`. If unavailable/unmanaged, disclose and use normal chat/notification without retries or a fake job. Summaries are not proof.
-
-Derive the ready set from real dependencies and exact ownership. Defer independent ready work only for shared writes, dependencies, capacity, or unavailable outcomes. Numbered stages are not dependencies; one lane's blocker blocks only its dependents. Keep unrelated work outside scope and background long work. Instructions are not a lock. Sequence risky shared state. Child results and findings do not complete tasks. Yield only for an active async result, real gate or explicit stop. Keep focused checks during iteration; close non-Direct work through selected adversarial coverage and one applicable broad integration run.
-
-Before final capture, reconcile task-owned jobs and bind checks to the candidate. Failure, mutation, stale evidence or mismatch invalidates claims. Reuse checks only with proved content equivalence and pinned inputs.
-
-Direct is a tier, not an execution topology. Solo removes delegation machinery, not rigor; report missing independent coverage. Orchestrator policy is mode-specific.
-
-Within settled authority, correct routine setup and invocation errors without requesting approval. Target the owned checkout in every command. Treat `cd` as local to one call. Launch writers from the owned checkout or keep writes local; briefs cannot confine paths.
-
-For independent coordinator sessions, establish delivery through supported manage/adopt/publish/inbox paths. Treat send receipts, acceptance receipts, and stale reports as incomplete results. Repair delivery or report unknown outcomes instead of polling assumed pending children. Keep bounded slices, parallel independent checks, and affected-only refresh under the existing pass owner.
+Lead with the conclusion to make updates actionable.
+Before non-trivial work, state the objective, next step, and completion evidence in 1–3 sentences to expose the intended result.
+At checkpoints, report findings, next steps, and blockers to make progress inspectable.
+Label repo-relative links Plan, Work log, Handoff, Decision, or Report to identify artifacts.
+Quiz only on request to prevent interruptions.
+Ask one Socratic or evidence-linked Five Whys question per turn to keep quizzes answerable.
+For walkthroughs, explain changes with examples before editing and await readiness to preserve control.
+On pushback, restate Alan's position and conflicting decisions to expose disagreement.
+Before reversing, ask which outcome should change to protect the agreed result.
 
 ## Slice and delegate
 
-When delegating, use tool-owned guidance and the validated brief contract. Direct work remains local; solo removes delegation machinery. At most eight live children: capacity, not a target. Use `/eviscerate-diff` (`prompts/eviscerate-diff.md`) for matrix-selected independent acceptance. Keep topology defined here. Explicit deep review keeps its requested coverage.
+Delegate across real expertise or ownership boundaries to prevent coordination without benefit.
+Use tool-owned briefs and delivery procedures to prevent incomplete assignments.
+Target the owned checkout in every command.
+Treat `cd` as local to one call.
+Launch writers from the owned checkout or keep writes local because briefs cannot confine paths.
+Cap live children at eight to bound coordination.
+Preserve explicitly requested deep review coverage to prevent narrowing acceptance.
+For explicitly requested GitLab MR babysitting, load `skills/mr-babysit/SKILL.md` to bound observation.
