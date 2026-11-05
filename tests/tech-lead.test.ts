@@ -110,6 +110,14 @@ function includesAll(text: string, values: readonly string[]) {
 	for (const value of values) assert.ok(text.includes(value), value);
 }
 
+test("review pairs use persisted ordinary and difficult counterpart profiles", () => {
+	includesAll(reviewPrompt, [
+		"Pair `code-reviewer` with `code-reviewer-sonnet`",
+		"For difficult risks, pair `code-reviewer-sol` with `code-reviewer-opus`",
+	]);
+	assert.ok(agents["code-reviewer-sol"].includes("paired with code-reviewer-opus"));
+});
+
 test("tech lead owns the current ceremony matrix and its conditional gates", () => {
 	const matrix = techLead.split("| Ceremony | Direct | Focused | Full |")[1]?.split("\n\n")[0];
 	assert.ok(matrix);
@@ -295,6 +303,7 @@ test("the roster includes the canonical live verifier and explicit MR observer w
 	assert.deepEqual(Object.keys(agents).sort(), [
 		"code-explorer",
 		"code-reviewer",
+		"code-reviewer-opus",
 		"code-reviewer-sol",
 		"code-reviewer-sonnet",
 		"implementation-engineer",
@@ -342,6 +351,7 @@ it.each([
 	{ name: "code-reviewer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "code-reviewer" },
 	{ name: "code-reviewer-sonnet", model: "anthropic/claude-sonnet-5-5", thinking: "high", canonical: "code-reviewer" },
 	{ name: "code-reviewer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "code-reviewer" },
+	{ name: "code-reviewer-opus", model: "anthropic/claude-opus-5-5", thinking: "high", canonical: "code-reviewer" },
 	{ name: "implementation-engineer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "implementation-engineer" },
 	{ name: "implementation-engineer-opus", model: "anthropic/claude-opus-5-5", thinking: "high", canonical: "implementation-engineer" },
 ])("the installed loader resolves $name without inferred overrides", ({ name, model, thinking, canonical }) => {

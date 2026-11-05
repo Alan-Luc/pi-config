@@ -1,6 +1,6 @@
 ---
 name: code-reviewer-sonnet
-description: Focused Sonnet review counterpart; use only for a risk-selected seat paired with code-reviewer.
+description: Sonnet reviewer for approved cross-family Focused trials and ordinary-risk pairs with code-reviewer.
 mode: background
 async: true
 auto-exit: true

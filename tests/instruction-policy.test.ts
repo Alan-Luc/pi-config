@@ -24,7 +24,7 @@ test("reviewers require reachable triggers, scope, and bounded severity", () => 
 	assert.ok(reviewer.includes("Leave acceptance, fixes, and regression tests to the parent"));
 	assert.ok(!reviewer.includes("fix it"), "the read-only reviewer does not receive fix commands");
 	assert.ok(procedure.includes("Require attack inputs reachable through a real interface"));
-	for (const name of ["code-reviewer-sol", "code-reviewer-sonnet"]) {
+	for (const name of ["code-reviewer-sol", "code-reviewer-sonnet", "code-reviewer-opus"]) {
 		assert.ok(read(`agents/${name}.md`).includes("canonical role body in `agents/code-reviewer.md`"));
 	}
 });

@@ -1,6 +1,6 @@
 ---
 name: code-reviewer-sol
-description: Sol review profile for difficult selected risks, paired with code-reviewer-opus.
+description: Sol reviewer for difficult risks, paired with code-reviewer-opus.
 mode: background
 async: true
 auto-exit: true

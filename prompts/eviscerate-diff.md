@@ -14,7 +14,8 @@ For explicit Direct review, retain a pair to preserve requested independent cove
 For explicit Focused review, retain a pair unless Alan approves the single-seat trial to protect existing defaults.
 For that trial, select a different model family than the builder to preserve independent judgment.
 Use pairs at Full to retain independent challenge.
-Pair `code-reviewer` or difficult-risk `code-reviewer-sol` with `code-reviewer-sonnet` to use persisted profiles.
+Pair `code-reviewer` with `code-reviewer-sonnet` for ordinary risks.
+For difficult risks, pair `code-reviewer-sol` with `code-reviewer-opus` to use persisted profiles.
 Keep configured models and effort to prevent unapproved substitutions.
 Select structural review or deslop only for distinct named risks to prevent duplicate review.
 

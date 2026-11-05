@@ -227,5 +227,6 @@ export const AGENT_OUTPUT: Readonly<Record<string, SchemaId | null>> = {
 	"code-reviewer": "review",
 	"code-reviewer-sonnet": "review",
 	"code-reviewer-sol": "review",
+	"code-reviewer-opus": "review",
 };
 export const DEFAULT_OUTPUT: SchemaId = "worker";

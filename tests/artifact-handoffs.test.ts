@@ -42,7 +42,7 @@ function appendUser(session: SessionManager, text: string): string {
 it.each([
 	"implementation-engineer", "implementation-engineer-sol", "implementation-engineer-opus",
 	"test-automation-engineer", "live-verifier", "code-explorer", "mr-babysitter",
-	"code-reviewer", "code-reviewer-sol", "code-reviewer-sonnet",
+	"code-reviewer", "code-reviewer-sol", "code-reviewer-sonnet", "code-reviewer-opus",
 ])("%s explicitly exposes the schema-bound submission tool", async (role) => {
 	const source = await Bun.file(new URL(`../agents/${role}.md`, import.meta.url)).text();
 	const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1];
@@ -684,7 +684,7 @@ test("selects schemas and does nothing outside children or for null schemas", ()
 	assert.deepEqual(hooks({}), {});
 });
 
-it.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol"])("selects the same review contract for counterpart %s", (agent) => {
+it.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus"])("selects the same review contract for counterpart %s", (agent) => {
 	assert.equal(replySchema({ PI_SUBAGENT_AGENT: agent }), "review");
 });
 

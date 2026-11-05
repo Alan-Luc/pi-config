@@ -210,7 +210,7 @@ test.each(["## Approved decision notes", "### Approved decision notes"])("prepar
 	} as unknown as ExtensionAPI, {});
 	if (!guardrail) throw new Error("guardrail hook was not registered");
 	await guardrail(launch(reviewer), { cwd: root } as ExtensionContext);
-	await guardrail(launch({ children: ["code-reviewer-sol", "code-reviewer-sonnet"].map((agent) => ({ agent, task: reviewer.task })) }), { cwd: root } as ExtensionContext);
+	await guardrail(launch({ children: ["code-reviewer-sol", "code-reviewer-opus"].map((agent) => ({ agent, task: reviewer.task })) }), { cwd: root } as ExtensionContext);
 	await assert.rejects(validatePlanReviewMetadata(reviewer.task.replace("Review target: plan", "Review target: staged"), harness.exec, root), /wrong review target/);
 	await assert.rejects(validatePlanReviewMetadata(`${reviewer.task}\nPatch SHA-256: ${"0".repeat(64)}`, harness.exec, root), /mixed PLAN and patch metadata/);
 	for (const invalid of [
@@ -249,7 +249,7 @@ test("rejects plan targets with mixed diff metadata or missing explicit referenc
 	);
 });
 
-test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol"] as const)("prepares registered reviewer profile %s", async (agent) => {
+test.each(["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus"] as const)("prepares registered reviewer profile %s", async (agent) => {
 	assert.equal(AGENT_OUTPUT[agent], "review");
 	const root = await repository();
 	const harness = toolCallHandler(root);
@@ -271,7 +271,7 @@ test("prepares six registered reviewers with identical range metadata and task t
 	const harness = toolCallHandler(root);
 	await harness.call(mutation());
 	writeFileSync(join(root, "task.txt"), "changed\n");
-	const children = ["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer", "code-reviewer-sol"]
+	const children = ["code-reviewer", "code-reviewer-sonnet", "code-reviewer-sol", "code-reviewer-opus", "code-reviewer", "code-reviewer-sol"]
 		.map((agent) => ({ agent, task: brief("Review range: HEAD") }));
 	await harness.call(launch({ children }));
 	for (const child of children) assert.match(child.task, /^Patch artifact:/m);
