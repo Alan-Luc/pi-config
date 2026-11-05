@@ -42,8 +42,8 @@ test("planned and completed walkthroughs distinguish expected and observed evide
 	const blocks = guidance("Logical change blocks");
 	assert.match(blocks, /Planned walkthroughs[\s\S]*expected checks/);
 	assert.match(blocks, /Completed walkthroughs[\s\S]*observed results/);
-	assert.match(blocks, /Never present an expected result as an observed result/);
-	assert.match(blocks, /never emit both headings for one item/);
+	assert.match(blocks, /Do not present an expected result as an observed result/);
+	assert.match(blocks, /Do not emit both headings for one item/);
 });
 
 test("composition, verification, safety, and gap contracts remain explicit", () => {

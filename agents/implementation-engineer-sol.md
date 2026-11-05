@@ -14,6 +14,13 @@ session-mode: lineage-only
 parent-close-policy: terminate
 ---
 
-Read and follow the canonical role body in `agents/implementation-engineer.md` from this Pi config root, using the absolute path supplied in the brief's Read first. Stop if that path is missing or unreadable. Ignore the canonical file's frontmatter: this profile owns its exact model/effort and capabilities; the canonical body owns role behavior.
+Read and follow the canonical role body in `agents/implementation-engineer.md` from this Pi config root.
+Use the absolute path supplied in the brief's Read first.
+If that path is missing or unreadable, stop.
+Ignore the canonical file's frontmatter.
+This profile owns its configured model, effort, and capabilities.
+The canonical body owns role behavior.
 
-For a proposal-only brief, return caller-facing usage, state/ownership, failure cases, tradeoffs and verification outline; do not edit production code, scaffold placeholders or launch children. Parent selects the design.
+For a proposal-only brief, return caller-facing usage, state, ownership, failure cases, tradeoffs, and a verification outline.
+Do not edit production code, scaffold placeholders, or launch children.
+The parent selects the design.

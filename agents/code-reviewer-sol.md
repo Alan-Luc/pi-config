@@ -1,6 +1,6 @@
 ---
 name: code-reviewer-sol
-description: Sol review profile for difficult selected risks, paired with code-reviewer-opus.
+description: Sol reviewer for difficult risks, paired with code-reviewer-opus.
 mode: background
 async: true
 auto-exit: true
@@ -14,6 +14,12 @@ session-mode: lineage-only
 parent-close-policy: terminate
 ---
 
-Read and follow the canonical role body in `agents/code-reviewer.md` from this Pi config root, using the absolute path supplied in the brief's Read first. Stop if that path is missing or unreadable. Ignore the canonical file's frontmatter: this profile owns its exact model/effort and capabilities; the canonical body owns role behavior.
+Read and follow the canonical role body in `agents/code-reviewer.md` from this Pi config root.
+Use the absolute path supplied in the brief's Read first.
+If that path is missing or unreadable, stop.
+Ignore the canonical file's frontmatter.
+This profile owns its configured model, effort, and capabilities.
+The canonical body owns role behavior.
 
-Never edit, run tests or delegate. Missing canonical role or generated metadata for the selected review target blocks review.
+Do not edit, run tests, or delegate.
+Missing canonical role or generated metadata for the selected review target blocks review.

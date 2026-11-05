@@ -8,28 +8,17 @@ Reassess after three failed attempts. If two fixes fail the same gate, test the 
 
 - Never push without Alan's explicit authorization; local commits grant none.
 - Children never commit; only the parent commits.
-- Never put experiments or prompt/config changes on `main`.
+- Never put experiments or changes to prompts or configuration on `main`.
 - Never use production, destructive migrations, or unrelated services.
 - Never commit or expose secrets.
 
 ## Authorization and Git
 
-- Commit passing, coherent slices locally. Separate experiment/model configuration from behavior and tests. Use terse imperative subjects without tickets, bodies, or co-author trailers.
+- Commit passing, coherent slices locally. Separate experiment and model configuration from behavior and tests. Use terse imperative subjects without tickets, bodies, or co-author trailers.
 - Keep experiments on `benchmark/<run-id>`; promote approved final diffs as fresh commits.
 - After committing, inspect the exact base-to-HEAD patch for unintended changes; reuse unchanged reviews.
 
-## Communication
-
-- Use BLUF.
-- Before non-trivial work, state the objective, next step, and completion evidence in 1–3 sentences.
-- During analysis, report findings, next steps, and blockers. Questions leave approved work active. Honor pause/stop.
-- Label artifact links with repo-relative paths: Plan, Work log, Handoff, Decision, or Report.
-- Quiz only on request: one Socratic or evidence-linked Five Whys question per turn.
-- For walkthroughs, explain changes with examples before editing; await readiness.
-- On pushback, restate Alan's position and recorded-decision conflicts. Before reversing, ask which outcome should change.
-- Before adding reviewer-requested defenses, identify an existing-check bypass. Retain type-level gates when proposals need `as any`.
-
-### Writing rules
+## Writing rules
 
 Apply these rules to agent communication and instruction files.
 
@@ -49,7 +38,7 @@ Preserve exact code, commands, paths, identifiers, quotes, required headings, an
 
 Before sending, check lengths and terms. Distinguish expected results from observed results. State missing checks and unresolved questions. Use glossary terms only as defined, without near-synonyms.
 
-#### Glossary
+### Glossary
 
 A pass verifies and reviews one candidate for completion.
 
@@ -68,13 +57,12 @@ A station is an owner's defined scope.
 ## Delivery
 
 - Before long work, check runtime, commands, network, authentication, database, and service identities.
-- For ticket-shaped, resumed, or related work, reuse plans and dated logs. Map ownership, callers, contracts, risks, and checks; stop reconnaissance when implementation is safe.
+- For ticket-shaped, resumed, or related work, reuse plans and dated logs. Map ownership, callers, contracts, risks, and checks. Stop reconnaissance when implementation is safe.
 - Track multi-step work with live tasks.
-- For behavior changes, use `live-verification` and, for missing reusable tooling, `build-live-verification`. Parallelize independent live checks and tests; sequence prerequisites/shared state. Require both results.
-- Use `verification_evidence` with exact argv, repo-relative cwd, and timeout; default background `start`/`collect`. Synchronous `run` requires service unavailability, explicit request, or lifecycle/correctness need. Report unavailable checks as `Not run: <reason>`.
-- Follow `extensions/extension-dogfooding.md`; use `{}` for uncommitted `inspect_change`, explicit `base`/`head` for commits.
-- Verify claims on the same surface, including persistence; tests/screenshots alone cannot prove integration. Use local/test identities and owned resources. Missing prerequisites block claims.
-- The [guardrails threat model](extensions/guardrails/README.md) defines the supported command surface and out-of-model boundary; reviewers explicitly dismiss only out-of-model inputs with that reason.
+- For behavior changes, use `live-verification` and, for missing reusable tooling, `build-live-verification`. Parallelize independent live checks and tests; sequence prerequisites and shared state. Require both results.
+- Use `verification_evidence` with exact argv, repo-relative cwd, and timeout; use background `start` and `collect` by default. Use synchronous `run` only for an explicit request, unavailable background service, or a concrete lifecycle or correctness need. Report unavailable checks as `Not run: <reason>`.
+- Follow `extensions/extension-dogfooding.md`; use `{}` for uncommitted `inspect_change`, explicit `base` and `head` for commits.
+- Verify claims on the same surface, including persistence; tests and screenshots alone cannot prove integration. Use local or test identities and owned resources. Missing prerequisites block claims.
 
 ## Web Search
 
@@ -82,15 +70,16 @@ A station is an owner's defined scope.
 
 ## Implementation
 
-- Follow repository conventions. Preserve unrelated behavior, trust-boundary validation, useful errors, accessibility, semantic HTML, state/styling patterns, strict types, and data-loss protection. Reject `any`, unjustified casts, disabled tests, swallowed errors, and dead/debug code.
+- Before adding reviewer-requested defenses, identify an existing-check bypass. Retain type-level gates when proposals need `as any`.
+- Follow repository conventions. Preserve unrelated behavior, trust-boundary validation, useful errors, accessibility, semantic HTML, state and styling patterns, strict types, and data-loss protection. Reject `any`, unjustified casts, disabled tests, swallowed errors, and dead code and debug code.
 - Prove pivotal outside-diff assumptions in acceptance or logs. Inspect repeated casts, always-present optionals, and special cases before regex deletion.
 - Model valid states and transitions. Distinguish semantic identifiers. Parse external input at its boundary. Derive authoritative schema types; use validated models internally without redundant guards.
 - Name operations with verbs and values, types, and files with precise nouns. Reserve `data`, `utils`, `manager`, `handler`, and `process` for exact domain terms. Replace unclear names instead of adding comments.
 - Replace magic indexes and parallel arrays with named fields. Preserve externally required indexes, then convert once. End text files with a newline.
 - If overlap or dependencies require sequencing, complete, check, and inspect one increment before continuing.
-- Before production behavior edits, establish requirement-derived expectations and an intended assertion failure: red/green/refactor. Check mechanical/docs changes directly. Characterize refactors with passing tests.
-- If automated TDD is genuinely impractical, establish the closest executable acceptance before editing and disclose missing red/green evidence. Size/testing cost grants no exemption.
-- Test observable contracts and failure paths. Plausible violations must fail; internal refactors must pass. Reject tautological fixture/mock-only assertions, implementation-computed expectations, and setup errors as red. Preserve expectations for incorrect code.
+- Before production behavior edits, establish requirement-derived expectations and an intended assertion failure. Follow red, green, and refactor. Check mechanical and documentation changes directly. Characterize refactors with passing tests.
+- If automated TDD is genuinely impractical, establish the closest executable acceptance before editing and disclose missing red and green evidence. Size and testing cost grant no exemption.
+- Test observable contracts and failure paths. Plausible violations must fail; internal refactors must pass. Reject tautological assertions based only on fixtures or mocks, implementation-computed expectations, and setup errors as red. Preserve expectations for incorrect code.
 
 ## Tests
 
@@ -101,4 +90,4 @@ A station is an owner's defined scope.
 
 - Write self-explanatory code. Comment only for invisible external constraints or workaround reasons.
 - Explain why. Omit code restatements, doc comments, header banners, and section dividers.
-- Keep tickets in follow-up TODO/stub markers only. Shorten or delete comments.
+- Keep tickets in follow-up TODO or stub markers only. Shorten or delete comments.
