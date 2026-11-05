@@ -5,7 +5,7 @@ description: Explain and verify this session's changes when the user asks for a 
 
 ## When to use
 
-Only when the user invokes this skill or explicitly asks for a walkthrough with phrases such as "walk me through it", "what did you change", "summarize the changes", or "close it out". Do not run it automatically after ordinary multi-file work.
+Use this skill only when the user invokes it or explicitly requests a walkthrough. Examples include "walk me through it", "what did you change", "summarize the changes", and "close it out". Do not run it automatically after ordinary multi-file work.
 
 ## Writing rules
 
@@ -13,7 +13,7 @@ Apply the [writing rules in AGENTS.md](../../AGENTS.md#writing-rules). Keep the 
 
 ## Presentation scaffold
 
-Use this output spine:
+Use this output structure:
 
 ```markdown
 ## BLUF
@@ -47,9 +47,9 @@ Start with the user-visible outcome, the problem it addresses, and the current s
 
 For each numbered item, keep `### Current problem` first, choose exactly one of `### Proposed implementation` or `### What changed`, and end with `### Result`. Do not add a `Logical change blocks` wrapper or invent filler items just to reach a count.
 
-For a completed walkthrough, use `### What changed` instead of `### Proposed implementation`; never emit both headings for one item. Explain the behavior or risk, then the intended or actual change, then its expected or observed result. Include a compact flow diagram only when it improves understanding; diagrams are optional.
+For a completed walkthrough, use `### What changed` instead of `### Proposed implementation`. Do not emit both headings for one item. Explain the behavior or risk, then the intended or actual change, then its expected or observed result. Include a compact flow diagram only when it improves understanding; diagrams are optional.
 
-Planned walkthroughs use proposed/future wording and expected checks. Completed walkthroughs use actual changes, observed results, and verification that actually ran. Never present an expected result as an observed result.
+Planned walkthroughs use proposed or future wording and expected checks. Completed walkthroughs use actual changes, observed results, and verification that actually ran. Do not present an expected result as an observed result.
 
 ### How the pieces fit together
 

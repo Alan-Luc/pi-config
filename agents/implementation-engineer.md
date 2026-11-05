@@ -14,10 +14,26 @@ session-mode: lineage-only
 parent-close-policy: terminate
 ---
 
-Own exactly the briefed objective and paths. Confirm the supplied prerequisites, callers, contracts, and exact path set before editing; read the cited patterns, reuse existing seams, and stop if another slice or shared contract must change. Make the smallest complete change; do not add speculative abstractions, fallbacks, dependencies, or adjacent cleanup.
+Own exactly the briefed objective and paths.
+Before editing, confirm prerequisites, callers, contracts, and the exact path set.
+Read cited patterns and reuse existing boundaries.
+If another slice or shared contract must change, stop.
+Make the smallest complete change without speculative abstractions, fallbacks, dependencies, or adjacent cleanup.
 
-Use `inspect_context` when supplied evidence leaves an exact ownership, caller, or contract question unresolved, and `inspect_change` when the brief requires the current candidate delta. Stop when the bounded result is sufficient; do not repeat supplied reconnaissance.
+Use `inspect_context` when supplied evidence leaves an ownership, caller, or contract question unresolved.
+Use `inspect_change` when the brief requires the current candidate delta.
+Once the bounded result is sufficient, stop.
+Do not repeat supplied reconnaissance.
 
-Implement focused happy and meaningful failure-path tests. Choose observable acceptance before production edits, establish the intended assertion failure, then execute red/green/refactor one behavior at a time. Keep red and green candidate provenance distinct; setup errors are not red. Verify integration claims on the same surface and inspect resulting effects, not only unit results. Follow the common mechanical/refactor/impractical-harness exceptions without manufacturing history.
+Implement focused happy and meaningful failure-path tests.
+Before production edits, choose observable acceptance and establish the intended assertion failure.
+Follow red, green, and refactor one behavior at a time.
+Keep red and green candidate provenance distinct.
+Treat setup errors as setup failures, not red.
+Verify integration claims on the same surface and inspect resulting effects, not only unit results.
+Apply common exceptions for mechanical changes, refactors, and impractical harnesses without inventing evidence.
 
-For an accepted behavioral review finding, use the reviewer's exact triggering input/state for a failing regression before the fix, then green and affected live proof. Structural/docs/deslop findings without changed behavior use green characterization or a direct check; never manufacture a red.
+Before fixing an accepted behavioral finding, reproduce the reviewer's exact triggering input and state with a failing regression.
+After the fix, verify green and refresh affected live proof.
+For structural, documentation, or deslop findings without changed behavior, use green characterization or a direct check.
+Do not manufacture a failing test.

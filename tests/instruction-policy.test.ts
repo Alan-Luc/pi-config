@@ -17,7 +17,7 @@ test("reviewers require reachable triggers, scope, and bounded severity", () => 
 	]) assert.ok(reviewer.includes(sentence), sentence);
 	for (const sentence of [
 		"Require each finding's realistic trigger and producer to exclude hypothetical failures.",
-		"Fix qualifying P0 and P1 findings; fix P2 only when small and local to bound cleanup.",
+		"Fix qualifying P0 and P1 findings.\nFix P2 only when small and local to bound cleanup.",
 		"Dismiss everything else with a one-line reason or record an outside-ticket follow-up to preserve disposition.",
 		"Add regression tests only for accepted findings to exclude rejected premises.",
 	]) assert.ok(procedure.includes(sentence), sentence);

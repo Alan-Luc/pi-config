@@ -1,21 +1,37 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { it, test } from "bun:test";
 
-const instructions = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
-const writingRules = instructions.split("## Writing rules\n")[1]?.split("\n## Delivery")[0];
-assert.ok(writingRules, "Writing rules section is required");
-const recipes = readFileSync(new URL("../skills/task-recipe/references/recipes.md", import.meta.url), "utf8");
+const instructionPaths = [
+	"AGENTS.md",
+	"extensions/tech-lead/tech-lead.md",
+	"extensions/extension-dogfooding.md",
+	"extensions/guardrails/README.md",
+	...["agents", "prompts"].flatMap((directory) =>
+		readdirSync(new URL(`../${directory}/`, import.meta.url))
+			.filter((path) => path.endsWith(".md"))
+			.map((path) => `${directory}/${path}`),
+	),
+	...readdirSync(new URL("../skills/", import.meta.url), { recursive: true })
+		.filter((path) => path.endsWith(".md"))
+		.map((path) => `skills/${path}`),
+].sort();
 
 export function lintProse(markdown: string): string[] {
 	const prose = markdown
+		.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")
 		.replace(/^```[^\n]*\n[\s\S]*?^```\s*$/gm, "")
 		.replace(/`[^`\n]+`/g, "literal")
 		.replace(/\[([^\]]+)\]\([^\s)]+\)/g, "$1")
 		.replace(/^#{1,6} .*$/gm, "")
-		.replace(/^\s*(?:\d+\.|[-*])\s+/gm, "");
+		.replace(/^[ \t]*(?:\d+\.|[-*])[ \t]+/gm, "\n\n");
+	const blocks = prose.split(/\n\s*\n/).flatMap((paragraph) =>
+		paragraph.trimStart().startsWith("|")
+			? paragraph.split("\n").flatMap((row) => row.split("|").filter((cell) => cell.trim() && !/^[-:\s]+$/.test(cell)))
+			: [paragraph],
+	);
 	const errors: string[] = [];
-	for (const paragraph of prose.split(/\n\s*\n/)) {
+	for (const paragraph of blocks) {
 		for (const sentence of paragraph.split(/[.!?](?:\s|$)/)) {
 			const words = sentence.trim().split(/\s+/).filter(Boolean).length;
 			if (words > 25) errors.push(`sentence: ${words} words`);
@@ -36,10 +52,12 @@ export function lintProse(markdown: string): string[] {
 	return errors;
 }
 
-it.each([
-	{ name: "Writing rules", markdown: writingRules },
-	{ name: "recipe pilot", markdown: recipes },
-])("$name follows the three prose checks", ({ markdown }) => {
+it.each(instructionPaths)("%s follows the three prose checks", (path) => {
+	const markdown = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+	if (path === "AGENTS.md") {
+		const writingRules = markdown.split("## Writing rules\n")[1]?.split("\n## Delivery")[0];
+		assert.ok(writingRules, "Writing rules section is required");
+	}
 	assert.deepEqual(lintProse(markdown), []);
 });
 
@@ -49,6 +67,15 @@ it.each([
 	{ name: "term substitute", markdown: "Start the review round.", error: "use pass, not review round" },
 ])("rejects $name", ({ markdown, error }) => {
 	assert.ok(lintProse(markdown).includes(error));
+});
+
+test("ignores routing metadata and preserves technical terms", () => {
+	assert.deepEqual(lintProse(`---\nmodel: provider/model\ndescription: ${"word ".repeat(26).trim()}.\n---\n\nPreserve idempotent operations, trust boundaries, and immutable snapshots.\n`), []);
+});
+
+test("checks table cells separately", () => {
+	assert.deepEqual(lintProse(`| First | Second |\n|---|---|\n| ${"word ".repeat(15).trim()} | ${"word ".repeat(15).trim()} |\n`), []);
+	assert.ok(lintProse(`| First |\n|---|\n| ${"word ".repeat(26).trim()} |\n`).includes("sentence: 26 words"));
 });
 
 test("accepts the sentence limit and preserves literal punctuation", () => {

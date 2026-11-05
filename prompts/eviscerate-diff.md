@@ -49,7 +49,8 @@ Join selected results before adjudication to preserve independent judgments.
 Treat missing, failed, or stale results as incomplete coverage to prevent false clearance.
 Require each finding's realistic trigger and producer to exclude hypothetical failures.
 Require scope within Done means and Keep to prevent unrelated remediation.
-Fix qualifying P0 and P1 findings; fix P2 only when small and local to bound cleanup.
+Fix qualifying P0 and P1 findings.
+Fix P2 only when small and local to bound cleanup.
 Dismiss everything else with a one-line reason or record an outside-ticket follow-up to preserve disposition.
 Add regression tests only for accepted findings to exclude rejected premises.
 Before behavioral fixes, reproduce the exact triggering input and state with an intended assertion failure to prove the defect.

@@ -10,24 +10,24 @@ test("live verification owns isolated resources and bounded failure rechecks", a
 		readFile(resolve(import.meta.dir, "../skills/build-live-verification/SKILL.md"), "utf8"),
 	]);
 	for (const marker of [
-		"private temporary root", "OS-bound assigned ports", "unique database/schema, container, project and fixture identities",
-		"clean up only resources this run owns", "sequence work based on observed ownership",
-		"After an unexpected action failure", "recheck instance/build/auth/readiness",
-		"healthy process", "wedged application", "reset only owned disposable state",
-		"preserve the failure", "Do not retry until green",
+		"private temporary root", "OS-bound assigned ports", "unique database, schema, container, project, and fixture identities",
+		"Clean up only this run's resources", "sequence work by observed ownership",
+		"After an unexpected action failure", "Recheck the instance, build, authentication, and readiness",
+		"process health", "wedged application", "Reset only owned disposable state",
+		"preserve the failure", "Do not rerun checks merely to obtain a passing result",
 		"dry-run", "read-only", "cancellation", "no-publication",
-		"compare relevant files, requests, processes or Git refs before and after",
-		"Execute the documented startup, readiness, action, effect and cleanup procedure.",
-		"artifacts remain readable after teardown",
-		"Pin ignored nested tooling inputs", "bounded source/input identity", "do not synchronously copy or hash-walk entire package or install trees",
-		"report the proof blocked rather than waiving the identity claim",
+		"compare relevant files, requests, processes, or Git refs before and after",
+		"Execute the documented startup, readiness, action, effect, and cleanup procedure.",
+		"evidence remains readable after teardown",
+		"Pin ignored nested tooling inputs", "bounded source and input identity", "Do not synchronously copy or hash-walk entire package or install trees",
+		"report blocked proof instead of waiving the identity claim",
 		"Staged snapshots require Git support for `checkout-index --ignore-skip-worktree-bits`",
-		"if unavailable, verification is blocked and must never fall back to live workspace files",
+		"If unavailable, block verification instead of falling back to live workspace files",
 	]) assert.ok(skill.includes(marker), marker);
-	for (const marker of ["private temporary root", "OS-bound assigned ports", "unique database/schema, container, project and fixture identities", "clean up only resources this run owns", "sequence work based on observed ownership"]) {
+	for (const marker of ["private temporary root", "OS-bound assigned ports", "unique database, schema, container, project, and fixture identities", "Clean up only this run's resources", "sequence work by observed ownership"]) {
 		assert.ok(build.includes(marker), marker);
 	}
-	for (const marker of ["bounded source/input identity", "do not synchronously copy or hash-walk entire package or install trees", "report the proof blocked rather than waiving the identity claim"]) {
+	for (const marker of ["bounded source and input identity", "Do not synchronously copy or hash-walk entire package or install trees", "identity requires such a traversal", "report blocked proof instead of waiving"]) {
 		assert.ok(build.includes(marker), marker);
 	}
 });
@@ -38,13 +38,13 @@ test("live-verification skills define bounded feature maps and honest overlap pr
 		readFile(resolve(import.meta.dir, "../skills/live-verification/SKILL.md"), "utf8"),
 		readFile(resolve(import.meta.dir, "../agents/live-verifier.md"), "utf8"),
 	]);
-	for (const marker of ["user entry point", "drive action", "observable or persisted effect", "source anchor", "relevant check", "evidence gap/provenance", "stale-route or wrong-instance control", "selected instance"]) {
+	for (const marker of ["user entry", "drive action", "observable or persisted effect", "source anchor", "check", "evidence gaps and provenance", "stale-route or wrong-instance control", "selected instance"]) {
 		assert.ok(build.includes(marker), marker);
 	}
-	for (const marker of ["bounded feature map", "expected observable/persisted effect", "source anchor", "relevant check", "instance identity", "evidence provenance", "safe stale-route or wrong-instance negative control", "report gaps"]) {
+	for (const marker of ["For touched features", "expected observable or persisted effect", "source anchor", "check", "instance identity", "evidence provenance", "safe stale-route or wrong-instance negative control", "Report gaps"]) {
 		assert.ok(live.includes(marker), marker);
 	}
-	for (const marker of ["alive concurrently", "clean up the first", "second still responds", "later terminal result/effects", "unrelated-listener negative control", "does not prove peer survival", "report Not run"]) {
+	for (const marker of ["alive concurrently", "Clean up the first", "second still responds", "later terminal result and effects", "unrelated-listener negative control", "does not prove peer survival", "report Not run"]) {
 		assert.ok(role.includes(marker), marker);
 	}
 });
@@ -79,12 +79,12 @@ test.each(["live-verification", "build-live-verification", "thermonuclear-correc
 				assert.equal(renamed.length, 1, "discover exactly one composite command");
 				const promptPath = join(agentDir, "prompts", "eviscerate-diff.md");
 				assert.equal(renamed[0].filePath, promptPath);
-				for (const lane of ["live-verification-success", "live-verification-attack"]) assert.ok(renamed[0].content.includes(`\`${lane}\``), `discover ${lane}`);
-				assert.ok(renamed[0].content.includes("Full uses separate fresh worker sessions and briefs"), "Full retains independent success and attack workers");
-				assert.ok(renamed[0].content.includes("Use the existing `live-verifier` profile, not model variants"), "both lanes reuse the existing verifier profile");
-				assert.ok(renamed[0].content.includes("Focused combines its success and attack observations in one read-only live worker"), "Focused combines the worker while reporting distinct observations");
+				for (const coverage of ["success and attack observations", "Separate success and attack workers"]) assert.match(renamed[0].content, new RegExp(coverage, "i"), `discover ${coverage}`);
+				assert.ok(renamed[0].content.includes("At Full, assign separate success and attack workers"), "Full retains independent success and attack workers");
+				assert.ok(renamed[0].content.includes("At Focused, assign one read-only `live-verifier`"), "both lanes reuse the existing verifier profile");
+				assert.ok(renamed[0].content.includes("At Focused, assign one read-only `live-verifier` success and attack observations"), "Focused combines the worker while reporting distinct observations");
 				const role = await readFile(resolve(import.meta.dir, "../agents/live-verifier.md"), "utf8");
-				for (const marker of ["alive concurrently", "clean up the first", "second still responds", "later terminal result/effects", "unrelated-listener negative control", "does not prove peer survival", "report Not run"]) assert.ok(role.includes(marker), marker);
+				for (const marker of ["alive concurrently", "Clean up the first", "second still responds", "later terminal result and effects", "unrelated-listener negative control", "does not prove peer survival", "report Not run"]) assert.ok(role.includes(marker), marker);
 				assert.equal(prompts.some((prompt) => prompt.name === "code_review"), false, "old composite alias is absent");
 				assert.deepEqual(diagnostics.filter((diagnostic) => diagnostic.path === promptPath), []);
 			}
