@@ -49,7 +49,7 @@ test("live-verification skills define bounded feature maps and honest overlap pr
 	}
 });
 
-test.each(["live-verification", "build-live-verification", "thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "task-recipe"])(
+test.each(["live-verification", "build-live-verification", "thermonuclear-correctness-review", "thermonuclear-structural-review", "deslop", "task-recipe", "harness-eval"])(
 	"Pi default discovery advertises %s as a selectable user skill",
 	async (skillName) => {
 		const installRoot = process.env.PI_MANAGED_INSTALL_ROOT;

@@ -15,6 +15,13 @@
 !/extensions/
 !/local/
 !/tests/
+!/evals/
+/evals/*
+!/evals/manual/
+/evals/manual/*
+!/evals/manual/README.md
+!/evals/manual/task-template.md
+!/evals/manual/results-template.csv
 
 node_modules/
 __pycache__/
