@@ -3,6 +3,7 @@
 /*
 !/.gitignore
 !/AGENTS.md
+!/README.md
 !/settings.json
 !/pi-cc-extensions.json
 !/pi-subagents.json
