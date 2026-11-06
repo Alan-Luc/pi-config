@@ -14,7 +14,7 @@ This temporary guidance does not authorize extension changes.
 ## Establish once, share relevant evidence
 
 Give each relevant implementation or review brief the same established evidence:
-- Plans and decisions.
+- Plans, work logs, and decision anchors.
 - Exact paths and ranges.
 - Context snapshots and receipts.
 - Change targets and endpoints.

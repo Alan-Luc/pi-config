@@ -61,6 +61,9 @@ test("the rendered brief template owns the canonical evidence labels and remains
 		assert.equal((template.match(new RegExp(`- ${label}:`, "g")) ?? []).length, 1, label);
 	}
 	assert.equal((blocked(checkSubagentLaunch({ task: template })).match(/fill marker/g) ?? []).length, 8);
+	assert.ok(template.includes("relevant work-log entries and decision anchors"));
+	assert.ok(template.includes("exact evidence paths and check results"));
+	assert.ok(template.includes("smallest exact log entries, evidence paths and source ranges"));
 });
 
 test("non-empty children are validated by name and empty children fall back to task", () => {

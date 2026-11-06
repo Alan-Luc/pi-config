@@ -115,7 +115,7 @@ export const SCHEMAS = {
 				},
 			},
 			{ heading: "Blockers", hint: "blockers to the human actions, or None." },
-			{ heading: "Resume references", hint: "daily work-log path for completed work and checks, active plan or no plan, task-handoff path, next state" },
+			{ heading: "Resume references", hint: "exact work-log paths and entries, evidence paths, active plan or no plan, task-handoff path, next state" },
 		],
 	},
 	brief: {
@@ -127,9 +127,9 @@ export const SCHEMAS = {
 				hint: "four ordered, non-empty evidence lines; further lines are allowed",
 				allowExtraLines: true,
 				lines: [
-					{ pattern: /^- Source of truth: \S.*$/, label: "Source of truth", example: "- Source of truth: <!-- fill: active plan and decision headings, or None -->" },
-					{ pattern: /^- Verified facts: \S.*$/, label: "Verified facts", example: "- Verified facts: <!-- fill: directly confirmed facts and useful evidence -->" },
-					{ pattern: /^- Read first: \S.*$/, label: "Read first", example: "- Read first: <!-- fill: smallest exact paths/ranges -->" },
+					{ pattern: /^- Source of truth: \S.*$/, label: "Source of truth", example: "- Source of truth: <!-- fill: active plan, relevant work-log entries and decision anchors, or None -->" },
+					{ pattern: /^- Verified facts: \S.*$/, label: "Verified facts", example: "- Verified facts: <!-- fill: directly confirmed facts with exact evidence paths and check results -->" },
+					{ pattern: /^- Read first: \S.*$/, label: "Read first", example: "- Read first: <!-- fill: smallest exact log entries, evidence paths and source ranges -->" },
 					{ pattern: /^- Open questions: \S.*$/, label: "Open questions", example: "- Open questions: <!-- fill: only questions owned by this worker -->" },
 				],
 			},

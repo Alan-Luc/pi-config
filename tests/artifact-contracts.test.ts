@@ -121,6 +121,9 @@ test("handoffs contain only human actions, blockers, and resume references", () 
 	const handoff = filledDocument("handoff");
 	assert.ok(!handoff.includes("## Agent work"));
 	assert.ok(!handoff.includes("## Verification"));
+	const template = renderTemplate("handoff");
+	assert.ok(template.includes("exact work-log paths and entries"));
+	assert.ok(template.includes("evidence paths"));
 });
 
 test("missing, extra, duplicate, reordered, and renamed sections are rejected", () => {
