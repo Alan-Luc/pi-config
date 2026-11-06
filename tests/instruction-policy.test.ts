@@ -6,6 +6,22 @@ const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.ur
 const reviewer = read("agents/code-reviewer.md");
 const procedure = read("prompts/eviscerate-diff.md");
 const lead = read("extensions/tech-lead/tech-lead.md");
+const globalInstructions = read("AGENTS.md");
+
+test("CDC authority distinguishes standing task-branch grants from other pushes", () => {
+	for (const sentence of [
+		"Never push outside the CDC task-branch policy without Alan\'s explicit authorization.",
+		"The parent CDC may push verified frozen candidates to task branches under the publication grant.",
+		"Preserve existing guardrail checks and protected-branch restrictions.",
+		"Require Alan\'s explicit authorization for other pushes.",
+		"Local commits grant no push authority.",
+		"Children never commit or push; only the parent commits.",
+		"Allow routine prompt and configuration changes on `main`.",
+	]) assert.ok(globalInstructions.includes(sentence), sentence);
+	assert.equal(globalInstructions.split("Keep experiments on `benchmark/<run-id>`").length - 1, 1);
+	assert.ok(!globalInstructions.includes("Never put experiments or changes to prompts or configuration on `main`"));
+	assert.ok(lead.includes("Use the CDC task-branch policy in `AGENTS.md` for pushes."));
+});
 
 test("reviewers require reachable triggers, scope, and bounded severity", () => {
 	for (const sentence of [

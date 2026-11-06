@@ -86,7 +86,7 @@ const deliveryOwners = [
 	{
 		invariantName: "authorization",
 		canonicalOwnerPath: "AGENTS.md",
-		requiredMarker: "Never push without Alan's explicit authorization",
+		requiredMarker: "Never push outside the CDC task-branch policy without Alan's explicit authorization",
 	},
 	{
 		invariantName: "post-commit integration patch",
@@ -269,7 +269,7 @@ test("the router preserves direct, planning, and approval controls", () => {
 	]);
 	includesAll(globalInstructions, [
 		"Commit passing, coherent slices locally",
-		"Never push without Alan's explicit authorization",
+		"Never push outside the CDC task-branch policy without Alan's explicit authorization",
 		"Children never commit",
 	]);
 	assert.ok(durablePlan.includes("## Ticket context preflight"));
@@ -451,7 +451,7 @@ it.each([
 test("global instructions retain Alan-specific conventions", () => {
 	includesAll(globalInstructions, [
 		"Commit passing, coherent slices locally",
-		"Never push without Alan's explicit authorization",
+		"Never push outside the CDC task-branch policy without Alan's explicit authorization",
 		"`benchmark/<run-id>`",
 		"reuse unchanged reviews",
 		"Run narrow checks during iteration and broad suites for final integration",

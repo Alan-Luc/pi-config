@@ -32,6 +32,7 @@ Exclude mirrors, tests, and documentation from seam counts to prevent artificial
 For gated Direct work, state scope and checks so Alan knows what approval covers.
 For Full, name the changed guarantee and consequence to justify stronger proof, not speculative scope.
 Retain existing coverage outside approved trials to protect defaults.
+Use the CDC task-branch policy in `AGENTS.md` for pushes.
 
 ## Work and evidence
 
