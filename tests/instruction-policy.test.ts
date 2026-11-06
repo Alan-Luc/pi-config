@@ -20,6 +20,11 @@ test("reviewers require reachable triggers, scope, and bounded severity", () => 
 		"Fix qualifying P0 and P1 findings.",
 		"Dismiss everything else with a one-line reason or record an outside-ticket follow-up to preserve disposition.",
 		"Add regression tests only for accepted findings to exclude rejected premises.",
+		"Limit each fix to the accepted trigger and preserve unrelated behavior.",
+		"Before remediation review, run the regression and affected tests.",
+		"Give fresh reviewers the fix delta, affected contracts, and regression results.",
+		"After review fixes settle, refresh only affected live proof.",
+		"Reuse live proof while tested source, configuration, inputs, and runtime remain unchanged.",
 	]) assert.ok(procedure.includes(sentence), sentence);
 	assert.ok(!procedure.includes("Fix P2 only when small and local"));
 	assert.ok(reviewer.includes("Leave acceptance, fixes, and regression tests to the parent"));

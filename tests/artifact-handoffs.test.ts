@@ -501,7 +501,7 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		await runGit(directory, "config", "user.email", "seal@example.test");
 		await runGit(directory, "config", "user.name", "Seal test");
 		writeFileSync(join(directory, "source.txt"), "committed source\n");
-		writeFileSync(join(directory, ".gitignore"), "/runtime-input.json\n");
+		writeFileSync(join(directory, ".gitignore"), "/runtime-input.json\n/notes.md\n");
 		await runGit(directory, "add", "source.txt", ".gitignore");
 		await runGit(directory, "commit", "--quiet", "-m", "base");
 		const inputPath = join(directory, "runtime-input.json");
@@ -636,8 +636,15 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		await assert.rejects(clearanceTool.execute("missing-lane", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections.slice(0, 3), adjudication: "Missing attack lane." }, undefined, undefined, context), /complete distinct selected lanes/);
 		await clearanceTool.execute("joined-lanes", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections, adjudication: "All four owner-bound fixture lanes approved." }, undefined, undefined, context);
 		assert.ok(await query(), "complete authoritative lane results must join the parent seal");
+		registered.get("tool_call")?.({ toolName: "write", toolCallId: "parent-notes", input: { path: join(directory, "notes.md"), content: "Review disposition recorded.\n" } } as never, context as never);
+		writeFileSync(join(directory, "notes.md"), "Review disposition recorded.\n");
+		registered.get("tool_result")?.({ toolName: "write", toolCallId: "parent-notes" } as never, context as never);
+		assert.deepEqual(verificationEvidenceErrors(repairedProof.id), []);
+		assert.ok(await query(), "ignored parent notes must preserve finalized child results with unchanged source and input pins");
 		resultGeneration = "restarted-result-owner";
 		assert.equal(await query(), undefined, "a replaced result-owner generation cannot authorize an existing seal");
+		registered.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "source-control-proof", input: { operation: "run" } } as never, context as never);
+		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "source-control-proof", details: { protocolVersion: 2, operation: "run", evidence: repairedProof } } as never, context as never);
 		await clearanceTool.execute("source-control", { tier: "Direct", evidenceIds: [repairedProof.id], lanes: [], adjudication: "Isolate the source mutation control." }, undefined, undefined, context);
 		assert.ok(await query());
 		writeFileSync(join(directory, "source.txt"), "mutated after seal\n");

@@ -66,7 +66,7 @@ const deliveryOwners = [
 	{
 		invariantName: "material remediation",
 		canonicalOwnerPath: "prompts/eviscerate-diff.md",
-		requiredMarker: "After fixes, refresh affected checks, reviewer pairs, and live proof to preserve current clearance."
+		requiredMarker: "After review fixes settle, refresh only affected live proof."
 	},
 	{
 		invariantName: "broad integration and candidate recapture",
@@ -234,7 +234,7 @@ test("router preserves owned-checkout execution and planning read-only controls"
 	]);
 	includesAll(reviewPrompt, [
 		"For applicable live risks, check boundaries, retries, cancellation, and negative effects",
-		"After fixes, refresh affected checks, reviewer pairs, and live proof",
+		"After review fixes settle, refresh only affected live proof",
 		"Give the success observer one applicable broad integration run",
 	]);
 });
@@ -421,7 +421,7 @@ test("implementation and review roles preserve material behavior", () => {
 	assert.match(agents["code-reviewer"], /^model: openai-codex\/gpt-6-luna$/m);
 	assert.ok(reviewPrompt.includes("For pre-existing changes, supply `Review range: HEAD`"));
 	assert.ok(reviewPrompt.includes("or `Review range: <base>...<head>`"));
-	assert.ok(reviewPrompt.includes("Review the fix delta and affected contracts instead of the whole panel"));
+	assert.ok(reviewPrompt.includes("Give fresh reviewers the fix delta, affected contracts, and regression results"));
 	assert.ok(reviewPrompt.includes("agents/live-verifier.md"));
 	assert.ok(reviewPrompt.includes("Route authorized tooling creation through `build-live-verification`"));
 	assert.ok(reviewPrompt.includes("Require current selected clearance on the final candidate"));
@@ -528,7 +528,8 @@ test("review procedure preserves accepted-only regression and affected live-proo
 	includesAll(reviewPrompt, [
 		"Add regression tests only for accepted findings",
 		"Require scope within Done means and Keep",
-		"After fixes, refresh affected checks, reviewer pairs, and live proof",
+		"Before remediation review, run the regression and affected tests",
+		"After review fixes settle, refresh only affected live proof",
 		"For applicable live risks, check boundaries, retries, cancellation, and negative effects",
 		"Require current selected clearance on the final candidate",
 	]);
@@ -549,9 +550,9 @@ test("policy-selected review preserves independent coverage and bounded findings
 		"Require each finding's realistic trigger and producer",
 		"Require scope within Done means and Keep",
 		"Add regression tests only for accepted findings",
-		"After fixes, refresh affected checks, reviewer pairs, and live proof",
+		"After review fixes settle, refresh only affected live proof",
+		"Give fresh reviewers the fix delta, affected contracts, and regression results",
 	]);
-	assert.doesNotMatch(reviewPrompt, /Start a fresh reviewer session for each changed-source delta/);
 	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
 	includesAll(cleanup, ["Ponytail", "trust-boundary", "data-loss", "unchanged behavior", "read-only", "parent"]);
 });

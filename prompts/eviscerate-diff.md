@@ -54,8 +54,11 @@ Dismiss everything else with a one-line reason or record an outside-ticket follo
 Add regression tests only for accepted findings to exclude rejected premises.
 Before behavioral fixes, reproduce the exact triggering input and state with an intended assertion failure to prove the defect.
 For nonbehavior findings, use passing characterization or a direct check to prevent artificial failures.
-After fixes, refresh affected checks, reviewer pairs, and live proof to preserve current clearance.
-Review the fix delta and affected contracts instead of the whole panel to bound remediation.
+Limit each fix to the accepted trigger and preserve unrelated behavior.
+Before remediation review, run the regression and affected tests.
+Give fresh reviewers the fix delta, affected contracts, and regression results.
+After review fixes settle, refresh only affected live proof.
+Reuse live proof while tested source, configuration, inputs, and runtime remain unchanged.
 Require current selected clearance on the final candidate to prevent stale completion.
 Record each lane's findings, severity, disposition, and evidence in the ticket's work log to inform later downgrades.
 Distinguish zero findings from skipped or missing coverage to keep that record useful.
