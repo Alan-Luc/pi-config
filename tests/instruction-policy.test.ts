@@ -23,6 +23,17 @@ test("CDC authority distinguishes standing task-branch grants from other pushes"
 	assert.ok(lead.includes("Use the CDC task-branch policy in `AGENTS.md` for pushes."));
 });
 
+test("coverage exceptions have one canonical owner without reducing seats", () => {
+	const correctness = lead.split("\n").find((line) => line.startsWith("| Correctness |"));
+	assert.equal(correctness, "| Correctness | Pair for explicit review | One routinely; pair for explicit review unless Alan approves the single-seat trial | Reviewer pair |");
+	assert.ok(lead.includes("For the single-seat Focused trial, select a reviewer from a different model family than the builder."));
+	assert.ok(lead.includes("Preserve explicitly requested deeper coverage."));
+	assert.ok(procedure.includes("Use the `tech-lead.md` matrix for correctness seat counts and the approved single-seat trial."));
+	for (const duplicate of ["For routine Focused correctness", "For explicit Direct review", "For explicit Focused review", "Use pairs at Full"]) {
+		assert.ok(!procedure.includes(duplicate), duplicate);
+	}
+});
+
 test("reviewers require reachable triggers, scope, and bounded severity", () => {
 	for (const sentence of [
 		"Name the realistic input, caller, or state and its producer to establish that the trigger can occur here.",

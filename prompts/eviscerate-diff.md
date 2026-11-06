@@ -9,11 +9,7 @@ Review `${@:-the current changes}` as tech lead.
 Use the `tech-lead.md` matrix to select coverage by risk, not size.
 Preserve explicit review scope to prevent silent coverage cuts.
 Record the candidate, prerequisites, lanes, and reasons for optional or skipped coverage to make selection inspectable.
-For routine Focused correctness, retain one reviewer to match existing coverage.
-For explicit Direct review, retain a pair to preserve requested independent coverage.
-For explicit Focused review, retain a pair unless Alan approves the single-seat trial to protect existing defaults.
-For that trial, select a different model family than the builder to preserve independent judgment.
-Use pairs at Full to retain independent challenge.
+Use the `tech-lead.md` matrix for correctness seat counts and the approved single-seat trial.
 Pair `code-reviewer` with `code-reviewer-sonnet` for ordinary risks.
 For difficult risks, pair `code-reviewer-sol` with `code-reviewer-opus` to use persisted profiles.
 Keep configured models and effort to prevent unapproved substitutions.

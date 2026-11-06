@@ -128,7 +128,7 @@ test("tech lead owns the current ceremony matrix and its conditional gates", () 
 	const cells = (name: string) => row(name).split("|").slice(2, 5).map((cell) => cell.trim());
 	assert.deepEqual(cells("Recipe and tasks"), ["", "Required", "Required"]);
 	assert.deepEqual(cells("Extra approval"), ["", "", "Trust boundaries"]);
-	assert.deepEqual(cells("Correctness"), ["Explicit requests", "One reviewer; cross-family trial requires Alan's approval", "Reviewer pair"]);
+	assert.deepEqual(cells("Correctness"), ["Pair for explicit review", "One routinely; pair for explicit review unless Alan approves the single-seat trial", "Reviewer pair"]);
 	assert.deepEqual(cells("Work log"), ["", "Each slice and pass", "Each slice and pass"]);
 	includesAll(row("Selection"), ["Mechanical or prose", "unchanged behavior", "Bounded integration", "Consequential", "security", "data safety", "caller guarantees"]);
 	includesAll(row("Durable plan"), ["Explicit planning", "approval gates", "existing plan", "Required"]);
@@ -540,7 +540,7 @@ test("policy-selected review preserves independent coverage and bounded findings
 	includesAll(techLead, ["Consequential changes to security, data safety, trust, persistence, or caller guarantees", "at least three ownership seams", "Reviewer pair", "Separate success and attack workers", "Preserve explicitly requested deep review coverage"]);
 	includesAll(reviewPrompt, [
 		"code-reviewer-sonnet", "code-reviewer-sol", "identical briefs and frozen metadata",
-		"For explicit Direct review, retain a pair",
+		"Use the `tech-lead.md` matrix for correctness seat counts and the approved single-seat trial.",
 		"shared reviewer registry for metadata, hashes, and paths", "At Full, assign separate success and attack workers",
 		"For applicable live risks, check boundaries, retries, cancellation, and negative effects",
 		"Require each finding's realistic trigger and producer",

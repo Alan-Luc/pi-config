@@ -23,9 +23,12 @@ Require Alan's approval before downgrading to protect coverage.
 | Extra approval | | | Trust boundaries |
 | Test first | Check consuming surface | Failing behavior test; passing refactor tests | Include meaningful failure paths |
 | Live verification | | One worker covers success and attack | Separate success and attack workers |
-| Correctness | Explicit requests | One reviewer; cross-family trial requires Alan's approval | Reviewer pair |
+| Correctness | Pair for explicit review | One routinely; pair for explicit review unless Alan approves the single-seat trial | Reviewer pair |
 | Structural review | | Named risk only | Named risk only |
 | Work log | | Each slice and pass | Each slice and pass |
+
+For the single-seat Focused trial, select a reviewer from a different model family than the builder.
+Preserve explicitly requested deeper coverage.
 
 Require approval for explicit requests, distributed boundaries, or at least three ownership seams to protect owners.
 Exclude mirrors, tests, and documentation from seam counts to prevent artificial gates.
