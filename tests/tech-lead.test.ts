@@ -46,7 +46,7 @@ const deliveryOwners = [
 	{
 		invariantName: "dependency slicing",
 		canonicalOwnerPath: "extensions/tech-lead/tech-lead.md",
-		requiredMarker: "Schedule by dependencies and owned paths to prevent conflicts and needless waits.",
+		requiredMarker: "Schedule by dependencies and owned paths.",
 	},
 	{
 		invariantName: "worker boundaries",
@@ -66,17 +66,17 @@ const deliveryOwners = [
 	{
 		invariantName: "material remediation",
 		canonicalOwnerPath: "prompts/eviscerate-diff.md",
-		requiredMarker: "After fixes, refresh affected checks, reviewer pairs, and live proof to preserve current clearance."
+		requiredMarker: "After fixes, refresh affected checks, reviewer pairs, and live proof."
 	},
 	{
 		invariantName: "broad integration and candidate recapture",
 		canonicalOwnerPath: "prompts/eviscerate-diff.md",
-		requiredMarker: "Give the success observer one applicable broad integration run to prevent duplicate runs.",
+		requiredMarker: "Give the success observer one applicable broad integration run.",
 	},
 	{
 		invariantName: "background jobs",
 		canonicalOwnerPath: "prompts/eviscerate-diff.md",
-		requiredMarker: "Reconcile task-owned jobs before freezing to prevent hidden mutations.",
+		requiredMarker: "Reconcile task-owned jobs before freezing.",
 	},
 	{
 		invariantName: "background-first verification",
@@ -96,7 +96,7 @@ const deliveryOwners = [
 	{
 		invariantName: "finish records",
 		canonicalOwnerPath: "extensions/tech-lead/tech-lead.md",
-		requiredMarker: "Record each slice once through `work_log` to prevent competing histories.",
+		requiredMarker: "Record each slice once through `work_log`.",
 
 	},
 	{
@@ -224,7 +224,7 @@ test("router preserves owned-checkout execution and planning read-only controls"
 		"Target the owned checkout in every command.",
 		"Treat `cd` as local to one call.",
 		"Launch writers from the owned checkout or keep writes local because briefs cannot confine paths.",
-		"For planning requests, present goals, scope, decisions, slices, checks, and questions to inform build approval",
+		"For planning requests, present goals, scope, decisions, slices, checks, and questions",
 		"Until Alan approves implementation, edit only the designated plan file during planning.",
 		"Treat delivery receipts and stale reports as incomplete results.",
 		"Repair delivery or report unknown outcomes instead of assuming completion.",
@@ -456,7 +456,6 @@ test("global instructions retain Alan-specific conventions", () => {
 		"reuse unchanged reviews",
 		"Run narrow checks during iteration and broad suites for final integration",
 		"`it.each([...])`",
-		"Use “malicious,” not “nasty,”",
 		"Comment only for invisible external constraints or workaround reasons",
 		"three failed attempts",
 	]);

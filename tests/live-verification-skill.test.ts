@@ -4,6 +4,25 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+test("eval discovery links to one complete workflow", async () => {
+	const [manual, skill] = await Promise.all([
+		readFile(resolve(import.meta.dir, "../evals/manual/README.md"), "utf8"),
+		readFile(resolve(import.meta.dir, "../skills/harness-eval/SKILL.md"), "utf8"),
+	]);
+	assert.ok(manual.includes("../../skills/harness-eval/SKILL.md"));
+	assert.ok(!manual.includes('"action":"start"'));
+	assert.ok(!skill.includes("Read [the manual kit]"));
+	for (const marker of ['"action":"manage"', '"action":"start"', "owner-only directory outside Git",
+		"without loading duplicate baseline resources", "Do not copy credentials", "wrong-runtime run",
+		"manager cannot answer", "executor access boundary", "hidden checks outside executor access",
+		"## Session notes", "## Historical blind replay"]) assert.ok(skill.includes(marker), marker);
+	for (const [path, content] of [["evals/manual/README.md", manual], ["skills/harness-eval/SKILL.md", skill]]) {
+		for (const match of content.matchAll(/\]\(([^)]+)\)/g)) {
+			await readFile(resolve(import.meta.dir, "..", path, "..", match[1]), "utf8");
+		}
+	}
+});
+
 test("live verification owns isolated resources and bounded failure rechecks", async () => {
 	const [skill, build] = await Promise.all([
 		readFile(resolve(import.meta.dir, "../skills/live-verification/SKILL.md"), "utf8"),
