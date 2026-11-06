@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import type { EventBus } from "@earendil-works/pi-coding-agent";
 import { PUBLICATION_CLEARANCE_REQUEST, PUBLICATION_CLEARANCE_RESPONSE, type PublicationClearanceRequest, type PublicationClearanceResponse } from "../artifact-contracts/publication-clearance.ts";
-import type { FrozenPublicationCandidate, PublicationGrant, PublicationRuntime, PublicationScanRequest, PublicationScanResult, PublicationTarget } from "./publication.ts";
+import { PublicationPrerequisiteError, type FrozenPublicationCandidate, type PublicationGrant, type PublicationRuntime, type PublicationScanRequest, type PublicationScanResult, type PublicationTarget } from "./publication.ts";
 
 export type ScannerConfig = {
 	executable: string;
@@ -66,12 +66,14 @@ function queryClearance(events: EventBus, cwd: string): PublicationClearanceResp
 export async function createScannerAdapter(identity: ScannerIdentity): Promise<(request: PublicationScanRequest) => Promise<PublicationScanResult>> {
 	const executable = resolve(identity.executable);
 	const configPath = resolve(identity.configPath);
-	const [binary, config] = await Promise.all([readFile(executable), readFile(configPath)]);
-	if (sha256(config) !== identity.configSha256) throw new Error("scanner configuration identity mismatch");
+	const [binary, config] = await Promise.all([readFile(executable), readFile(configPath)]).catch(() => {
+		throw new PublicationPrerequisiteError("approved scanner executable or configuration is unreadable; Recovery: ask Alan to provision the pinned scanner and configuration");
+	});
+	if (sha256(config) !== identity.configSha256) throw new PublicationPrerequisiteError("scanner configuration identity mismatch; Recovery: ask Alan to restore the approved scanner configuration");
 	const version = await execute(executable, ["--version"]);
-	if (version.trim() !== identity.version) throw new Error("scanner version identity mismatch");
+	if (version.trim() !== identity.version) throw new PublicationPrerequisiteError("scanner version identity mismatch; Recovery: ask Alan to restore the approved scanner version");
 	const scannerId = sha256(`${sha256(binary)}\n${version.trim()}\n${identity.configSha256}`);
-	if (scannerId !== identity.scannerId) throw new Error("scanner executable identity mismatch");
+	if (scannerId !== identity.scannerId) throw new PublicationPrerequisiteError("scanner executable identity mismatch; Recovery: ask Alan to restore the approved scanner executable");
 	return async (request) => {
 		let passed = true;
 		for (const blobId of request.blobIds) {
@@ -178,8 +180,14 @@ export function pushUrlMatchesProject(pushUrl: string, instance: string, project
 }
 
 export async function loadPublicationConfig(path: string | undefined): Promise<unknown> {
-	if (!path) return undefined;
-	try { return JSON.parse(await readFile(path, "utf8")) as unknown; } catch { return undefined; }
+	const recovery = "; Recovery: ask Alan to select an existing valid external grant with /publication-config or set PI_PUBLICATION_CONFIG_PATH before startup";
+	if (!path) throw new PublicationPrerequisiteError("PI_PUBLICATION_CONFIG_PATH is unset and no session grant is selected" + recovery);
+	const contents = await readFile(path, "utf8").catch(() => { throw new PublicationPrerequisiteError("publication configuration is unreadable" + recovery); });
+	let config: unknown;
+	try { config = JSON.parse(contents); } catch { throw new PublicationPrerequisiteError("publication configuration is not JSON" + recovery); }
+	if (record(config) && config.enabled === false) throw new PublicationPrerequisiteError("publication configuration is disabled" + recovery);
+	if (!parsePublicationConfig(config)) throw new PublicationPrerequisiteError("publication configuration does not match the grant schema" + recovery);
+	return config;
 }
 
 export function createGitLabTargetResolver(
@@ -193,7 +201,9 @@ export function createGitLabTargetResolver(
 			|| typeof config.project !== "string" || !config.project || typeof config.gitlabTokenEnv !== "string"
 			|| typeof config.pushUrl !== "string" || config.pushUrl !== pushUrl) return undefined;
 		const token = env[config.gitlabTokenEnv];
-		if (!token || !pushUrlMatchesProject(pushUrl, config.instance, config.project)) return undefined;
+		if (!/^[A-Z_][A-Z0-9_]*$/.test(config.gitlabTokenEnv)) return undefined;
+		if (!token) throw new PublicationPrerequisiteError(`GitLab token variable ${config.gitlabTokenEnv} is unset; Recovery: ask Alan to set the configured credential variable before starting Pi`);
+		if (!pushUrlMatchesProject(pushUrl, config.instance, config.project)) return undefined;
 		const instance = config.instance.replace(/\/$/, "");
 		const encodedProject = encodeURIComponent(config.project);
 		const headers = { "PRIVATE-TOKEN": token };

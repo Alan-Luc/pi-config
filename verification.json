@@ -25,6 +25,7 @@
         "tests/pi-vim-autocomplete-enter.test.mjs",
         "tests/publication-authorization.test.ts",
         "tests/publication-runtime.test.ts",
+        "tests/publication-workflow.test.ts",
         "tests/recall-session-reader.test.ts",
         "tests/review-preparation.test.ts",
         "tests/role-mcp.test.ts",

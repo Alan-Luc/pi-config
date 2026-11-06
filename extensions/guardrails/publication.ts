@@ -5,6 +5,8 @@ import { realpath } from "node:fs/promises";
 
 const HASH = /^[0-9a-f]{40,64}$/;
 
+export class PublicationPrerequisiteError extends Error {}
+
 export type PublicationGrant = {
 	enabled: boolean;
 	instance: string;
@@ -225,7 +227,7 @@ export async function authorizeGitPublication(
 		if (pushMappings.length > 0) return deny("configured remote.origin.push could retarget the publication destination");
 		if (recurseSubmodules) return deny("effective submodule recursion could publish unscanned objects");
 		const candidate = await runtime.loadFrozenCandidate();
-		if (!candidate || !validCandidate(candidate)) return deny("trusted frozen candidate unavailable or invalid");
+		if (!candidate || !validCandidate(candidate)) return deny("trusted frozen candidate unavailable or invalid; Recovery: after the final commit collect fresh proof and call publication_clearance for this worktree");
 		if (candidate.head !== head || candidate.tree !== tree || candidate.branch !== branch
 			|| candidate.indexTree !== indexTree || digest(status) !== candidate.statusDigest) return deny("Git HEAD, tree, branch, or index differs from the frozen candidate");
 		if (!(await runtime.isCandidateCurrent(candidate))) return deny("frozen source or verification inputs are stale");
@@ -278,7 +280,7 @@ export async function authorizeGitPublication(
 			return deny("frozen candidate, remote ref, or protection identity changed during authorization");
 		}
 		return { allowed: true, candidateFingerprint, commitIds: sortedCommits, blobIds: blobs, scannerId: scan.scannerId };
-	} catch {
-		return deny("Git state or trusted publication adapter unavailable");
+	} catch (error) {
+		return deny(error instanceof PublicationPrerequisiteError ? error.message : "Git state or trusted publication adapter unavailable");
 	}
 }

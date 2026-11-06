@@ -395,7 +395,7 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 			const slots = params.lanes.map((lane) => lane.slot);
 			const required = params.tier === "Full" ? ["correctness-primary", "correctness-counterpart", "live-success", "live-attack"] : params.tier === "Focused" ? ["correctness-primary", "correctness-counterpart", "live-success"] : [];
 			if (new Set(slots).size !== slots.length || required.some((slot) => !slots.includes(slot as SelectedLane["slot"]))
-				|| new Set(params.lanes.map((lane) => lane.childId)).size !== params.lanes.length) throw new Error("publication requires complete distinct selected lanes");
+				|| new Set(params.lanes.map((lane) => lane.childId)).size !== params.lanes.length) throw new Error(`publication requires complete distinct selected lanes; required: ${required.join(", ") || "none"}; missing: ${required.filter((slot) => !slots.includes(slot as SelectedLane["slot"])).join(", ") || "none"}; Recovery: use childId and incarnationId from finalized Publication lane reports for distinct required lanes`);
 			const capturedGeneration = generation;
 			const capturedActivity = activityRevision;
 			if (params.evidenceIds.some((id) => !freshEvidenceIds.has(id))) throw new Error("publication requires fresh owner-observed proof after tool activity");
