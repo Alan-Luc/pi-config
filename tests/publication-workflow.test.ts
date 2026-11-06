@@ -52,7 +52,7 @@ test.each([
 	} finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("native selection uses an existing grant without changing environment or files", async () => {
+test.each(["session_shutdown", "session_tree"])("native selection preserves external bytes and resets on %s", async (resetEvent) => {
 	const previous = process.env.PI_PUBLICATION_CONFIG_PATH;
 	delete process.env.PI_PUBLICATION_CONFIG_PATH;
 	const f = fixture();
@@ -71,7 +71,7 @@ test("native selection uses an existing grant without changing environment or fi
 			await expect(f.push()).rejects.toThrow("Git state or trusted publication adapter unavailable");
 		}
 		expect(readFileSync(f.path, "utf8")).toBe(original);
-		await f.handlers.get("session_shutdown")!({}, f.ctx);
+		await f.handlers.get(resetEvent)!({}, f.ctx);
 		await expect(f.push()).rejects.toThrow("PI_PUBLICATION_CONFIG_PATH is unset");
 	} finally {
 		if (previous === undefined) delete process.env.PI_PUBLICATION_CONFIG_PATH;

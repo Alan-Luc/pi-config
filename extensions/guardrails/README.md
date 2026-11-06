@@ -36,7 +36,7 @@ Set `PI_PUBLICATION_CONFIG_PATH` before startup, or run `/publication-config` an
 The command validates the existing schema and selects the path for this session only.
 It does not create grants, change environment variables, persist settings, install scanners, seal proof, or push.
 Cancellation and invalid selections preserve the prior path.
-Session replacement and shutdown discard the selection.
+Session replacement, tree navigation, and shutdown discard the selection.
 Children and sessions without native UI cannot select a grant.
 
 Use the exact single effective URL from `git remote get-url --push --all origin` as `pushUrl`.
