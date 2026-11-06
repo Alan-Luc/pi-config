@@ -21,6 +21,8 @@ test("Pi default discovery loads and GitHub pushes bypass non-GitHub publication
 	}
 	const { DefaultResourceLoader, SettingsManager } = await loadPiApi();
 	const cwd = await mkdtemp(join(tmpdir(), "pi-extension-load-"));
+	const publicationConfigPath = process.env.PI_PUBLICATION_CONFIG_PATH;
+	delete process.env.PI_PUBLICATION_CONFIG_PATH;
 	try {
 		expect(isSubagentChildEnvironment(process.env)).toBe(false);
 		const loader = new DefaultResourceLoader({
@@ -43,6 +45,7 @@ test("Pi default discovery loads and GitHub pushes bypass non-GitHub publication
 		const notifyUser = extensions.get(resolve(import.meta.dir, "../extensions/notify-user.ts"));
 
 		expect(guardrails?.handlers.has("tool_call")).toBe(true);
+		expect(guardrails?.commands.has("publication-config")).toBe(true);
 		const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 		git("init", "--quiet", "-b", "alan/fixture");
 		git("config", "user.email", "fixture@example.test");
@@ -61,12 +64,14 @@ test("Pi default discovery loads and GitHub pushes bypass non-GitHub publication
 		expect(git("show-ref")).toBe(before);
 		expect(git("remote", "get-url", "--push", "origin")).toBe("git@github.com:Alan-Luc/fixture.git");
 		git("remote", "set-url", "origin", "git@gitlab.com:Alan-Luc/fixture.git");
-		await expect(Promise.all((callbacks ?? []).map((callback) => callback({ type: "tool_call", toolName: "bash", toolCallId: "loaded-push", input: { command: "git push origin alan/fixture" } }, { cwd })))).rejects.toThrow(/publication.*(?:gate disabled|grant unavailable|not an allowed parent push shape)/);
+		await expect(Promise.all((callbacks ?? []).map((callback) => callback({ type: "tool_call", toolName: "bash", toolCallId: "loaded-push", input: { command: "git push origin alan/fixture" } }, { cwd })))).rejects.toThrow("PI_PUBLICATION_CONFIG_PATH is unset");
 		expect(git("show-ref")).toBe(before);
 		expect(shortcuts?.shortcuts.has("alt+p")).toBe(true);
 		expect(workLog?.tools.has("work_log")).toBe(true);
 		expect(notifyUser?.tools.has("notify_user")).toBe(true);
 	} finally {
+		if (publicationConfigPath === undefined) delete process.env.PI_PUBLICATION_CONFIG_PATH;
+		else process.env.PI_PUBLICATION_CONFIG_PATH = publicationConfigPath;
 		await rm(cwd, { recursive: true, force: true });
 	}
 });

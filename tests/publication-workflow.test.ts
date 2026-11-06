@@ -13,7 +13,7 @@ const config = {
 };
 const events = { on: () => () => {}, emit: () => {} };
 
-function fixture() {
+function fixture(child = false) {
 	const root = mkdtempSync(join(tmpdir(), "publication-selection-"));
 	const path = join(root, "grant.json");
 	writeFileSync(path, JSON.stringify(config));
@@ -27,7 +27,17 @@ function fixture() {
 		waitForIdle: async () => {},
 		ui: { input: async () => input, notify: (message: string) => notices.push(message) },
 	};
-	guardrails({ on: (name: string, handler: (event: unknown, ctx: unknown) => unknown) => { handlers.set(name, handler); }, registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => { commands.set(name, command); }, events } as never);
+	const markers = ["PI_SUBAGENT_AGENT", "PI_SUBAGENT_PARENT_SESSION", "PI_SUBAGENT_NAME", "PI_SUBAGENT_SESSION", "PI_SUBAGENT_SURFACE"];
+	const saved = markers.map((key) => ({ key, value: process.env[key] }));
+	if (!child) for (const key of markers) delete process.env[key];
+	try {
+		guardrails({ on: (name: string, handler: (event: unknown, ctx: unknown) => unknown) => { handlers.set(name, handler); }, registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => { commands.set(name, command); }, events } as never);
+	} finally {
+		for (const { key, value } of saved) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	}
 	const push = () => handlers.get("tool_call")!({ toolName: "bg_run", toolCallId: "attempt", input: { command: "git push origin alan/ENG-fixture" } }, ctx);
 	return { root, path, ctx, notices, commands, handlers, push, setInput: (value: string | undefined) => { input = value; } };
 }
@@ -107,7 +117,7 @@ test.each(["wait", "input"] as const)("session replacement during %s discards pe
 test("children cannot select a publication grant", async () => {
 	const previous = process.env.PI_SUBAGENT_AGENT;
 	process.env.PI_SUBAGENT_AGENT = "fixture-child";
-	const f = fixture();
+	const f = fixture(true);
 	try {
 		expect(f.commands.has("publication-config")).toBe(false);
 		await expect(f.push()).rejects.toThrow("Subagents cannot commit or push");
