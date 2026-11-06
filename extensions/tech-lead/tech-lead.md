@@ -28,7 +28,6 @@ Require Alan's approval before downgrading.
 | Work log | | Each slice and pass | Each slice and pass |
 
 For the single-seat Focused trial, select a reviewer from a different model family than the builder.
-Preserve explicitly requested deeper coverage.
 
 Require approval for explicit requests, distributed boundaries, or at least three ownership seams.
 Exclude mirrors, tests, and documentation from seam counts.

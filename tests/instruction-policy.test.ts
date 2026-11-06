@@ -27,7 +27,7 @@ test("coverage exceptions have one canonical owner without reducing seats", () =
 	const correctness = lead.split("\n").find((line) => line.startsWith("| Correctness |"));
 	assert.equal(correctness, "| Correctness | Pair for explicit review | One routinely; pair for explicit review unless Alan approves the single-seat trial | Reviewer pair |");
 	assert.ok(lead.includes("For the single-seat Focused trial, select a reviewer from a different model family than the builder."));
-	assert.ok(lead.includes("Preserve explicitly requested deeper coverage."));
+	assert.ok(lead.includes("Preserve explicitly requested deep review coverage."));
 	assert.ok(procedure.includes("Use the `tech-lead.md` matrix for correctness seat counts and the approved single-seat trial."));
 	for (const duplicate of ["For routine Focused correctness", "For explicit Direct review", "For explicit Focused review", "Use pairs at Full"]) {
 		assert.ok(!procedure.includes(duplicate), duplicate);

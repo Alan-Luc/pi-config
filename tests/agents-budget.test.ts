@@ -9,7 +9,7 @@ const words = (text: string) => text.trim().split(/\s+/).length;
 
 // Every agent reads AGENTS.md; the CDC additionally reads tech-lead.md.
 const AGENTS_WORD_BUDGET = 991;
-const CDC_STARTUP_WORD_BUDGET = 1682;
+const CDC_STARTUP_WORD_BUDGET = 1677;
 const PROHIBITION_CAP = 13;
 
 test("AGENTS.md stays within its word budget", () => {
