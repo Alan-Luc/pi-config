@@ -5,7 +5,7 @@ mode: background
 async: true
 auto-exit: true
 model: openai-codex/gpt-6-luna
-allow-model-override: true
+allow-model-override: false
 thinking: high
 tools: read,grep,find,inspect_context,inspect_change,submit_agent_result
 flags: --no-mcp

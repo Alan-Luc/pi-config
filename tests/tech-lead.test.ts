@@ -249,7 +249,7 @@ test("oversized staged advisories skip deterministically without partitioning", 
 test("task effort follows actual uncertainty within each model's supported levels", () => {
 	includesAll(taskRecipe, [
 		"smallest justified effort once", "short rationale in its existing brief",
-		"A ticket's tier or a role title does not determine", "Every role accepts model and thinking overrides",
+		"A ticket's tier or a role title does not determine", "Builder and reviewer profiles lock their configured models and effort",
 		"chosen model's supported levels", "Do not substitute a model without saying so",
 		"Review and design profiles retain their explicitly pinned effort", "Use `off` only where the chosen model supports it",
 		"exact triggers, reproduction steps, log lines, error lines", "No diagnosis, contract choice or unresolved failure-path design",
@@ -364,7 +364,7 @@ it.each([
 		assert.ok(profile && owner);
 		assert.equal(profile.model, model);
 		assert.equal(profile.thinking, thinking);
-		assert.equal(profile.allowModelOverride, true);
+		assert.equal(profile.allowModelOverride, !/^(implementation-engineer|code-reviewer)(-|$)/.test(name));
 		assert.equal(profile.thinkingOverrides, undefined);
 		assert.equal(profile.tools, owner.tools);
 		assert.equal(profile.skills, owner.skills);

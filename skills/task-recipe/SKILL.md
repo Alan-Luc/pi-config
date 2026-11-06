@@ -16,7 +16,7 @@ Effort selection is not active merely because a task recipe mentions it. Use the
 
 ## Task effort
 
-Select the smallest justified effort once before a worker launch and include a short rationale in its existing brief. A ticket's tier or a role title does not determine every subtask's effort. Every role accepts model and thinking overrides within the chosen model's supported levels. Do not substitute a model without saying so. Review and design profiles retain their explicitly pinned effort.
+Select the smallest justified effort once before a worker launch and include a short rationale in its existing brief. A ticket's tier or a role title does not determine every subtask's effort. Builder and reviewer profiles lock their configured models and effort. Other roles accept overrides within the chosen model's supported levels. Do not substitute a model without saying so. Review and design profiles retain their explicitly pinned effort.
 
 | Effort | Actual delegated work |
 |---|---|
