@@ -143,7 +143,7 @@ test("tech lead owns the current ceremony matrix and its conditional gates", () 
 	}
 	includesAll(techLead, ["Classify by risk using this matrix", "State the tier and reason before work", "Escalate on new evidence", "Require Alan's approval before downgrading"]);
 	includesAll(durablePlan, ["canonical acceptance matrix for Direct, Focused, and Full in `tech-lead.md`", "approval-gated Focused work require one"]);
-	includesAll(taskRecipe, ["tier matrix in `tech-lead.md`", "recipe selection and copy semantics"]);
+	includesAll(taskRecipe, ["tier matrix in `tech-lead.md`", "recipe selection"]);
 	includesAll(recipeCards, ["canonical tier matrix in `tech-lead.md`"]);
 	includesAll(agents["live-verifier"], ["For Focused, report separate success and attack observations from one worker", "For Full, report only your assigned success or attack coverage"]);
 	includesAll(agents["code-reviewer"], ["Limit combined `read`, `grep`, and `find` calls to 12 for Focused and 24 for Difficult review"]);
@@ -188,11 +188,12 @@ test("temporary dogfooding reuses evidence and records friction without ceremoni
 test("one recipe skill owns card selection and six checkable cards without a second router", () => {
 	includesAll(techLead, ["For Focused and Full work, load `task-recipe`", "Honor stops, pauses, unknown authorization, and real gates", "Otherwise, execute authorized work"]);
 	includesAll(taskRecipe, [
-		"sole authority", "steps verbatim into live tasks", "skipped: <reason>",
+		"sole authority",
 		"Direct work is exempt", "whether or not it is committed",
-		"router owns scheduling, resumption and continuation", "selection and copy semantics only",
-		"retain the currently loaded role defaults", "live proof belong at the pass",
+		"router owns scheduling, resumption and continuation", "card selection only",
+		"retain the currently loaded role defaults",
 	]);
+	assert.doesNotMatch(taskRecipe + recipeCards, /steps verbatim|skipped: <reason>|live proof belong at the pass/);
 	assert.deepEqual([...recipeCards.matchAll(/^## (.+)$/gm)].map((match) => match[1]), [
 		"Bug fix", "Feature", "Refactor", "Investigation", "Review", "Harness change",
 	]);
@@ -234,7 +235,6 @@ test("router preserves owned-checkout execution and planning read-only controls"
 	includesAll(reviewPrompt, [
 		"For applicable live risks, check boundaries, retries, cancellation, and negative effects",
 		"After fixes, refresh affected checks, reviewer pairs, and live proof",
-		"Start a fresh reviewer session for each changed-source delta",
 		"Give the success observer one applicable broad integration run",
 	]);
 });
@@ -479,7 +479,11 @@ test("common test-first standards reach roles without skill loading", () => {
 	includesAll(agents["test-automation-engineer"], ["requirement-derived", "internal refactor", "tautological"]);
 	includesAll(agents["code-explorer"], ["observable contracts", "test seams", "runtime prerequisites"]);
 	includesAll(agents["code-reviewer"], ["requirement-derived tests", "intended red", "real-interface evidence"]);
-	includesAll(durablePlan, ["observable acceptance", "caller", "independent proposals", "shared", "judge-only", "Direct work is exempt", "direct consuming-surface check"]);
+	includesAll(durablePlan, ["observable acceptance", "caller", "shared", "judge-only", "Direct work is exempt", "direct consuming-surface check"]);
+	assert.doesNotMatch(durablePlan, /compare two independent proposals/);
+	const planSkill = readFileSync(new URL("../skills/eviscerate-plan/SKILL.md", import.meta.url), "utf8");
+	const planPrompt = readFileSync(new URL("../prompts/eviscerate-plan.md", import.meta.url), "utf8");
+	assert.doesNotMatch(planSkill + planPrompt, /Repeat until findings|review the changed plan with both critics|refresh review until clear/);
 });
 
 test("solo runtime discloses unavailable cross-model evidence", async () => {
@@ -526,7 +530,6 @@ test("review procedure preserves accepted-only regression and affected live-proo
 		"Require scope within Done means and Keep",
 		"After fixes, refresh affected checks, reviewer pairs, and live proof",
 		"For applicable live risks, check boundaries, retries, cancellation, and negative effects",
-		"Start a fresh reviewer session for each changed-source delta",
 		"Require current selected clearance on the final candidate",
 	]);
 	assert.match(reviewPrompt, /Stop when Done means is true, Keep holds, and the tier's pass is clear/);
@@ -547,8 +550,8 @@ test("policy-selected review preserves independent coverage and bounded findings
 		"Require scope within Done means and Keep",
 		"Add regression tests only for accepted findings",
 		"After fixes, refresh affected checks, reviewer pairs, and live proof",
-		"Start a fresh reviewer session for each changed-source delta",
 	]);
+	assert.doesNotMatch(reviewPrompt, /Start a fresh reviewer session for each changed-source delta/);
 	const cleanup = readFileSync(new URL("../skills/deslop/SKILL.md", import.meta.url), "utf8");
 	includesAll(cleanup, ["Ponytail", "trust-boundary", "data-loss", "unchanged behavior", "read-only", "parent"]);
 });

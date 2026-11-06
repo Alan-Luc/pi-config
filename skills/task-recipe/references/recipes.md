@@ -1,6 +1,6 @@
 # Task recipe cards
 
-For Focused and Full work, copy the selected card's steps verbatim into live tasks. Retain inapplicable steps as `skipped: <reason>`. For Direct work, skip recipe selection and task copying. Use the canonical tier matrix in `tech-lead.md` to select coverage.
+For Direct work, skip recipe selection. Use the canonical tier matrix in `tech-lead.md` to select coverage.
 
 If risk warrants it, use the staged [Haiku advisory at low effort](../../deslop/SKILL.md). Skip oversized patches. Report timeouts as incomplete with `deslop: timed out`. Review worktree changes separately from staged changes.
 
@@ -9,7 +9,7 @@ If risk warrants it, use the staged [Haiku advisory at low effort](../../deslop/
 1. Define the failure. ✓ State the expected behavior, callers, exact trigger, and a meaningful failure case.
 2. Reproduce before fixing. ✓ Confirm that an assertion fails for the intended reason. For accepted behavioral findings, use the reviewer's exact triggering input and state. For findings without behavior changes, use passing characterization or a direct check instead of manufacturing a failure.
 3. Fix the shared root cause. ✓ Confirm that the retained regression passes and callers remain compatible.
-4. Verify the change. ✓ Run focused checks during iteration. At the pass, verify behavior and failure cases through the real interface.
+4. Verify the change. ✓ Run focused checks during iteration. Verify behavior and failure cases through the real interface.
 
 **Done means:** The defect is fixed without caller regressions.
 
@@ -18,7 +18,7 @@ If risk warrants it, use the staged [Haiku advisory at low effort](../../deslop/
 1. Define the contract before editing. ✓ State user-visible success and failure outcomes. Identify trust boundaries.
 2. Test behavior before implementation. ✓ Identify callers and existing patterns. Write tests that express the contract.
 3. Implement the smallest complete change. ✓ Confirm that promised behavior and meaningful failure paths match the contract.
-4. Verify the change. ✓ Run focused checks during iteration. At the pass, check the real interface and failure paths. Confirm that persisted or external effects match the contract.
+4. Verify the change. ✓ Run focused checks during iteration. Check the real interface and failure paths. Confirm that persisted or external effects match the contract.
 
 **Done means:** The contract holds, including failure paths and effects.
 
@@ -27,7 +27,7 @@ If risk warrants it, use the staged [Haiku advisory at low effort](../../deslop/
 1. Map existing behavior. ✓ Identify owned paths, callers, and the preserved contract.
 2. Characterize behavior. ✓ Confirm that tests pass before refactoring. Use characterization instead of inventing a failing test.
 3. Refactor. ✓ Preserve the contract, error handling, validation, accessibility, and state protections.
-4. Verify the refactor. ✓ Run characterization and focused checks during iteration. If warranted, compare observable behavior at the pass.
+4. Verify the refactor. ✓ Run characterization and focused checks during iteration. If warranted, compare observable behavior.
 
 **Done means:** Behavior and caller compatibility remain unchanged.
 
@@ -51,7 +51,7 @@ If risk warrants it, use the staged [Haiku advisory at low effort](../../deslop/
 1. Define the workflow. ✓ State the exact invocation, independent expected outcome, and a plausible broken condition. For instruction changes, follow [Writing rules](../../../AGENTS.md#writing-rules).
 2. Reuse the runtime, runner, evidence format, and owned disposable state. ✓ Preserve source and input identities. Justify new infrastructure with demonstrated need.
 3. Test rejection. ✓ Confirm that the broken condition is rejected and focused checks pass.
-4. Execute the documented workflow through the real consumer at the pass. ✓ Compare observed effects and evidence with expectations.
+4. Execute the documented workflow through the real consumer. ✓ Compare observed effects and evidence with expectations.
 5. For lifecycle commands, retries, or migrations, check a representative safe rerun or interruption. ✓ Reconcile only owned state.
 
 **Done means:** The workflow passes, evidence is inspectable, and owned resources are safely cleaned up. State unverified prerequisites explicitly.
