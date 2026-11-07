@@ -42,7 +42,7 @@ Report incomplete coverage when the target exceeds its scope or budget to avoid 
 Name the realistic input, caller, or state and its producer to establish that the trigger can occur here.
 Require scope within the ticket's Done means and Keep to prevent unrelated remediation.
 Recommend fixes for qualifying P0 and P1 findings to address material failures.
-Recommend a P2 fix only when small and local to keep minor cleanup bounded.
+Report P2 findings as one-line dismissals or outside-ticket follow-ups; do not recommend in-ticket fixes.
 Give every other issue a one-line dismissal reason or an outside-ticket follow-up to preserve disposition.
 Leave acceptance, fixes, and regression tests to the parent to keep adjudication separate.
 

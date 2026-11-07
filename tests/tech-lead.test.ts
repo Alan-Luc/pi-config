@@ -133,22 +133,22 @@ test("tech lead owns the current ceremony matrix and its conditional gates", () 
 	includesAll(row("Selection"), ["Mechanical or prose", "unchanged behavior", "Bounded integration", "Consequential", "security", "data safety", "caller guarantees"]);
 	includesAll(row("Durable plan"), ["Explicit planning", "approval gates", "existing plan", "Required"]);
 	includesAll(row("Test first"), ["Check consuming surface", "Failing behavior test", "passing refactor tests", "meaningful failure paths"]);
-	includesAll(row("Live verification"), ["One worker covers success and attack", "Separate success and attack workers"]);
+	includesAll(row("Live verification"), ["One success worker; attack only for input handling or trust-boundary changes", "Separate success and attack workers"]);
 	includesAll(row("Structural review"), ["Named risk only"]);
-	includesAll(techLead, ["at least three ownership seams", "Retain existing coverage outside approved trials", "State the tier and reason before work", "Escalate on new evidence", "Require Alan's approval before downgrading", "Until Alan approves implementation, edit only the designated plan file during planning"]);
+	includesAll(techLead, ["at least three ownership seams", "Retain existing coverage outside approved trials", "State the tier and reason before work", "Escalate only when new evidence threatens Done means or Keep", "Require Alan's approval before downgrading", "Until Alan approves implementation, edit only the designated plan file during planning"]);
 	assert.doesNotMatch(techLead, /^\| Small \|/m);
 	assert.doesNotMatch(globalInstructions, /^\| (?:Ceremony|Direct|Small|Focused|Full) \|/m, "the tier table lives in tech-lead, not AGENTS.md");
 	for (const consumer of [globalInstructions, durablePlan, taskRecipe, recipeCards, reviewPrompt, agents["live-verifier"], agents["code-reviewer"]]) {
 		assert.doesNotMatch(consumer, /^\| (?:Direct|Small|Focused|Full) \|/m, "consumers link to the one policy owner instead of defining a tier table");
 	}
-	includesAll(techLead, ["Classify by risk using this matrix", "State the tier and reason before work", "Escalate on new evidence", "Require Alan's approval before downgrading"]);
+	includesAll(techLead, ["Classify by risk using this matrix", "State the tier and reason before work", "Escalate only when new evidence threatens Done means or Keep", "Require Alan's approval before downgrading"]);
 	includesAll(durablePlan, ["canonical acceptance matrix for Direct, Focused, and Full in `tech-lead.md`", "approval-gated Focused work require one"]);
 	includesAll(taskRecipe, ["tier matrix in `tech-lead.md`", "recipe selection"]);
 	includesAll(recipeCards, ["canonical tier matrix in `tech-lead.md`"]);
-	includesAll(agents["live-verifier"], ["For Focused, report separate success and attack observations from one worker", "For Full, report only your assigned success or attack coverage"]);
+	includesAll(agents["live-verifier"], ["For Focused, report success observations", "Include separate attack observations only when the change touches input handling or a trust boundary", "For Full, report only your assigned success or attack coverage"]);
 	includesAll(agents["code-reviewer"], ["Limit combined `read`, `grep`, and `find` calls to 12 for Focused and 24 for Difficult review"]);
 	assert.doesNotMatch(agents["code-reviewer"], /\bSmall\b/);
-	includesAll(reviewPrompt, ["Use the `tech-lead.md` matrix", "At Focused, assign one read-only `live-verifier` success and attack observations", "At Full, assign separate success and attack workers"]);
+	includesAll(reviewPrompt, ["Use the `tech-lead.md` matrix", "At Focused, assign one read-only `live-verifier` to verify success", "Include attack observations only when the change touches input handling or a trust boundary", "At Full, assign separate success and attack workers"]);
 });
 
 test("reviewers preserve the guardrails threat-model boundary and explicit dismissal reason", () => {
@@ -282,7 +282,7 @@ test("the router preserves lifecycle ownership without leaking delegation manual
 		"Target the owned checkout in every command.",
 	]);
 	includesAll(techLead, ["prompts/eviscerate-diff.md", "Preserve explicitly requested deep review coverage"]);
-	includesAll(techLead, ["State the tier and reason before work", "Escalate on new evidence", "Require Alan's approval before downgrading", "Require approval for explicit requests", "For gated Direct work", "Until Alan approves implementation, edit only the designated plan file during planning"]);
+	includesAll(techLead, ["State the tier and reason before work", "Escalate only when new evidence threatens Done means or Keep", "Require Alan's approval before downgrading", "Require approval for explicit requests", "For gated Direct work", "Until Alan approves implementation, edit only the designated plan file during planning"]);
 	for (const consumer of [globalInstructions, reviewPrompt, durablePlan]) assert.doesNotMatch(consumer, /^\| (Direct|Full) \|/m, "work-tier definitions stay in tech-lead, separate from reviewer depth profiles");
 	for (const owner of [globalInstructions, techLead, reviewPrompt, durablePlan]) assert.doesNotMatch(owner, /truly trivial|quick iterations|very small, low-risk/i);
 	assert.doesNotMatch(techLead, /Apply Ponytail|Truly trivial direct work|A plan never authorizes push|The parent may create coherent passing local commits/);
@@ -479,7 +479,7 @@ test("common test-first standards reach roles without skill loading", () => {
 	includesAll(agents["test-automation-engineer"], ["requirement-derived", "internal refactor", "tautological"]);
 	includesAll(agents["code-explorer"], ["observable contracts", "test seams", "runtime prerequisites"]);
 	includesAll(agents["code-reviewer"], ["requirement-derived tests", "intended red", "real-interface evidence"]);
-	includesAll(durablePlan, ["observable acceptance", "caller", "shared", "judge-only", "Direct work is exempt", "direct consuming-surface check"]);
+	includesAll(durablePlan, ["observable acceptance", "caller", "Direct work is exempt", "direct consuming-surface check"]);
 	assert.doesNotMatch(durablePlan, /compare two independent proposals/);
 	const planSkill = readFileSync(new URL("../skills/eviscerate-plan/SKILL.md", import.meta.url), "utf8");
 	const planPrompt = readFileSync(new URL("../prompts/eviscerate-plan.md", import.meta.url), "utf8");

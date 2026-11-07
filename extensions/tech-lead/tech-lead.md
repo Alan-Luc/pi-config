@@ -12,7 +12,8 @@ At close, list remaining additions and their reasons to expose their cost.
 
 Classify by risk using this matrix to prevent touched subsystems from dictating ceremony.
 State the tier and reason before work to expose coverage.
-Escalate on new evidence to cover new risk.
+Escalate only when new evidence threatens Done means or Keep.
+Record other new risk as an outside-ticket follow-up.
 Require Alan's approval before downgrading to protect coverage.
 
 | Ceremony | Direct | Focused | Full |
@@ -22,7 +23,7 @@ Require Alan's approval before downgrading to protect coverage.
 | Durable plan | Explicit planning | Planning, approval gates, or existing plan | Required |
 | Extra approval | | | Trust boundaries |
 | Test first | Check consuming surface | Failing behavior test; passing refactor tests | Include meaningful failure paths |
-| Live verification | | One worker covers success and attack | Separate success and attack workers |
+| Live verification | | One success worker; attack only for input handling or trust-boundary changes | Separate success and attack workers |
 | Correctness | Explicit requests | One reviewer; cross-family trial requires Alan's approval | Reviewer pair |
 | Structural review | | Named risk only | Named risk only |
 | Work log | | Each slice and pass | Each slice and pass |

@@ -11,7 +11,7 @@ test("reviewers require reachable triggers, scope, and bounded severity", () => 
 	for (const sentence of [
 		"Name the realistic input, caller, or state and its producer to establish that the trigger can occur here.",
 		"Require scope within the ticket's Done means and Keep to prevent unrelated remediation.",
-		"Recommend a P2 fix only when small and local to keep minor cleanup bounded.",
+		"Report P2 findings as one-line dismissals or outside-ticket follow-ups; do not recommend in-ticket fixes.",
 		"Recommend fixes for qualifying P0 and P1 findings to address material failures.",
 		"Leave acceptance, fixes, and regression tests to the parent to keep adjudication separate.",
 	]) assert.ok(reviewer.includes(sentence), sentence);

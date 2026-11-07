@@ -15,6 +15,7 @@
         "tests/fff-default-excludes.test.mjs",
         "tests/guardrails.test.ts",
         "tests/human-input.test.ts",
+        "tests/instruction-policy.test.ts",
         "tests/live-verification-skill.test.ts",
         "tests/mcp-config.test.ts",
         "tests/mr-babysit.test.ts",
@@ -33,7 +34,8 @@
         "tests/verification-evidence.test.ts",
         "tests/verification-recipes.test.ts",
         "tests/walkthrough-skill.test.ts",
-        "tests/work-log.test.ts"
+        "tests/work-log.test.ts",
+        "tests/writing-style.test.ts"
       ],
       "cwd": "."
     },

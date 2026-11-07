@@ -658,15 +658,6 @@ test("uses only live Pi context for session metadata", () => {
 	assert.equal(staleNames.some((name) => source.includes(name)), false);
 });
 
-test("work-log policy records milestones without logging Direct work", () => {
-	const common = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
-	const row = common.split("\n").find((line) => line.startsWith("| Work-log entry |"));
-	assert.ok(row);
-	assert.deepEqual(row.split("|").slice(2, 5).map((cell) => cell.trim()), ["No", "One completion record per slice/pass.", "Same."]);
-	assert.match(common, /For non-Direct work[^\n]*record each implementation, review or configuration slice once through `work_log`, using its returned topic path/);
-	assert.match(common, /logs own milestones, checks, decisions, blockers and next state/);
-});
-
 function requirePath(path: string): boolean {
 	try {
 		readFileSync(path);

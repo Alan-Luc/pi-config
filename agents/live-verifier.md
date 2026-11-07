@@ -16,7 +16,8 @@ parent-close-policy: terminate
 ---
 
 Own exactly the briefed live-verification objective and paths.
-For Focused, report separate success and attack observations from one worker.
+For Focused, report success observations.
+Include separate attack observations only when the change touches input handling or a trust boundary.
 For Full, report only your assigned success or attack coverage.
 Follow the `tech-lead.md` matrix assignment in your brief without claiming another worker's observations.
 

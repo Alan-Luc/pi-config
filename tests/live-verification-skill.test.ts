@@ -79,14 +79,25 @@ test.each(["live-verification", "build-live-verification", "thermonuclear-correc
 				assert.equal(renamed.length, 1, "discover exactly one composite command");
 				const promptPath = join(agentDir, "prompts", "eviscerate-diff.md");
 				assert.equal(renamed[0].filePath, promptPath);
-				for (const coverage of ["success and attack observations", "Separate success and attack workers"]) assert.match(renamed[0].content, new RegExp(coverage, "i"), `discover ${coverage}`);
+				for (const coverage of ["Include attack observations only when the change touches input handling or a trust boundary", "Separate success and attack workers"]) assert.match(renamed[0].content, new RegExp(coverage, "i"), `discover ${coverage}`);
 				assert.ok(renamed[0].content.includes("At Full, assign separate success and attack workers"), "Full retains independent success and attack workers");
 				assert.ok(renamed[0].content.includes("At Focused, assign one read-only `live-verifier`"), "both lanes reuse the existing verifier profile");
-				assert.ok(renamed[0].content.includes("At Focused, assign one read-only `live-verifier` success and attack observations"), "Focused combines the worker while reporting distinct observations");
+				assert.ok(renamed[0].content.includes("At Focused, assign one read-only `live-verifier` to verify success"), "Focused retains success verification");
 				const role = await readFile(resolve(import.meta.dir, "../agents/live-verifier.md"), "utf8");
 				for (const marker of ["alive concurrently", "Clean up the first", "second still responds", "later terminal result and effects", "unrelated-listener negative control", "does not prove peer survival", "report Not run"]) assert.ok(role.includes(marker), marker);
 				assert.equal(prompts.some((prompt) => prompt.name === "code_review"), false, "old composite alias is absent");
 				assert.deepEqual(diagnostics.filter((diagnostic) => diagnostic.path === promptPath), []);
+				const auditPrompts = prompts.filter((prompt) => prompt.name === "review-lane-audit");
+				assert.equal(auditPrompts.length, 1);
+				const auditPath = join(agentDir, "prompts", "review-lane-audit.md");
+				assert.equal(auditPrompts[0].filePath, auditPath);
+				assert.deepEqual(diagnostics.filter((diagnostic) => diagnostic.path === auditPath), []);
+				const { expandPromptTemplate } = await import(
+					join(installRoot, "releases", version, "node_modules/@earendil-works/pi-coding-agent/dist/core/prompt-templates.js")
+				);
+				assert.ok(expandPromptTemplate("/review-lane-audit scoped-ticket-check", prompts).includes("scoped-ticket-check"));
+				const missingPrompt = "/missing-policy-audit scoped-ticket-check";
+				assert.equal(expandPromptTemplate(missingPrompt, prompts), missingPrompt);
 			}
 			const matches = result.skills.filter((skill) => skill.name === skillName);
 			assert.equal(matches.length, 1, `discover exactly one ${skillName} skill without explicit skill paths`);

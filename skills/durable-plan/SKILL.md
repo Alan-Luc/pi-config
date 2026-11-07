@@ -62,7 +62,7 @@ Do not write “as discussed” or rely on chat-only context. A fresh Pi session
 ## Authoring
 
 - Before production edits or proposal generation, define observable acceptance and verification. Specify callers, data shapes, meaningful success and failure cases, and the pivotal safety assumption. The common test-first obligation applies without loading a separate TDD skill; do not turn Direct work into planning ceremony.
-- Share functional requirements and hard constraints with every builder. Keep comparative rubric visibility distinct: follow the approved shared versus judge-only comparison, with shared fallback on inconclusive evidence. Fix judging criteria before generation; unsupported criteria remain unproven and safety failures cannot be offset by scores. Reuse expectations from plans, briefs, and tests rather than adding universal rubric paperwork.
+- Share functional requirements and hard constraints with every builder. Fix judging criteria before generation; unsupported criteria remain unproven and safety failures cannot be offset by scores. Reuse expectations from plans, briefs, and tests rather than adding universal rubric paperwork.
 - Inspect only enough code to verify ownership, prerequisites, contracts, and canonical patterns.
 - Apply Ponytail before slicing; omit speculative abstractions and follow-ups.
 - For `plan with me`, keep the plan `draft` while collaborating, surface implementation-relevant decisions incrementally, and update the artifact as answers resolve them.

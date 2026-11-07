@@ -19,7 +19,8 @@ For difficult risks, pair `code-reviewer-sol` with `code-reviewer-opus` to use p
 Keep configured models and effort to prevent unapproved substitutions.
 Select structural review or deslop only for distinct named risks to prevent duplicate review.
 
-At Focused, assign one read-only `live-verifier` success and attack observations to reduce coordination.
+At Focused, assign one read-only `live-verifier` to verify success.
+Include attack observations only when the change touches input handling or a trust boundary.
 At Full, assign separate success and attack workers to preserve independence.
 Give the success observer one applicable broad integration run to prevent duplicate runs.
 Require attack inputs reachable through a real interface to exclude invented threats.
@@ -50,6 +51,7 @@ Treat missing, failed, or stale results as incomplete coverage to prevent false 
 Require each finding's realistic trigger and producer to exclude hypothetical failures.
 Require scope within Done means and Keep to prevent unrelated remediation.
 Fix qualifying P0 and P1 findings.
+Dismiss P2 findings with one-line reasons or record outside-ticket follow-ups; do not fix them in-ticket.
 Dismiss everything else with a one-line reason or record an outside-ticket follow-up to preserve disposition.
 Add regression tests only for accepted findings to exclude rejected premises.
 Before behavioral fixes, reproduce the exact triggering input and state with an intended assertion failure to prove the defect.
