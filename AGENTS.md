@@ -74,7 +74,7 @@ A station is an owner's defined scope.
 - Follow repository conventions. Preserve unrelated behavior, trust-boundary validation, useful errors, accessibility, semantic HTML, state and styling patterns, strict types, and data-loss protection. Reject `any`, unjustified casts, disabled tests, swallowed errors, and dead code and debug code.
 - Prove pivotal outside-diff assumptions in acceptance or logs. Inspect repeated casts, always-present optionals, and special cases before regex deletion.
 - Model valid states and transitions. Distinguish semantic identifiers. Parse external input at its boundary. Derive authoritative schema types; use validated models internally without redundant guards.
-- Name operations with verbs and values, types, and files with precise nouns. Reserve `data`, `utils`, `manager`, `handler`, and `process` for exact domain terms. Replace unclear names instead of adding comments.
+- Name variables, functions, methods, classes, types, and files explicitly for first-time readers. Use action verbs and precise nouns for values and concepts. Reserve `data`, `utils`, `manager`, `handler`, and `process` for exact domain terms.
 - Replace magic indexes and parallel arrays with named fields. Preserve externally required indexes, then convert once. End text files with a newline.
 - If overlap or dependencies require sequencing, complete, check, and inspect one increment before continuing.
 - Follow [Tests](#tests) before editing production behavior.
@@ -91,7 +91,7 @@ A station is an owner's defined scope.
 
 ## Comments
 
-- Write no comments by default. Make names and structure self-explanatory before considering comments.
+- Write no comments by default. Make names and structure self-explanatory.
 - Add comments only for essential, non-obvious reasons the code cannot express, such as external constraints or necessary workarounds.
 - Explain only why, not what. Omit code restatements, doc comments, header banners, and section dividers.
 - Delete unnecessary comments. Keep necessary comments short. Keep tickets in follow-up TODO or stub markers only.
