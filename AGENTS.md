@@ -77,16 +77,21 @@ A station is an owner's defined scope.
 - Name operations with verbs and values, types, and files with precise nouns. Reserve `data`, `utils`, `manager`, `handler`, and `process` for exact domain terms. Replace unclear names instead of adding comments.
 - Replace magic indexes and parallel arrays with named fields. Preserve externally required indexes, then convert once. End text files with a newline.
 - If overlap or dependencies require sequencing, complete, check, and inspect one increment before continuing.
-- Before production behavior edits, establish requirement-derived expectations and an intended assertion failure. Follow red, green, and refactor. Check mechanical and documentation changes directly. Characterize refactors with passing tests.
-- If automated TDD is genuinely impractical, establish the closest executable acceptance before editing and disclose missing red and green evidence. Size and testing cost grant no exemption.
-- Test observable contracts and failure paths. Plausible violations must fail; internal refactors must pass. Reject tautological assertions based only on fixtures or mocks, implementation-computed expectations, and setup errors as red. Preserve expectations for incorrect code.
+- Follow [Tests](#tests) before editing production behavior.
 
 ## Tests
 
+- Default to test-driven development (TDD) for behavior changes and bug fixes: red, green, then refactor.
+- Before production edits, write requirement-derived tests. Confirm assertion failures expose missing or incorrect behavior. Reject setup errors as red evidence.
+- Make the smallest change that passes. Refactor only while green.
+- Before behavior-preserving refactors, establish passing characterization tests. Check mechanical and documentation changes directly.
+- If automated TDD is genuinely impractical, establish executable acceptance before editing. Explain why and disclose missing red and green evidence. Size and testing cost grant no exemption.
+- Test observable contracts and failure paths. Require plausible violations to fail and internal refactors to pass. Reject fixture-only, mock-only, and implementation-computed expectations. Preserve expectations for incorrect code.
 - Run narrow checks during iteration and broad suites for final integration. Rerun expensive suites only when affected. Use `it.each([...])`.
 
 ## Comments
 
-- Write self-explanatory code. Comment only for invisible external constraints or workaround reasons.
-- Explain why. Omit code restatements, doc comments, header banners, and section dividers.
-- Keep tickets in follow-up TODO or stub markers only. Shorten or delete comments.
+- Write no comments by default. Make names and structure self-explanatory before considering comments.
+- Add comments only for essential, non-obvious reasons the code cannot express, such as external constraints or necessary workarounds.
+- Explain only why, not what. Omit code restatements, doc comments, header banners, and section dividers.
+- Delete unnecessary comments. Keep necessary comments short. Keep tickets in follow-up TODO or stub markers only.
