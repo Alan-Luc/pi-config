@@ -1,4 +1,4 @@
-import { DOCUMENTS, FREEFORM, PROTECTED, SCHEMAS, type Schema, type SchemaId, type Section } from "./schemas.ts";
+import { DOCUMENTS, FREEFORM, LEGACY_PLAN_SCHEMA, PROTECTED, SCHEMAS, type Schema, type SchemaId, type Section } from "./schemas.ts";
 
 export type ValidationResult = { ok: boolean; errors: string[] };
 
@@ -352,12 +352,22 @@ function validateLineContent(document: ParsedDocument, errors: string[]): void {
 	errors.push(...fillErrors, ...escapeErrors);
 }
 
+function planSchema(document: ParsedDocument): Schema {
+	return document.sections.some(({ heading }) => LEGACY_PLAN_SCHEMA.sections.some((section) => section.heading === heading))
+		? LEGACY_PLAN_SCHEMA
+		: SCHEMAS.plan;
+}
+
 export function validate(schemaId: SchemaId, text: string, previous?: string): ValidationResult {
-	const schema = SCHEMAS[schemaId] as Schema | undefined;
-	if (!schema) return { ok: false, errors: [`unknown schema ${quote(String(schemaId))}`] };
+	const declaredSchema = SCHEMAS[schemaId] as Schema | undefined;
+	if (!declaredSchema) return { ok: false, errors: [`unknown schema ${quote(String(schemaId))}`] };
 
 	const document = parse(text);
+	const schema = schemaId === "plan" ? planSchema(document) : declaredSchema;
 	const errors: string[] = [];
+	if (schemaId === "plan" && previous !== undefined && planSchema(parse(previous)) !== schema) {
+		errors.push("Existing plans must keep their format to preserve decision history.");
+	}
 	if (document.unclosedFenceLine !== undefined) {
 		errors.push(`line ${document.unclosedFenceLine}: unclosed fenced code block`);
 	}

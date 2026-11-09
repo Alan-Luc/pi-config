@@ -74,32 +74,43 @@ const findings = <Field extends string>(heading: string, field: Field) => ({
 	none: true,
 } as const satisfies Section);
 
+export const LEGACY_PLAN_SCHEMA = {
+	preamble: [
+		{ pattern: /^# [^<\s].*$/, example: "# <Plan title>" },
+		{ pattern: /^Status: (draft|ready|in_progress|blocked|complete)$/, example: "Status: draft" },
+		{ pattern: new RegExp(`^Updated: ${DATE}$`), example: "Updated: YYYY-MM-DD" },
+	],
+	sections: [
+		{ heading: "Goal and context", hint: "desired behavior, current state, example or data flow" },
+		{ heading: "Requirements and acceptance", hint: "observable outcomes and constraints" },
+		{ heading: "Scope / non-scope", hint: "explicit boundaries" },
+		{ heading: "Decisions and invariants", hint: "implementation-relevant choices with rationale" },
+		{ heading: "Implementation", hint: "ordered slices: exact paths, dependencies, ownership, focused checks" },
+		{ heading: "Verification", hint: "runnable commands and expected evidence, including failure paths" },
+		{ heading: "Risks and open questions", hint: "blocking questions and known risks" },
+		{
+			heading: "Progress and handoff",
+			hint: "minimal current status and resume pointer to the canonical topic work log; no duplicated execution ledger",
+			subheading: { pattern: new RegExp(`^### ${DATE} — \\S.*$`), example: "### YYYY-MM-DD — <slice or milestone>" },
+		},
+		{
+			heading: "Decision log",
+			hint: "dated material decisions with session, rationale, and impact; append only",
+			subheading: { pattern: new RegExp(`^### ${DATE} — \\S.*$`), example: "### YYYY-MM-DD — <decision>" },
+			appendOnly: true,
+		},
+	],
+} as const satisfies Schema;
+
 export const SCHEMAS = {
 	plan: {
-		preamble: [
-			{ pattern: /^# [^<\s].*$/, example: "# <Plan title>" },
-			{ pattern: /^Status: (draft|ready|in_progress|blocked|complete)$/, example: "Status: draft" },
-			{ pattern: new RegExp(`^Updated: ${DATE}$`), example: "Updated: YYYY-MM-DD" },
-		],
+		preamble: LEGACY_PLAN_SCHEMA.preamble,
 		sections: [
-			{ heading: "Goal and context", hint: "desired behavior, current state, example or data flow" },
-			{ heading: "Requirements and acceptance", hint: "observable outcomes and constraints" },
-			{ heading: "Scope / non-scope", hint: "explicit boundaries" },
-			{ heading: "Decisions and invariants", hint: "implementation-relevant choices with rationale" },
-			{ heading: "Implementation", hint: "ordered slices: exact paths, dependencies, ownership, focused checks" },
-			{ heading: "Verification", hint: "runnable commands and expected evidence, including failure paths" },
-			{ heading: "Risks and open questions", hint: "blocking questions and known risks" },
-			{
-				heading: "Progress and handoff",
-				hint: "minimal current status and resume pointer to the canonical topic work log; no duplicated execution ledger",
-				subheading: { pattern: new RegExp(`^### ${DATE} — \\S.*$`), example: "### YYYY-MM-DD — <slice or milestone>" },
-			},
-			{
-				heading: "Decision log",
-				hint: "dated material decisions with session, rationale, and impact; append only",
-				subheading: { pattern: new RegExp(`^### ${DATE} — \\S.*$`), example: "### YYYY-MM-DD — <decision>" },
-				appendOnly: true,
-			},
+			{ heading: "Goal", hint: "desired behavior, context, scope, and non-scope" },
+			{ heading: "Done means and Keep", hint: "observable completion, preserved guarantees, and meaningful failure cases" },
+			{ heading: "Decisions", hint: "current choices and rationale; canonical work-log pointer for material history and progress" },
+			{ heading: "Slices with checks", hint: "ordered slices, owned paths or bounded discovery, dependencies, and runnable checks" },
+			{ heading: "Open questions", hint: "blocking questions and risks, or None." },
 		],
 	},
 	handoff: {

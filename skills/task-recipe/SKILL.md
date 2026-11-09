@@ -5,9 +5,9 @@ description: Prepare and execute task recipes for bug fixes, features, refactors
 
 # Task recipes
 
-The tech-lead router remains the sole authority for choosing and routing work. Read [the recipe cards](references/recipes.md), select the best fit, and use its steps. Investigation and review cards link to their existing specialist procedures; do not duplicate or replace them.
+The tech-lead router remains the sole authority for choosing and routing work. Recipes are optional; use [the recipe cards](references/recipes.md) when their steps help. The investigation card links to its existing specialist procedure; do not duplicate or replace it.
 
-Use the tier matrix in `tech-lead.md` for selection and required coverage; this skill owns recipe selection, not another tier menu. Direct work is exempt from recipe ceremony, whether or not it is committed. Do not represent skipped work as completed.
+Use the tier matrix in `tech-lead.md` for selection and required coverage; this skill does not set another tier menu. Do not represent skipped work as completed.
 
 The tech-lead router owns scheduling, resumption and continuation. This skill owns card selection only. Before preparation, reconcile the governing plan, work log, branch, state, evidence and completed work; reuse valid evidence and resolve material uncertainties. At the pass, use the matrix in `tech-lead.md` and [the adversarial review procedure](../../prompts/eviscerate-diff.md). Keep focused checks during iteration. Preserve unrelated work and make final claims about the final candidate.
 
@@ -33,5 +33,5 @@ Use `off` only where the chosen model supports it. A model without that level is
 - [Feature](references/recipes.md#feature)
 - [Refactor](references/recipes.md#refactor)
 - [Investigation](references/recipes.md#investigation)
-- [Review](references/recipes.md#review)
+- [Review](../../prompts/eviscerate-diff.md)
 - [Harness change](references/recipes.md#harness-change)

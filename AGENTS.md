@@ -1,6 +1,6 @@
 # Development Guidelines
 
-Fix instructions that cause misbehavior. Otherwise, cite the ticket and cut another rule. Follow [Writing rules](#writing-rules). Ponytail owns deletion, reuse, YAGNI, and smallest-complete-change decisions.
+Fix instructions that cause misbehavior. Follow [Writing rules](#writing-rules). Ponytail owns deletion, reuse, YAGNI, and smallest-complete-change decisions.
 
 Reassess after three failed attempts. If two fixes fail the same gate, test the premise before a third.
 
@@ -70,7 +70,7 @@ A station is an owner's defined scope.
 
 ## Implementation
 
-- Before adding reviewer-requested defenses, identify an existing-check bypass. Retain type-level gates when proposals need `as any`.
+- Before adding reviewer-requested defenses, identify an existing-check bypass.
 - Follow repository conventions. Preserve unrelated behavior, trust-boundary validation, useful errors, accessibility, semantic HTML, state and styling patterns, strict types, and data-loss protection. Reject `any`, unjustified casts, disabled tests, swallowed errors, and dead code and debug code.
 - Prove pivotal outside-diff assumptions in acceptance or logs. Inspect repeated casts, always-present optionals, and special cases before regex deletion.
 - Model valid states and transitions. Distinguish semantic identifiers. Parse external input at its boundary. Derive authoritative schema types; use validated models internally without redundant guards.
@@ -84,7 +84,6 @@ A station is an owner's defined scope.
 ## Tests
 
 - Run narrow checks during iteration and broad suites for final integration. Rerun expensive suites only when affected. Use `it.each([...])`.
-- Use “malicious,” not “nasty,” for attacker-controlled inputs.
 
 ## Comments
 

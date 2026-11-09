@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "bun:test";
+import { it, test } from "bun:test";
 import { renderTemplate } from "../extensions/artifact-contracts/render.ts";
 import { matchPath, validate } from "../extensions/artifact-contracts/validate.ts";
 import {
@@ -16,6 +16,93 @@ import {
 } from "../extensions/artifact-contracts/index.ts";
 
 const schemaIds = Object.keys(SCHEMAS) as SchemaId[];
+const compactPlan = `# Short plan
+Status: ready
+Updated: 2026-11-06
+
+## Goal
+Preserve the caller contract.
+
+## Done means and Keep
+Done means checks pass. Keep existing behavior.
+
+## Decisions
+Use the existing parser. History: .harness/2026/11/06/short-plan.md.
+
+## Slices with checks
+Run the affected tests.
+
+## Open questions
+None.
+`;
+const legacyPlan = `# Existing plan
+Status: in_progress
+Updated: 2026-10-01
+
+## Goal and context
+Preserve the caller contract.
+
+## Requirements and acceptance
+Checks pass.
+
+## Scope / non-scope
+The existing parser only.
+
+## Decisions and invariants
+Keep the public API.
+
+## Implementation
+One bounded slice.
+
+## Verification
+Run the affected tests.
+
+## Risks and open questions
+None.
+
+## Progress and handoff
+### 2026-10-01 — progress
+Read the topic log.
+
+## Decision log
+### 2026-10-01 — decision
+record
+`;
+
+it.each([
+	{ name: "five-section", text: compactPlan },
+	{ name: "legacy nine-section", text: legacyPlan },
+])("accepts a valid $name plan", ({ text }) => {
+	assert.deepEqual(validate("plan", text), { ok: true, errors: [] });
+});
+
+test("new plan scaffolds use the five required sections", () => {
+	assert.deepEqual([...renderTemplate("plan").matchAll(/^## (.+)$/gm)].map((match) => match[1]), [
+		"Goal", "Done means and Keep", "Decisions", "Slices with checks", "Open questions",
+	]);
+});
+
+it.each([
+	{ name: "legacy to compact", previous: legacyPlan, proposed: compactPlan },
+	{ name: "compact to legacy", previous: compactPlan, proposed: legacyPlan },
+])("rejects $name edits that could lose decision history", ({ previous, proposed }) => {
+	const result = validate("plan", proposed, previous);
+	assert.equal(result.ok, false);
+	assert.ok(result.errors.some((error) => error.includes("format")), result.errors.join("\n"));
+});
+
+it.each([
+	{ name: "empty section", text: compactPlan.replace("## Goal\nPreserve the caller contract.", "## Goal") },
+	{ name: "reordered sections", text: compactPlan.replace("## Goal", "## Decisions").replace("## Decisions\nUse the existing parser", "## Goal\nUse the existing parser") },
+	{ name: "mixed formats", text: `${compactPlan}\n## Decision log\n### 2026-11-06 — lost history\nrecord\n` },
+])("rejects a compact plan with $name", ({ text }) => {
+	assert.equal(validate("plan", text).ok, false);
+});
+
+test("quoted legacy headings do not change a compact plan's format", () => {
+	const quoted = compactPlan.replace("Preserve the caller contract.", "Preserve the caller contract.\n```markdown\n## Goal and context\n``` ");
+	assert.deepEqual(validate("plan", quoted), { ok: true, errors: [] });
+});
 
 type Block = { heading: string; start: number; end: number };
 
@@ -106,7 +193,7 @@ test("renders None only for optional sections", () => {
 	assert.ok(renderTemplate("worker").includes("## Verified by\n<!-- fill:"));
 	assert.ok(renderTemplate("brief").includes("## Objective\n<!-- fill:"));
 	assert.ok(renderTemplate("handoff").includes("## Alan's actions\n<!-- fill:"));
-	assert.ok(renderTemplate("plan").includes("## Goal and context\n<!-- fill:"));
+	assert.ok(renderTemplate("plan").includes("## Goal\n<!-- fill:"));
 });
 
 test("a correctly filled document passes for every schema", () => {
@@ -178,12 +265,12 @@ test("oneOf, item, none, labels, and subheading rules are enforced", () => {
 	const missingLabel = withSectionBody(filledDocument("handoff"), "Alan's actions", ["1. **Do:** action", "   **Why:** reason"]);
 	assert.ok(validate("handoff", missingLabel).errors.some((error) => error.includes("item label \"**Leads to:**\" is missing")));
 
-	const badSubheading = withSectionBody(filledDocument("plan"), "Decision log", ["### bad", "record"]);
+	const badSubheading = withSectionBody(legacyPlan, "Decision log", ["### bad", "record"]);
 	assert.ok(validate("plan", badSubheading).errors.some((error) => error.includes("expected subheading")));
 });
 
-test("append-only sections reject edits and accept pure appends", () => {
-	const previous = filledDocument("plan");
+test("legacy append-only sections reject edits and accept pure appends", () => {
+	const previous = legacyPlan;
 	const appended = withSectionBody(previous, "Decision log", ["### 2026-10-01 — decision", "record", "### 2026-10-02 — later", "more"]);
 	assert.deepEqual(validate("plan", appended, previous), { ok: true, errors: [] });
 
@@ -349,8 +436,8 @@ test("verified-by command claims require evidence IDs and may carry notes", () =
 	assert.deepEqual(validate("worker", withSectionBody(worker, "Verified by", ["- Not run: no browser"])), { ok: true, errors: [] });
 });
 
-test("progress entries need dated subheadings", () => {
-	const plan = filledDocument("plan");
+test("legacy progress entries need dated subheadings", () => {
+	const plan = legacyPlan;
 	assert.ok(validate("plan", withSectionBody(plan, "Progress and handoff", ["### 2026-10-01 \\", "text"])).errors.some((error) => error.includes("expected subheading")));
 	assert.deepEqual(validate("plan", withSectionBody(plan, "Progress and handoff", ["### 2026-10-01 — Slice done", "text"])), { ok: true, errors: [] });
 });

@@ -19,10 +19,10 @@ import {
 	type ExactEdit,
 } from "../extensions/artifact-contracts/documents.ts";
 import { renderTemplate } from "../extensions/artifact-contracts/render.ts";
-import { SCHEMAS, type SchemaId } from "../extensions/artifact-contracts/schemas.ts";
+import { LEGACY_PLAN_SCHEMA, SCHEMAS, type SchemaId } from "../extensions/artifact-contracts/schemas.ts";
 
 function filledDocument(schemaId: SchemaId): string {
-	const schema = SCHEMAS[schemaId];
+	const schema = schemaId === "plan" ? LEGACY_PLAN_SCHEMA : SCHEMAS[schemaId];
 	const preamble = schema.preamble.map((line) => line.example.replace("YYYY-MM-DD", "2026-10-01").replace(/<[^>]+>/g, "example"));
 	return [
 		...preamble,
@@ -136,6 +136,15 @@ test("applyExactEdits normalizes LF, requires unique matches, and rejects overla
 	]);
 	assert.equal(overlap.ok, false);
 	if (!overlap.ok) assert.match(overlap.error, /overlap/);
+});
+
+test("new five-section plan writes reach the real document consumer", () => {
+	const plan = "# Compact plan\nStatus: ready\nUpdated: 2026-11-06\n\n"
+		+ ["Goal", "Done means and Keep", "Decisions", "Slices with checks", "Open questions"]
+			.map((heading) => `## ${heading}\ncontent\n`).join("\n");
+	assert.deepEqual(checkDocumentWrite({ relPath: ".harness/plans/2026-11-06-compact.md", exists: false, proposed: plan }), { block: false });
+	const previous = filledDocument("plan");
+	assert.match(blockedReason(checkDocumentWrite({ relPath: ".harness/plans/2026-11-06-compact.md", exists: true, current: previous, proposed: plan })), /format/);
 });
 
 test("valid plan writes pass and invalid writes include errors and template", () => {

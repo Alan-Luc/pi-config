@@ -1,6 +1,6 @@
 # Task recipe cards
 
-For Direct work, skip recipe selection. Use the canonical tier matrix in `tech-lead.md` to select coverage.
+Recipes are optional. Use the canonical tier matrix in `tech-lead.md` to select coverage.
 
 If risk warrants it, use the staged [Haiku advisory at low effort](../../deslop/SKILL.md). Skip oversized patches. Report timeouts as incomplete with `deslop: timed out`. Review worktree changes separately from staged changes.
 
@@ -38,13 +38,6 @@ If risk warrants it, use the staged [Haiku advisory at low effort](../../deslop/
 3. Limit temporary instrumentation to owned local or test instances. ✓ Before applying shared or production hotfixes, obtain authorization.
 
 **Done means:** The report states findings supported by evidence, exact scope, and unknowns. Production changes require separate authorization.
-
-## Review
-
-1. Freeze the exact candidate. ✓ Identify the scope owned by this ticket, callers, contracts, and evidence.
-2. Follow [the full adversarial review procedure](../../../prompts/eviscerate-diff.md). ✓ Report unresolved prerequisites, authorization or tooling blockers, and coverage gaps.
-
-**Done means:** Complete selected review, integration, and live clearance cover the final candidate. Account for each lane and check. In the pass summary, record fixes or dismissals with evidence and a reason.
 
 ## Harness change
 

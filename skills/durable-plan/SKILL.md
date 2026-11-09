@@ -1,43 +1,35 @@
 ---
 name: durable-plan
-description: Create or resume durable `.harness/plans/`, and load prior plans or decisions before ticket implementation when they may govern the work.
+description: Create or resume durable plans while preserving governing decisions and legacy plan history.
 ---
 
 # Durable plans
 
-The plan file is the working memory and handoff contract. Chat is not the source of truth. Canonical project artifacts live under `.harness/`: plans under `.harness/plans/`, dated topic records under `.harness/YYYY/MM/DD/<plan-or-feature-key>.md`, and handoffs under `.harness/handoffs/YYYY/MM/DD/<session-id>-<task-slug>.md`. Runtime Pi sessions remain under `~/.pi/agent/sessions`.
+Use the [tech-lead matrix](../../extensions/tech-lead/tech-lead.md) for tiers, approval gates, and pass coverage.
+Require a plan for Full work or explicit planning.
+Require a plan for approval-gated Focused work or an existing governing plan.
+When an existing plan governs, resume it instead of creating another.
+For approval-gated Direct work, state bounded scope and checks unless Alan requests a plan.
 
-Use the canonical acceptance matrix for Direct, Focused, and Full in `tech-lead.md`; do not recreate it here. Focused work uses recipes and tasks without a new plan unless explicitly planned, approval-gated, or governed by a prior plan. Full always requires a plan. Explicit planning and approval-gated Focused work require one. Approval-gated Direct work uses a bounded scope and checks brief unless explicit planning is requested.
+Use `.harness/plans/YYYY-MM-DD-<short-slug>.md` for plans and `work_log` for dated execution records.
+Keep filenames flat, lowercase, and stable.
+Keep historical `.opencode` records read-only.
 
-Unless Alan explicitly requests planning, Direct work is exempt. For exact mechanical actions, do not create or load plans, task lists, work logs, reviews, handoffs, or reports. Run the direct consuming-surface check. Inherited approval triggers and blockers still bind; use the bounded brief required by `tech-lead.md` when a Direct task is gated.
+## Resolve context
 
-Canonical discovery uses `.harness` only. Historical `.opencode` records remain read-only; do not migrate, rewrite or delete them as routine task preparation.
+For ticket-shaped implementation, read the governing plans and relevant dated logs before questions, edits, or delegation.
 
-## Ticket context preflight
+Read the named or active plan completely before edits or delegation.
+Load relevant decisions and dated-log milestones before repeating investigation.
+Surface conflicts affecting behavior, scope, authority, or verification.
+If context is incomplete, inspect `.harness/plans/` for the governing topic.
+Use the sole `in_progress` plan, otherwise the sole `ready` plan.
+Ask when multiple candidates remain; do not overwrite an unrelated plan.
+For Direct mechanical actions without a plan trigger, run the consuming-surface check without planning artifacts.
 
-For ticket-shaped implementation, even when the user did not request planning:
+## Plan format
 
-1. Extract the ticket and dependency IDs.
-2. Search `.harness/plans/` and relevant dated topic logs under `.harness/YYYY/MM/DD/` for those IDs; old daily files remain readable. Keep discovery bounded to the governing topic.
-3. Read matching plans, decision entries, and dated-log milestones before questions, edits, or repeated reconnaissance.
-4. Tell the user which artifacts govern the work and surface implementation-relevant conflicts.
-
-This preflight supplies context; it does not by itself create a plan or add an approval gate.
-
-## Resolve the plan
-
-Use, in order:
-
-1. The exact path supplied by the user or named in the current Pi session.
-2. The active plan path already named in the session.
-3. If context is incomplete, inspect `.harness/plans/*.md`. Use the only plan marked `in_progress`; if none is in progress, use the only `ready` plan. Ask when multiple candidates remain.
-4. When authoring outside a planning workflow with no existing path, create `.harness/plans/YYYY-MM-DD-<short-slug>.md`.
-
-Do not overwrite an unrelated plan. Keep filenames flat, lowercase, and stable after creation.
-
-## Required document
-
-Start every plan with:
+Start new plans with:
 
 ```markdown
 # <Plan title>
@@ -45,45 +37,39 @@ Status: draft | ready | in_progress | blocked | complete
 Updated: YYYY-MM-DD
 ```
 
-Then include enough concrete detail for an agent with no chat history:
+Use these sections in order:
 
-- **Goal and context** — desired behavior, current state, and useful example or data flow.
-- **Requirements and acceptance** — observable outcomes and constraints.
-- **Scope / non-scope** — explicit boundaries.
-- **Decisions and invariants** — implementation-relevant choices with rationale; record rejected alternatives only when they prevent future rework.
-- **Implementation** — ordered slices with exact paths or bounded discovery targets, dependencies, ownership, and focused checks. Include delegation briefs when delegation is intended.
-- **Verification** — runnable commands and expected evidence, including meaningful failure paths.
-- **Risks and open questions** — mark the plan `blocked` when an answer changes behavior, scope, authorization, or verification.
-- **Progress and handoff** — status and a minimal resume pointer to the canonical work log and next action; no per-slice check ledger. On completion, link a handoff only when human action remains.
-- **Decision log** — the final section. After approval, append dated material decisions with session, rationale, and impact. Do not rewrite or remove entries.
+- **Goal:** Explain desired behavior, current context, scope, and non-scope.
+- **Done means and Keep:** State observable acceptance, preserved guarantees, and meaningful success and failure cases.
+- **Decisions:** Record current choices and rationale; point to the canonical work log for material history and progress.
+- **Slices with checks:** Name ordered outcomes, ownership, dependencies, and runnable checks. Use exact paths or bounded discovery targets.
+- **Open questions:** State blockers and risks, or `None.`. Mark the plan blocked when an answer changes its contract.
 
-Do not write “as discussed” or rely on chat-only context. A fresh Pi session must be able to continue from the file alone.
+Keep existing nine-section plans in their original format.
+Preserve their append-only Decision log and existing resume references.
+Do not convert formats during edits or rewrite historical decisions.
+The parser enforces document structure, not completeness of external work-log history.
 
-## Authoring
+## Plan and execute
 
-- Before production edits or proposal generation, define observable acceptance and verification. Specify callers, data shapes, meaningful success and failure cases, and the pivotal safety assumption. The common test-first obligation applies without loading a separate TDD skill; do not turn Direct work into planning ceremony.
-- Share functional requirements and hard constraints with every builder. Fix judging criteria before generation; unsupported criteria remain unproven and safety failures cannot be offset by scores. Reuse expectations from plans, briefs, and tests rather than adding universal rubric paperwork.
-- Inspect only enough code to verify ownership, prerequisites, contracts, and canonical patterns.
-- Apply Ponytail before slicing; omit speculative abstractions and follow-ups.
-- For `plan with me`, keep the plan `draft` while collaborating, surface implementation-relevant decisions incrementally, and update the artifact as answers resolve them.
-- For `brief plan`, do bounded discovery and write the shortest artifact that still satisfies the required document. Ask only questions whose answers materially change it.
-- Write or update the plan before presenting it and mark it `ready` only when no blocking question remains. Present a clean review in chat with goal, decisions, scope, implementation slices, checks, and open questions; omit artifact metadata and progress bookkeeping from the review.
-- During planning, edit only the designated plan file. Do not edit source.
-- When an approval gate is requested, present the review and wait for explicit approval in chat. After approval, record it in the decision log, mark the plan `in_progress`, and continue in the same Pi session.
+Define observable acceptance before proposals or production edits.
+Identify callers, contracts, trust boundaries, failure paths, and verification prerequisites.
+Follow [common implementation and test-first rules](../../AGENTS.md#implementation).
+Inspect only enough source to establish safe ownership and checks.
+Compare independent architecture proposals only when Alan requests them.
 
-## Execution and maintenance
+During planning, edit only the designated plan.
+Present goals, scope, decisions, slices, checks, and questions; await requested approval before implementation.
+When Alan requests execution of a ready plan, proceed without replanning.
+Record approval and material contract changes through `work_log` with rationale and impact.
+Keep the plan's status, decisions, and log pointer current without copying the ledger.
 
-- Read the full plan before the first source edit or delegation. Confirm the repository state and named prerequisites still match it.
-- When the user asks to execute a `ready` plan, mark it `in_progress` and proceed without replanning. Ask only for a real blocker or stale contract.
-- Treat the approved design as the baseline. Keep status, progress, and actual verification current, but record later material decisions and deviations by appending to the final decision log rather than rewriting history. An entry that changes the effective contract must name what it supersedes.
-- Record slice milestones, actual checks, execution decisions and interruptions once through `work_log`; use its returned dated topic path. Link material contract decisions to their append-only plan anchors rather than copy their rationale. Keep `Progress and handoff` to status, that log reference and the exact next action; add a handoff only for remaining human actions. The writer owns runtime session attribution. Loaded older writers retain their routing until an explicitly authorized runtime replacement. Do not silently reload them.
-- Give delegated Pi agents the complete readable plan, relevant work-log entries, evidence paths, and their exact objective. Specify owned paths, dependencies, frozen inputs, non-scope, and checks. Copy ignored governing inputs into owned worktrees when needed; require explicit owned cwd for commands. They report to the parent, who owns plan status and shared contracts.
-- On completion, mark the plan `complete`. Leave a concise final handoff only when human action remains; otherwise record that no handoff was required. On interruption, leave an exact next step.
+Give workers readable governing artifacts, functional requirements, hard constraints, exact owned paths, dependencies, and checks.
+The parent owns shared contracts and integration.
+Check shared contracts before launching dependent disjoint writers.
+Written briefs do not isolate files.
 
-A plan does not authorize commits, pushes, destructive Git, deployment, or scope expansion. Routine work without a plan needs no artifact.
-
-## Contract-first parallel work
-
-Use this only when at least two genuinely disjoint slices share an API, schema, event, or serialized type. Skip routine, same-file, and no-shared-contract work. The parent creates the smallest compile-safe shared contract slice. Run a focused contract or type check. Derive the ready set from approved dependencies and exact path ownership. When an installed delegation tool is available, launch every ready disjoint Pi agent together.
-
-Keep shared contract paths parent-owned and read-only to delegated agents. Delegated agents report required changes to the parent; the parent verifies once and rebriefs affected consumers. Add no placeholder behavior or broad scaffolding.
+Mark completion only when Done means and Keep hold and the selected pass clears the final candidate.
+Leave an exact next step on interruption.
+Create a handoff only for remaining human actions.
+A plan grants no additional publication, installation, destructive-operation, or separately owned package authority.
