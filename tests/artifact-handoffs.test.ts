@@ -40,7 +40,7 @@ function appendUser(session: SessionManager, text: string): string {
 }
 
 it.each([
-	"implementation-engineer", "implementation-engineer-sol", "implementation-engineer-opus",
+	"implementation-engineer",
 	"test-automation-engineer", "live-verifier", "code-explorer", "mr-babysitter",
 	"code-reviewer", "code-reviewer-sol", "code-reviewer-sonnet", "code-reviewer-opus",
 ])("%s explicitly exposes the schema-bound submission tool", async (role) => {

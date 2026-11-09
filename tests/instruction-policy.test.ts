@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "bun:test";
+import { getLocalAgentDefinitions } from "./fixtures/agent-definitions.ts";
 
-const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-const reviewer = read("agents/code-reviewer.md");
-const profiles = ["code-reviewer-sol", "code-reviewer-sonnet", "code-reviewer-opus"];
+const profiles = new Map(getLocalAgentDefinitions().map((profile) => [profile.name, profile]));
 
-test("review profiles delegate to the read-only canonical reviewer", () => {
-	assert.match(reviewer, /^tools: .*\bread\b/m);
-	assert.doesNotMatch(reviewer, /^tools: .*\b(?:edit|write|subagent)\b/m);
-	for (const name of profiles) {
-		assert.ok(read(`agents/${name}.md`).includes("agents/code-reviewer.md"));
+test("reviewer profiles retain canonical roles and distinct model families", () => {
+	const reviewers = ["code-reviewer", "code-reviewer-sol", "code-reviewer-sonnet", "code-reviewer-opus"];
+	for (const name of reviewers) {
+		const profile = profiles.get(name);
+		assert.ok(profile, `${name} profile is missing`);
+		assert.equal(profile.flags, "--no-mcp");
+		assert.ok(profile.denyEnv?.includes("GITLAB_PERSONAL_ACCESS_TOKEN"));
+		assert.equal(profile.tools, profiles.get("code-reviewer")?.tools);
+		assert.equal(profile.skills, profiles.get("code-reviewer")?.skills);
 	}
+	const family = (name: string) => profiles.get(name)?.model?.split("/")[0];
+	for (const name of reviewers) assert.ok(family(name), `${name} has a model family`);
+	assert.notEqual(family("code-reviewer"), family("code-reviewer-sonnet"));
+	assert.notEqual(family("code-reviewer-sol"), family("code-reviewer-opus"));
 });

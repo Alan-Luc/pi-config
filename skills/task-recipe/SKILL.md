@@ -11,9 +11,6 @@ Use the tier matrix in `tech-lead.md` for selection and required coverage; this 
 
 The tech-lead router owns scheduling, resumption and continuation. This skill owns card selection only. Before preparation, reconcile the governing plan, work log, branch, state, evidence and completed work; reuse valid evidence and resolve material uncertainties. At the pass, use the matrix in `tech-lead.md` and [the adversarial review procedure](../../prompts/eviscerate-diff.md). Keep focused checks during iteration. Preserve unrelated work and make final claims about the final candidate.
 
-
-Effort selection is not active merely because a task recipe mentions it. Use the task-effort table only after package enforcement is implemented and its loaded definitions are verified; otherwise retain the currently loaded role defaults. Do not infer that off or low routing is active.
-
 ## Task effort
 
 Select the smallest justified effort once before a worker launch and include a short rationale in its existing brief. A ticket's tier or a role title does not determine every subtask's effort. Every role accepts model and thinking overrides within the chosen model's supported levels. Do not substitute a model without saying so. Review and design profiles retain their explicitly pinned effort.

@@ -1114,7 +1114,7 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "verification_evidence",
 		label: "Verification evidence",
-		description: "Capture a Git candidate, run one synchronous exact argv check, or start and later collect one immutable verification task, optionally in a linked worktree.",
+		description: "Capture a Git candidate, run one synchronous exact argv check, or start and later collect one immutable verification task, optionally in a linked worktree. Capture before checks and recapture after final checks. Prefer background start, automatic terminal notification, then collect; do independent work or yield without polling. Preserve documented synchronous exceptions, failed checks, and candidate invalidation. Share readable results, candidate identities, and log references with relevant workers; session-local evidence IDs are not registered in other sessions. Reuse unchanged evidence instead of repeating checks. Do not add checks merely to exercise this tool. If unavailable or insufficient, report why and use the smallest safe fallback without weakening verification.",
 		promptSnippet: "Capture, run, or start/collect bounded verification evidence",
 		promptGuidelines: [
 			"Use capture before coordinating checks and run only one exact argument vector with a repository-relative cwd.",

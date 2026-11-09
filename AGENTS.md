@@ -61,7 +61,6 @@ A station is an owner's defined scope.
 - Track multi-step work with live tasks.
 - For behavior changes, use `live-verification` and, for missing reusable tooling, `build-live-verification`. Parallelize independent live checks and tests; sequence prerequisites and shared state. Require both results.
 - Use `verification_evidence` with exact argv, repo-relative cwd, and timeout; use background `start` and `collect` by default. Use synchronous `run` only for an explicit request, unavailable background service, or a concrete lifecycle or correctness need. Report unavailable checks as `Not run: <reason>`.
-- Follow `extensions/extension-dogfooding.md`; use `{}` for uncommitted `inspect_change`, explicit `base` and `head` for commits.
 - Verify claims on the same surface, including persistence; tests and screenshots alone cannot prove integration. Use local or test identities and owned resources. Missing prerequisites block claims.
 
 ## Web Search

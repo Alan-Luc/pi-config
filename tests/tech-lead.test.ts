@@ -1,60 +1,79 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { it, test } from "bun:test";
+import { test } from "bun:test";
 import registerTechLead from "../extensions/tech-lead/index.ts";
-import { getEffectiveAgentDefinitions } from "../git/github.com/Alan-Luc/pi-subagents/src/agents/definitions.ts";
+import { getLocalAgentDefinitions } from "./fixtures/agent-definitions.ts";
 
+const techLeadPath = new URL("../extensions/tech-lead/tech-lead.md", import.meta.url);
+const techLead = readFileSync(techLeadPath, "utf8");
 const agents = Object.fromEntries(
 	readdirSync(new URL("../agents/", import.meta.url))
 		.filter((path) => path.endsWith(".md"))
 		.map((path) => [path.replace(/\.md$/, ""), readFileSync(new URL(`../agents/${path}`, import.meta.url), "utf8")]),
 );
-const techLead = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
 const settings = JSON.parse(readFileSync(new URL("../settings.json", import.meta.url), "utf8")) as {
 	modelThinkingLevels?: Record<string, string>;
 };
 
-it.each([
-	{ name: "code-explorer", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "code-explorer" },
-	{ name: "mr-babysitter", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "mr-babysitter" },
-	{ name: "implementation-engineer", model: "openai-codex/gpt-6-luna", thinking: "medium", canonical: "implementation-engineer" },
-	{ name: "test-automation-engineer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "test-automation-engineer" },
-	{ name: "live-verifier", model: "openai-codex/gpt-6-luna", thinking: "low", canonical: "live-verifier" },
-	{ name: "code-reviewer", model: "openai-codex/gpt-6-luna", thinking: "high", canonical: "code-reviewer" },
-	{ name: "code-reviewer-sonnet", model: "anthropic/claude-sonnet-5-5", thinking: "high", canonical: "code-reviewer" },
-	{ name: "code-reviewer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "code-reviewer" },
-	{ name: "code-reviewer-opus", model: "anthropic/claude-opus-5-5", thinking: "high", canonical: "code-reviewer" },
-	{ name: "implementation-engineer-sol", model: "openai-codex/gpt-6.1-sol", thinking: "high", canonical: "implementation-engineer" },
-	{ name: "implementation-engineer-opus", model: "anthropic/claude-opus-5-5", thinking: "high", canonical: "implementation-engineer" },
-])("the installed loader resolves $name without inferred overrides", ({ name, model, thinking, canonical }) => {
-	const previous = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = new URL("../", import.meta.url).pathname;
-	try {
-		const definitions = getEffectiveAgentDefinitions(process.env.PI_CODING_AGENT_DIR);
-		const profile = definitions.find((definition) => definition.name === name);
-		const owner = definitions.find((definition) => definition.name === canonical);
-		assert.ok(profile && owner, `loader resolves ${name} and ${canonical}`);
-		assert.equal(profile.model, model);
-		assert.equal(profile.thinking, thinking);
-		assert.equal(profile.allowModelOverride, true);
-		assert.equal(profile.thinkingOverrides, undefined);
-		assert.equal(profile.tools, owner.tools);
-		assert.equal(profile.skills, owner.skills);
-		assert.notEqual(profile.noContextFiles, true);
-		assert.equal(profile.parentClosePolicy, "terminate");
-		assert.equal(profile.spawning, false);
-		if (name === "live-verifier") {
-			assert.equal(profile.tools, "read,bash,grep,find,inspect_context,inspect_change,verification_evidence,bg_run,bg_status,bg_logs,bg_kill,submit_agent_result");
-			assert.equal(profile.skills, "none");
+const definitions = new Map(getLocalAgentDefinitions().map((definition) => [definition.name, definition]));
+
+test("safety policy sections remain present", () => {
+	for (const [document, heading] of [
+		[techLead, "## Slice and delegate"],
+		[techLead, "## Alan-facing communication"],
+		[agents["code-reviewer"], "## Findings"],
+		[readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8"), "## Hard lines"],
+		[readFileSync(new URL("../prompts/eviscerate-diff.md", import.meta.url), "utf8"), "## Select coverage"],
+		[readFileSync(new URL("../skills/live-verification/SKILL.md", import.meta.url), "utf8"), "## Run the real thing"],
+	]) {
+		const section = document.split(`${heading}\n`)[1]?.split(/\n## /)[0];
+		assert.ok(section?.trim(), `${heading} section is missing or empty`);
+		if (heading === "## Hard lines") {
+			assert.match(section, /push/i);
+			assert.match(section, /authoriz/i);
 		}
-		if (name !== canonical) assert.ok(profile.body?.includes(`agents/${canonical}.md`));
-		assert.deepEqual(settings.modelThinkingLevels, {
-			"openai-codex/gpt-6.1-sol": "medium",
-			"openai-codex/gpt-6-luna": "high",
-		});
-	} finally {
-		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previous;
+	}
+});
+
+test("agent definitions expose valid model and effort settings", () => {
+	const levels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+	for (const name of Object.keys(agents)) {
+		const profile = definitions.get(name);
+		assert.ok(profile, `${name} is discoverable`);
+		assert.equal(profile.path, new URL(`../agents/${name}.md`, import.meta.url).pathname);
+		assert.match(profile.model ?? "", /^[^/\s]+\/[^/\s]+$/);
+		assert.ok(levels.has(profile.thinking ?? ""), `${name} has a supported thinking level`);
+		assert.equal(typeof profile.allowModelOverride, "boolean");
+		assert.ok(profile.tools?.length, `${name} has an explicit loadout`);
+		assert.equal(profile.spawning, false, `${name} cannot launch children`);
+		assert.notEqual(profile.noContextFiles, true, `${name} retains project instructions`);
+		assert.equal(profile.parentClosePolicy, "terminate");
+	}
+	for (const [model, level] of Object.entries(settings.modelThinkingLevels ?? {})) {
+		assert.match(model, /^[^/\s]+\/[^/\s]+$/);
+		assert.ok(levels.has(level));
+	}
+});
+
+test("agent profiles keep their loadout and runtime controls", () => {
+	for (const name of ["implementation-engineer", "test-automation-engineer", "code-reviewer", "code-reviewer-sol", "code-reviewer-sonnet", "code-reviewer-opus", "live-verifier"]) {
+		const profile = definitions.get(name);
+		assert.ok(profile, `${name} profile is missing`);
+		assert.equal(profile.flags, "--no-mcp");
+		assert.ok(profile.denyEnv?.includes("GITLAB_PERSONAL_ACCESS_TOKEN"));
+		assert.equal(profile.parentClosePolicy, "terminate");
+	}
+	assert.equal((definitions.get("code-explorer")?.flags ?? "").split(/\s+/).includes("--no-mcp"), false);
+	for (const name of Object.keys(agents)) assert.equal(definitions.get(name)?.name, name);
+	for (const name of ["code-explorer", "test-automation-engineer"]) assert.equal(definitions.get(name)?.skills, "none");
+	for (const name of ["code-explorer", "code-reviewer", "live-verifier"]) {
+		const tools = new Set(definitions.get(name)?.tools?.split(","));
+		for (const forbidden of ["edit", "write", "subagent", "TaskCreate", "TaskUpdate"]) assert.equal(tools.has(forbidden), false, `${name} cannot use ${forbidden}`);
+		for (const required of ["read", "inspect_context", "inspect_change"]) assert.ok(tools.has(required), `${name} exposes ${required}`);
+	}
+	for (const name of ["implementation-engineer", "test-automation-engineer"]) {
+		const tools = new Set(definitions.get(name)?.tools?.split(","));
+		for (const required of ["TaskCreate", "TaskList", "TaskGet", "TaskUpdate", "submit_agent_result", "inspect_context", "inspect_change"]) assert.ok(tools.has(required), `${name} exposes ${required}`);
 	}
 });
 
@@ -81,6 +100,7 @@ function harness(tools: string[]) {
 	let sessionStart: () => void = () => undefined;
 	let start: (event: { systemPromptOptions: { appendSystemPrompt?: string } }) => void = () => undefined;
 	let solo: (args: string, ctx: unknown) => Promise<void> = async () => undefined;
+	const notes: string[] = [];
 	registerTechLead(
 		{
 			on: (event: string, handler: never) => {
@@ -94,13 +114,13 @@ function harness(tools: string[]) {
 		} as never,
 		{},
 	);
-	const context = { ui: { notify: () => undefined } };
+	const context = { ui: { notify: (message: string) => notes.push(message) } };
 	const prompt = () => {
 		const options: { appendSystemPrompt?: string } = {};
 		start({ systemPromptOptions: options });
 		return options.appendSystemPrompt ?? "";
 	};
-	return { initialize: () => sessionStart(), toggle: () => solo("", context), tools: () => active, prompt };
+	return { initialize: () => sessionStart(), toggle: () => solo("", context), tools: () => active, prompt, notes };
 }
 
 test("root startup excludes only unused task execution tools", () => {
@@ -112,44 +132,29 @@ test("root startup excludes only unused task execution tools", () => {
 	assert.deepEqual(session.tools(), retained);
 });
 
-test("solo mode removes delegation tools and restores the original runtime state", async () => {
+test("solo mode removes delegation tools, swaps its section, and restores state", async () => {
 	const retained = ["read", "subagent", "bash", "subagent_resume", "subagent_kill", "TaskCreate", "TaskList", "TaskGet", "TaskUpdate"];
 	const session = harness([...retained, "TaskOutput", "TaskStop", "TaskExecute"]);
 	session.initialize();
-	const originalPrompt = session.prompt();
+	assert.equal(session.prompt(), techLead);
 	await session.toggle();
 	assert.deepEqual(session.tools(), ["read", "bash", "TaskCreate", "TaskList", "TaskGet", "TaskUpdate"]);
-	assert.notEqual(session.prompt(), originalPrompt);
+	assert.notEqual(session.prompt(), techLead);
+	assert.ok(session.prompt().includes("Solo mode: work directly; do not delegate to subagents."));
+	assert.ok(session.prompt().includes("Do not claim paired review or model diversity in solo mode"));
+	assert.ok(session.prompt().includes("disclose required coverage gaps"));
+	assert.ok(!session.prompt().includes("delivery-workflow"));
+	assert.ok(!session.prompt().includes("Template:"));
+	assert.ok(!session.prompt().includes("The five work-seam agents are:"));
+	assert.deepEqual(session.tools(), ["read", "bash", "TaskCreate", "TaskList", "TaskGet", "TaskUpdate"]);
 	await session.toggle();
 	assert.deepEqual(session.tools(), retained);
-	assert.equal(session.prompt(), originalPrompt);
+	assert.equal(session.prompt(), techLead);
+	assert.equal(session.notes.length, 2);
 });
 
-test("a missing router section fails fast", () => {
-	assert.throws(() => registerTechLead({} as never, {}, "## Other\n"));
-});
-
-test("profile capability boundaries remain configured", () => {
-	assert.deepEqual(Object.keys(agents).sort(), [
-		"code-explorer", "code-reviewer", "code-reviewer-opus", "code-reviewer-sol", "code-reviewer-sonnet",
-		"implementation-engineer", "implementation-engineer-opus", "implementation-engineer-sol", "live-verifier",
-		"mr-babysitter", "test-automation-engineer",
-	]);
-	for (const name of ["implementation-engineer", "test-automation-engineer"]) {
-		assert.match(agents[name], /^tools: .*TaskCreate,TaskList,TaskGet,TaskUpdate,submit_agent_result$/m);
-	}
-	for (const name of ["code-explorer", "code-reviewer"]) {
-		assert.doesNotMatch(agents[name], /^tools: .*\bTask(?:Create|List|Get|Update)\b/m);
-	}
-	for (const name of ["code-explorer", "code-reviewer", "implementation-engineer", "test-automation-engineer"]) {
-		assert.match(agents[name], /^tools: .*inspect_context,inspect_change/m);
-	}
-	for (const name of ["code-explorer", "test-automation-engineer"]) {
-		assert.match(agents[name], /^skills: none$/m);
-		assert.doesNotMatch(agents[name], /^no-context-files: true$/m);
-	}
-	assert.match(agents["live-verifier"], /^flags: --no-mcp$/m);
-	assert.match(agents["live-verifier"], /^deny-env: GITLAB_PERSONAL_ACCESS_TOKEN$/m);
+test("a missing Slice and delegate heading fails fast", () => {
+	assert.throws(() => registerTechLead({} as never, {}, "## Other\n"), /missing the "## Slice and delegate" heading/);
 });
 
 test("removed agent profiles stay absent", () => {

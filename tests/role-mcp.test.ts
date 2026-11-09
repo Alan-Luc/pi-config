@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { expect, it, test } from "bun:test";
 import { resolve } from "node:path";
 import type { AgentSession } from "../install/releases/1.4.0/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
-import { getEffectiveAgentDefinitions } from "../git/github.com/Alan-Luc/pi-subagents/src/agents/definitions.ts";
+import { getLocalAgentDefinitions } from "./fixtures/agent-definitions.ts";
 import { buildParentEnvSnapshot, resolveDenyEnvPatterns } from "../git/github.com/Alan-Luc/pi-subagents/src/launch/child-env.ts";
 
 const installRoot = process.env.PI_MANAGED_INSTALL_ROOT;
@@ -57,10 +57,10 @@ function recordToolCall(session: AgentSession, id: string, name: string) {
 	});
 }
 
-const definitions = new Map(getEffectiveAgentDefinitions().map((definition) => [definition.name, definition]));
+const definitions = new Map(getLocalAgentDefinitions().map((definition) => [definition.name, definition]));
 
 it.each([
-	"implementation-engineer", "implementation-engineer-sol", "implementation-engineer-opus",
+	"implementation-engineer",
 	"test-automation-engineer", "live-verifier", "code-reviewer", "code-reviewer-sol", "code-reviewer-sonnet", "code-reviewer-opus",
 ])("%s disables MCP with the native flag", (role) => {
 	expect(definitions.get(role)?.flags).toBe("--no-mcp");

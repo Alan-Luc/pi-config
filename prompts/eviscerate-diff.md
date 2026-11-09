@@ -51,8 +51,8 @@ Treat missing, failed, or stale results as incomplete coverage.
 Require each finding's realistic trigger and producer.
 Require scope within Done means and Keep.
 Fix qualifying P0 and P1 findings.
-Dismiss P2 findings with one-line reasons or record outside-ticket follow-ups; do not fix them in-ticket.
-Dismiss everything else with a one-line reason or record an outside-ticket follow-up.
+Dismiss P2 and other nonqualifying findings with one-line reasons, or record outside-ticket follow-ups.
+Do not fix these findings in-ticket.
 Add regression tests only for accepted findings.
 Before behavioral fixes, reproduce the exact triggering input and state with an intended assertion failure.
 For nonbehavior findings, use passing characterization or a direct check.
