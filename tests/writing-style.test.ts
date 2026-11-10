@@ -5,7 +5,6 @@ import { it, test } from "bun:test";
 const instructionPaths = [
 	"AGENTS.md",
 	"extensions/tech-lead/tech-lead.md",
-	"extensions/guardrails/README.md",
 	...["agents", "prompts"].flatMap((directory) =>
 		readdirSync(new URL(`../${directory}/`, import.meta.url))
 			.filter((path) => path.endsWith(".md"))

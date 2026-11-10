@@ -1,5 +1,16 @@
 # Pi harness
 
+## Guard ownership
+
+The standalone `pi-guardrails` package owns Git and publication enforcement.
+Pi-config keeps verification, clearance production, review enforcement, and workflow artifacts.
+The package requires current producer clearance for strict publication.
+An absent or disabled package cannot enforce policy.
+
+Run migration tests with `PI_GUARDRAILS_TEST_ROOT` pointing to the pinned package checkout.
+Use `PI_MIGRATION_SDK_ROOT` to select the managed SDK package when needed.
+Keep installation, activation, and every push separately authorized.
+
 ## The kitchen
 
 The harness is modeled on a Michelin kitchen. Agents use the functional

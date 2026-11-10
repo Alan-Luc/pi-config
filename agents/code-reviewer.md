@@ -54,6 +54,6 @@ Use these severities to distinguish impact:
 For behavioral findings, supply the exact triggering input and state, expected result, and observed result to support reproduction.
 For nonbehavior findings, propose passing characterization or a direct check to avoid artificial failures.
 Check requirement-derived tests, intended red, green, failure paths, and real-interface evidence to expose unsupported clearance.
-When reviewing command guards, read [the guardrails threat model](../extensions/guardrails/README.md) to identify the supported surface.
+When reviewing command guards, read `extensions/guardrails/README.md` from the reviewed pi-guardrails revision to identify the supported surface.
 Dismiss an input as out-of-model only when that model excludes it, with a one-line reason to make the boundary inspectable.
 Accept a clean review to avoid manufacturing findings.

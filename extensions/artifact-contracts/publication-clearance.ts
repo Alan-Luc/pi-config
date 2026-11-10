@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
 import { Type } from "typebox";
 import type { EventBus, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createCandidateIdentity, getVerificationEvidence, verificationEvidenceErrors, sealedVerificationEvidenceErrors, type CandidateIdentity, type VerificationEvidence } from "./verification-store.ts";
@@ -22,8 +21,6 @@ export const FINALIZE_RESULT_RESPONSE = "artifact-contracts:finalize-result:resp
 export const FINALIZED_RESULT_ENTRY = "artifact-contracts.finalized-result.v1";
 export const DELEGATION_RESULT_REQUEST = "workflow:delegation-result:request:v1";
 export const DELEGATION_RESULT_RESPONSE = "workflow:delegation-result:response:v1";
-export const PUBLICATION_CLEARANCE_REQUEST = "artifact-contracts:publication-clearance:request:v1";
-export const PUBLICATION_CLEARANCE_RESPONSE = "artifact-contracts:publication-clearance:response:v1";
 export const PUBLICATION_CLEARANCE_QUERY = "pi-guardrails:publication-clearance:query:v1";
 export const PUBLICATION_CLEARANCE_RECORD = "pi-guardrails:publication-clearance:record:v1";
 export const LAUNCH_BINDING_ENV = "PI_SUBAGENT_PUBLICATION_BINDING";
@@ -73,11 +70,6 @@ export type FinalizeResultResponse = Readonly<{
 	incarnationId: string;
 	rootGeneration: string;
 	finalize: () => Promise<FinalizedResultRef | Readonly<{ state: "unavailable"; reason: string }>>;
-}>;
-export type PublicationClearanceRequest = Readonly<{ version: 1; requestId: string; cwd: string }>;
-export type PublicationClearanceResponse = PublicationClearanceRequest & Readonly<{
-	loadFrozenCandidate: () => Promise<FrozenPublicationCandidate | undefined>;
-	isCandidateCurrent: (candidate: FrozenPublicationCandidate) => Promise<boolean>;
 }>;
 
 const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -458,13 +450,5 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 		pi.events.emit(PUBLICATION_CLEARANCE_RECORD, {
 			...value, evidenceIds: selected.wireEvidenceIds, clearedAt: selected.clearedAt,
 		});
-	});
-	pi.events.on(PUBLICATION_CLEARANCE_REQUEST, (value) => {
-		if (!isRecord(value) || !closed(value, ["version", "requestId", "cwd"]) || value.version !== 1 || !identifier(value.requestId) || !identifier(value.cwd) || !ownerContext) return;
-		try { if (realpathSync(resolve(value.cwd)) !== realpathSync(ownerContext.cwd)) return; } catch { return; }
-		pi.events.emit(PUBLICATION_CLEARANCE_RESPONSE, { version: 1, requestId: value.requestId, cwd: value.cwd,
-			async loadFrozenCandidate() { const selected = seal; return selected && await current(selected) ? selected.frozen : undefined; },
-			async isCandidateCurrent(candidate: FrozenPublicationCandidate) { const selected = seal; return !!selected && digest(candidate) === digest(selected.frozen) && await current(selected); },
-		} satisfies PublicationClearanceResponse);
 	});
 }

@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { isSubagentChildEnvironment } from "../extensions/lib/shared.ts";
 
+const standaloneCommit = "9f74ba62b9fca5631ec4195c9f9f16e75fcc3ca2";
+
 async function loadPiApi() {
 	const installRoot = process.env.PI_MANAGED_INSTALL_ROOT;
 	if (!installRoot) throw new Error("PI_MANAGED_INSTALL_ROOT is required to run the Pi loader smoke test");
@@ -12,40 +14,41 @@ async function loadPiApi() {
 	return import(join(installRoot, "releases", version, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"));
 }
 
-test("Pi default discovery loads and GitHub pushes bypass non-GitHub publication gating", async () => {
+test("settings pin the standalone guard package", async () => {
+	const settings = JSON.parse(await readFile(new URL("../settings.json", import.meta.url), "utf8"));
+	expect(settings.packages).toContain(`git:github.com/Alan-Luc/pi-guardrails@${standaloneCommit}`);
+});
+
+test("Pi discovery loads one standalone guard and preserves artifact tools", async () => {
 	if (isSubagentChildEnvironment(process.env)) {
 		const fixtureEnv = { ...process.env };
 		for (const key of ["PI_SUBAGENT_AGENT", "PI_SUBAGENT_PARENT_SESSION", "PI_SUBAGENT_NAME", "PI_SUBAGENT_SESSION", "PI_SUBAGENT_SURFACE"]) delete fixtureEnv[key];
 		execFileSync(process.execPath, ["test", import.meta.path], { cwd: resolve(import.meta.dir, ".."), env: fixtureEnv, timeout: 30_000 });
 		return;
 	}
-	const { DefaultResourceLoader, SettingsManager } = await loadPiApi();
+	const { DefaultResourceLoader, SessionManager, SettingsManager } = await loadPiApi();
+	const packageRoot = resolve(process.env.PI_GUARDRAILS_TEST_ROOT ?? join(import.meta.dir, "../git/github.com/Alan-Luc/pi-guardrails"));
+	expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" }).trim()).toBe(standaloneCommit);
 	const cwd = await mkdtemp(join(tmpdir(), "pi-extension-load-"));
 	const publicationConfigPath = process.env.PI_PUBLICATION_CONFIG_PATH;
 	delete process.env.PI_PUBLICATION_CONFIG_PATH;
 	try {
-		expect(isSubagentChildEnvironment(process.env)).toBe(false);
+		const settings = SettingsManager.inMemory({}, { projectTrusted: false });
+		settings.setPackages([packageRoot]);
 		const loader = new DefaultResourceLoader({
-			cwd,
-			agentDir: resolve(import.meta.dir, ".."),
-			settingsManager: SettingsManager.inMemory({}, { projectTrusted: false }),
-			noSkills: true,
-			noPromptTemplates: true,
-			noThemes: true,
-			noContextFiles: true,
+			cwd, agentDir: resolve(import.meta.dir, ".."), settingsManager: settings,
+			noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
 		});
 		await loader.reload();
-
 		const result = loader.getExtensions();
 		expect(result.errors).toEqual([]);
+		const guards = result.extensions.filter((extension) => extension.path.endsWith("/extensions/guardrails/index.ts"));
+		expect(guards.map((extension) => extension.path)).toEqual([join(packageRoot, "extensions/guardrails/index.ts")]);
 		const extensions = new Map(result.extensions.map((extension) => [extension.path, extension]));
-		const guardrails = extensions.get(resolve(import.meta.dir, "../extensions/guardrails/index.ts"));
-		const shortcuts = extensions.get(resolve(import.meta.dir, "../extensions/shortcuts.ts"));
-		const workLog = extensions.get(resolve(import.meta.dir, "../extensions/work-log/index.ts"));
-		const notifyUser = extensions.get(resolve(import.meta.dir, "../extensions/notify-user.ts"));
-
-		expect(guardrails?.handlers.has("tool_call")).toBe(true);
+		const guardrails = guards[0];
 		expect(guardrails?.commands.has("publication-config")).toBe(true);
+		const callbacks = guardrails?.handlers.get("tool_call");
+		expect(callbacks?.length).toBeGreaterThan(0);
 		const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 		git("init", "--quiet", "-b", "alan/fixture");
 		git("config", "user.email", "fixture@example.test");
@@ -54,21 +57,21 @@ test("Pi default discovery loads and GitHub pushes bypass non-GitHub publication
 		git("add", "tracked.txt");
 		git("commit", "--quiet", "-m", "fixture");
 		git("remote", "add", "origin", "git@github.com:Alan-Luc/fixture.git");
-		const callbacks = guardrails?.handlers.get("tool_call");
-		expect(callbacks).toBeDefined();
-		expect(callbacks?.length).toBeGreaterThan(0);
 		const before = git("show-ref");
-		for (const toolName of ["bash", "bg_run"]) {
-			await Promise.all((callbacks ?? []).map((callback) => callback({ type: "tool_call", toolName, toolCallId: "loaded-push", input: { command: `cd '${cwd}' && git push -u origin alan/fixture` } }, { cwd })));
+		const context = { cwd, sessionManager: SessionManager.inMemory(cwd) };
+		for (const host of ["github.com", "gitlab.com"]) {
+			git("remote", "set-url", "origin", `git@${host}:Alan-Luc/fixture.git`);
+			for (const toolName of ["bash", "bg_run"]) {
+				await expect(Promise.all((callbacks ?? []).map((callback) => callback({ type: "tool_call", toolName, toolCallId: "loaded-push", input: { command: "git push origin alan/fixture" } }, context)))).rejects.toThrow("grant_invalid");
+			}
 		}
 		expect(git("show-ref")).toBe(before);
-		expect(git("remote", "get-url", "--push", "origin")).toBe("git@github.com:Alan-Luc/fixture.git");
-		git("remote", "set-url", "origin", "git@gitlab.com:Alan-Luc/fixture.git");
-		await expect(Promise.all((callbacks ?? []).map((callback) => callback({ type: "tool_call", toolName: "bash", toolCallId: "loaded-push", input: { command: "git push origin alan/fixture" } }, { cwd })))).rejects.toThrow("PI_PUBLICATION_CONFIG_PATH is unset");
-		expect(git("show-ref")).toBe(before);
-		expect(shortcuts?.shortcuts.has("alt+p")).toBe(true);
-		expect(workLog?.tools.has("work_log")).toBe(true);
-		expect(notifyUser?.tools.has("notify_user")).toBe(true);
+		expect(extensions.get(resolve(import.meta.dir, "../extensions/shortcuts.ts"))?.shortcuts.has("alt+p")).toBe(true);
+		expect(extensions.get(resolve(import.meta.dir, "../extensions/work-log/index.ts"))?.tools.has("work_log")).toBe(true);
+		expect(extensions.get(resolve(import.meta.dir, "../extensions/notify-user.ts"))?.tools.has("notify_user")).toBe(true);
+		const artifacts = extensions.get(resolve(import.meta.dir, "../extensions/artifact-contracts/index.ts"));
+		expect(artifacts?.tools.has("verification_evidence")).toBe(true);
+		expect(artifacts?.tools.has("publication_clearance")).toBe(true);
 	} finally {
 		if (publicationConfigPath === undefined) delete process.env.PI_PUBLICATION_CONFIG_PATH;
 		else process.env.PI_PUBLICATION_CONFIG_PATH = publicationConfigPath;

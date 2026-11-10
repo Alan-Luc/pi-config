@@ -24,7 +24,7 @@ import {
 	verificationEvidenceErrors,
 } from "../extensions/artifact-contracts/verification-store.ts";
 import { captureCandidateWithExec, type CandidateExec } from "../extensions/artifact-contracts/verification.ts";
-import { FINALIZE_RESULT_REQUEST, FINALIZE_RESULT_RESPONSE, FINALIZED_RESULT_ENTRY, LAUNCH_BINDING_ENV, PUBLICATION_CLEARANCE_REQUEST, PUBLICATION_CLEARANCE_RESPONSE, DELEGATION_RESULT_REQUEST, DELEGATION_RESULT_RESPONSE, registerPublicationClearance, registerResultFinalizer } from "../extensions/artifact-contracts/publication-clearance.ts";
+import { FINALIZE_RESULT_REQUEST, FINALIZE_RESULT_RESPONSE, FINALIZED_RESULT_ENTRY, LAUNCH_BINDING_ENV, DELEGATION_RESULT_REQUEST, DELEGATION_RESULT_RESPONSE, registerPublicationClearance, registerResultFinalizer } from "../extensions/artifact-contracts/publication-clearance.ts";
 import { VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE, DELEGATION_STATUS_REQUEST, DELEGATION_STATUS_RESPONSE } from "../extensions/lib/work-status.ts";
 import { createStagedSnapshot } from "../extensions/artifact-contracts/staged-verification.ts";
 
@@ -587,15 +587,6 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		const proof = recordVerificationEvidence(proofInput);
 		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "primary-proof", details: { protocolVersion: 2, operation: "run", evidence: proof } } as never, context as never);
 		await clearanceTool.execute("seal", { tier: "Direct", evidenceIds: [proof.id], lanes: [], adjudication: "Local acceptance fixture." }, undefined, undefined, context);
-		const query = async () => {
-			const responses: Record<string, unknown>[] = [];
-			const off = events.on(PUBLICATION_CLEARANCE_RESPONSE, (value) => responses.push(record(value)));
-			events.emit(PUBLICATION_CLEARANCE_REQUEST, { version: 1, requestId: "seal-query", cwd: directory });
-			off();
-			assert.equal(responses.length, 1);
-			return (responses[0].loadFrozenCandidate as () => Promise<unknown>)();
-		};
-		assert.ok(await query(), "the legacy response protocol remains operational during cutover");
 		const queryRecord = (overrides: Record<string, unknown> = {}) => {
 			const records: Record<string, unknown>[] = [];
 			const off = events.on(PUBLICATION_CLEARANCE_RECORD, (value) => records.push(record(value)));
@@ -606,6 +597,7 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 			off();
 			return records;
 		};
+		const query = () => queryRecord()[0];
 		const firstRecord = queryRecord();
 		assert.equal(firstRecord.length, 1, "the real seal answers synchronously");
 		const firstSeal = record(firstRecord[0]);
