@@ -23,6 +23,8 @@ export const DELEGATION_RESULT_REQUEST = "workflow:delegation-result:request:v1"
 export const DELEGATION_RESULT_RESPONSE = "workflow:delegation-result:response:v1";
 export const PUBLICATION_CLEARANCE_QUERY = "pi-guardrails:publication-clearance:query:v1";
 export const PUBLICATION_CLEARANCE_RECORD = "pi-guardrails:publication-clearance:record:v1";
+export const PUBLICATION_CLEARANCE_DIAGNOSE = "pi-guardrails:publication-clearance:diagnose:v1";
+export const PUBLICATION_CLEARANCE_DIAGNOSIS = "pi-guardrails:publication-clearance:diagnosis:v1";
 export const LAUNCH_BINDING_ENV = "PI_SUBAGENT_PUBLICATION_BINDING";
 
 export type PublicationLaunchBinding = Readonly<{
@@ -302,29 +304,30 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 	let seal: PublicationSeal | undefined;
 	let ownerAssignment: AssignmentSnapshot | undefined;
 	let activityRevision = 0;
+	let lastProofInvalidation = "producer initialization";
 	const freshEvidenceIds = new Set<string>();
 	const startedChecks = new Map<string, number>();
 	const verificationCalls = new Map<string, { revision: number | undefined; operation: string; taskId?: string }>();
 	const writeCapableCalls = new Set<string>();
 	const launches = new Map<string, LaunchAssignment>();
-	const expireUnsealedProofs = () => { activityRevision++; freshEvidenceIds.clear(); };
-	const reset = () => {
+	const expireUnsealedProofs = (reason: string) => { activityRevision++; freshEvidenceIds.clear(); lastProofInvalidation = reason; };
+	const reset = (reason: string) => {
 		seal = undefined;
 		launches.clear();
 		generation = randomUUID();
 		verificationCalls.clear();
 		writeCapableCalls.clear();
 		startedChecks.clear();
-		expireUnsealedProofs();
+		expireUnsealedProofs(reason);
 	};
-	pi.on("session_start", (_event, ctx) => { reset(); ownerSessionId = ctx.sessionManager.getSessionId(); ownerContext = ctx; ownerAssignment = currentAssignment(ctx.sessionManager); });
+	pi.on("session_start", (_event, ctx) => { reset("session_start"); ownerSessionId = ctx.sessionManager.getSessionId(); ownerContext = ctx; ownerAssignment = currentAssignment(ctx.sessionManager); });
 	pi.on("agent_start", (_event, ctx) => {
 		const next = currentAssignment(ctx.sessionManager);
-		if (ownerAssignment && (!next || !sameAssignment(ownerAssignment, next))) reset();
+		if (ownerAssignment && (!next || !sameAssignment(ownerAssignment, next))) reset(`owner assignment changed to ${next?.requestEntryId ?? "unavailable"}`);
 		ownerAssignment = next;
 	});
-	pi.on("session_shutdown", () => { reset(); ownerSessionId = undefined; ownerContext = undefined; });
-	pi.on("session_tree", () => { reset(); });
+	pi.on("session_shutdown", () => { reset("session_shutdown"); ownerSessionId = undefined; ownerContext = undefined; });
+	pi.on("session_tree", () => { reset("session_tree"); });
 	pi.on("tool_call", (event, ctx) => {
 		ownerContext = ctx;
 		if (event.toolName === "verification_evidence") {
@@ -335,7 +338,7 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 		const nestedVerificationBash = event.toolName === "bash" && event.parentToolCallId !== undefined && verificationCalls.has(event.parentToolCallId);
 		if (!nestedVerificationBash && ["bash", "edit", "write"].includes(event.toolName)) {
 			writeCapableCalls.add(event.toolCallId);
-			expireUnsealedProofs();
+			expireUnsealedProofs(`${event.toolName} tool_call ${event.toolCallId}`);
 		}
 		if (event.toolName === "subagent") {
 			const assignment = currentAssignment(ctx.sessionManager);
@@ -355,7 +358,7 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 				}
 			}
 		}
-		if (writeCapableCalls.delete(event.toolCallId)) expireUnsealedProofs();
+		if (writeCapableCalls.delete(event.toolCallId)) expireUnsealedProofs(`${event.toolName} tool_result ${event.toolCallId}`);
 		const launch = launches.get(event.toolCallId);
 		if (!launch || event.toolName !== "subagent" || event.isError || !isRecord(event.details)) return;
 		const details = event.details;
@@ -384,39 +387,73 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 		return { verificationGeneration: verification.generation, delegationGeneration: delegation.generation,
 			delegationRevision: delegation.revision, backgroundGeneration: background.generation, backgroundRevision: background.revision };
 	}
-	function current(selected: PublicationSeal, binding?: Record<string, unknown>): boolean {
+	function proofFailureReason(errors: readonly string[]): string {
+		if (errors.some((error) => /log hash|log is missing|log is unreadable/.test(error))) return "A sealed proof receipt's proof log is missing, unreadable, or has changed.";
+		if (errors.some((error) => /nonzero exit/.test(error))) return "A sealed proof receipt no longer has a successful exit status.";
+		if (errors.some((error) => /runtime input pin invalid|verification input changed/.test(error))) return "The runtime input pin changed after sealing.";
+		if (errors.some((error) => /candidate/.test(error))) return "A sealed proof receipt no longer matches the sealed candidate.";
+		if (errors.some((error) => /obsolete|stale/.test(error))) return "A newer or invalidating verification attempt made a sealed proof receipt stale.";
+		return "A sealed proof receipt failed its current validity check.";
+	}
+	type CurrentnessFailure = Readonly<{ state: "binding_mismatch" | "stale_seal"; reason: string }>;
+	function currentFailure(selected: PublicationSeal, binding?: Record<string, unknown>): CurrentnessFailure | undefined {
 		try {
 			const ctx = ownerContext;
-			if (!ctx || !ownerSessionId || selected !== seal || selected.generation !== generation || ownerSessionId !== selected.assignment.sessionId) return false;
-			if (binding && (binding.sessionId !== ownerSessionId || binding.repositoryRoot !== selected.candidate.repositoryRoot || binding.candidateSha !== selected.candidate.head)) return false;
+			if (!ctx || !ownerSessionId || selected !== seal || selected.generation !== generation || ownerSessionId !== selected.assignment.sessionId) {
+				return { state: "stale_seal", reason: "The producer session or seal generation changed." };
+			}
+			if (binding && (binding.sessionId !== ownerSessionId || binding.repositoryRoot !== selected.candidate.repositoryRoot || binding.candidateSha !== selected.candidate.head || binding.branch !== selected.frozen.branch)) {
+				return { state: "binding_mismatch", reason: "The request session, repository root, candidate, or branch does not match the sealed identity." };
+			}
 			const assignment = currentAssignment(ctx.sessionManager);
-			if (!assignment || !sameAssignment(selected.assignment, assignment)) return false;
-			if (ownedWorkErrorsSync(pi.events, verificationCalls.size, ownerSessionId, true).length > 0 || digest(workOwners()) !== digest(selected.workOwners)) return false;
-			if (publicationEvidenceErrors(selected.evidenceIds, selected.candidate, true).length > 0) return false;
-			for (const pin of selected.pins) if (runtimeManifest(selected.candidate.repositoryRoot, pin.path) !== pin.sha256) return false;
+			if (!assignment || !sameAssignment(selected.assignment, assignment)) return { state: "stale_seal", reason: "The owner assignment changed after sealing." };
+			if (ownedWorkErrorsSync(pi.events, verificationCalls.size, ownerSessionId, true).length > 0) return { state: "stale_seal", reason: "Owner work status reports active or uncollected work." };
+			if (digest(workOwners()) !== digest(selected.workOwners)) return { state: "stale_seal", reason: "The verification, delegation, or background work-owner revision changed." };
+			const proofErrors = publicationEvidenceErrors(selected.evidenceIds, selected.candidate, true);
+			if (proofErrors.length > 0) return { state: "stale_seal", reason: proofFailureReason(proofErrors) };
+			for (const pin of selected.pins) if (runtimeManifest(selected.candidate.repositoryRoot, pin.path) !== pin.sha256) {
+				return { state: "stale_seal", reason: "A pinned runtime input changed after sealing." };
+			}
 			for (const lane of selected.lanes) {
-				const latest = resolveLane(pi.events, ownerSessionId, lane.selection, launches, selected.assignment);
-				if (latest.ownerGeneration !== lane.ownerGeneration || latest.refDigest !== lane.refDigest || digest(latest.envelope) !== digest(lane.envelope)
-					|| importedProofErrors(latest, selected.candidate).length > 0) return false;
+				let latest: ResolvedLane;
+				try { latest = resolveLane(pi.events, ownerSessionId, lane.selection, launches, selected.assignment); }
+				catch { return { state: "stale_seal", reason: "The finalized lane result is unavailable or failed validation." }; }
+				if (latest.ownerGeneration !== lane.ownerGeneration || latest.refDigest !== lane.refDigest || digest(latest.envelope) !== digest(lane.envelope)) {
+					return { state: "stale_seal", reason: "The finalized lane identity or envelope changed after sealing." };
+				}
+				if (importedProofErrors(latest, selected.candidate).length > 0) return { state: "stale_seal", reason: "A finalized lane proof failed currentness validation." };
 			}
 			const deadline = Date.now() + 30_000;
 			if (binding) {
 				const pushUrls = git(ctx, ["remote", "get-url", "--push", "--all", "origin"], deadline).split("\n");
-				if (pushUrls.length !== 1 || pushUrls[0] !== binding.pushUrl) return false;
+				if (pushUrls.length !== 1 || pushUrls[0] !== binding.pushUrl) return { state: "binding_mismatch", reason: "The request push URL does not match the single effective origin push URL." };
 			}
 			const candidate = captureCandidateSync(ctx.cwd, selected.candidate.repositoryRoot, selected.candidate.source, deadline);
 			const frozen = freeze(ctx, candidate, selected.pins, deadline);
-			if (ownedWorkErrorsSync(pi.events, verificationCalls.size, ownerSessionId, true).length > 0
-				|| digest(workOwners()) !== digest(selected.workOwners)
-				|| publicationEvidenceErrors(selected.evidenceIds, selected.candidate, true).length > 0) return false;
-			for (const pin of selected.pins) if (runtimeManifest(selected.candidate.repositoryRoot, pin.path) !== pin.sha256) return false;
-			for (const lane of selected.lanes) {
-				const latest = resolveLane(pi.events, ownerSessionId, lane.selection, launches, selected.assignment);
-				if (latest.ownerGeneration !== lane.ownerGeneration || latest.refDigest !== lane.refDigest || digest(latest.envelope) !== digest(lane.envelope)) return false;
+			if (ownedWorkErrorsSync(pi.events, verificationCalls.size, ownerSessionId, true).length > 0) return { state: "stale_seal", reason: "Owner work status changed during currentness validation." };
+			if (digest(workOwners()) !== digest(selected.workOwners)) return { state: "stale_seal", reason: "The work-owner revision changed during currentness validation." };
+			const refreshedProofErrors = publicationEvidenceErrors(selected.evidenceIds, selected.candidate, true);
+			if (refreshedProofErrors.length > 0) return { state: "stale_seal", reason: proofFailureReason(refreshedProofErrors) };
+			for (const pin of selected.pins) if (runtimeManifest(selected.candidate.repositoryRoot, pin.path) !== pin.sha256) {
+				return { state: "stale_seal", reason: "The runtime input pin changed during currentness validation." };
 			}
-			return candidateMatches(candidate, selected.candidate) && digest(frozen) === digest(selected.frozen)
-				&& selected === seal && selected.generation === generation;
-		} catch { return false; }
+			for (const lane of selected.lanes) {
+				let latest: ResolvedLane;
+				try { latest = resolveLane(pi.events, ownerSessionId, lane.selection, launches, selected.assignment); }
+				catch { return { state: "stale_seal", reason: "The finalized lane result became unavailable during currentness validation." }; }
+				if (latest.ownerGeneration !== lane.ownerGeneration || latest.refDigest !== lane.refDigest || digest(latest.envelope) !== digest(lane.envelope)) {
+					return { state: "stale_seal", reason: "The finalized lane identity or envelope changed during currentness validation." };
+				}
+			}
+			if (!candidateMatches(candidate, selected.candidate) || digest(frozen) !== digest(selected.frozen)) return { state: "stale_seal", reason: "The frozen Git candidate or source state changed after sealing." };
+			if (selected !== seal || selected.generation !== generation) return { state: "stale_seal", reason: "The seal generation changed during currentness validation." };
+			return undefined;
+		} catch {
+			return { state: "stale_seal", reason: "A source, Git, or owner-status currentness check could not complete." };
+		}
+	}
+	function current(selected: PublicationSeal, binding?: Record<string, unknown>): boolean {
+		return currentFailure(selected, binding) === undefined;
 	}
 	pi.registerTool({
 		name: "publication_clearance", label: "Publication clearance", description: "Seal fresh postcommit proof and authoritative independent lane results for a separately granted task-branch push. Does not grant or perform publication.",
@@ -427,12 +464,12 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 			const assignment = currentAssignment(ctx.sessionManager);
 			if (!assignment || !ownerSessionId || assignment.sessionId !== ownerSessionId) throw new Error("publication owner assignment unavailable");
 			const slots = params.lanes.map((lane) => lane.slot);
-			const required = params.tier === "Full" ? ["correctness-primary", "correctness-counterpart", "live-success", "live-attack"] : params.tier === "Focused" ? ["correctness-primary", "correctness-counterpart", "live-success"] : [];
+			const required = params.tier === "Full" ? ["correctness-primary", "correctness-counterpart", "live-success", "live-attack"] : params.tier === "Focused" ? ["correctness-primary", "live-success"] : [];
 			if (new Set(slots).size !== slots.length || required.some((slot) => !slots.includes(slot as SelectedLane["slot"]))
 				|| new Set(params.lanes.map((lane) => lane.childId)).size !== params.lanes.length) throw new Error(`publication requires complete distinct selected lanes; required: ${required.join(", ") || "none"}; missing: ${required.filter((slot) => !slots.includes(slot as SelectedLane["slot"])).join(", ") || "none"}; Recovery: use childId and incarnationId from finalized Publication lane reports for distinct required lanes`);
 			const capturedGeneration = generation;
 			const capturedActivity = activityRevision;
-			if (params.evidenceIds.some((id) => !freshEvidenceIds.has(id))) throw new Error("publication requires fresh owner-observed proof after tool activity");
+			if (params.evidenceIds.some((id) => !freshEvidenceIds.has(id))) throw new Error(`publication requires fresh owner-observed proof after tool activity. Last invalidation: ${lastProofInvalidation}. Recovery: finish owner Bash, edit and write calls, then use verification_evidence start and collect in this loaded session before publication_clearance. A successful receipt alone does not prove this producer observed its start.`);
 			const candidate = await captureCandidateWithExec(pi.exec, ctx.cwd);
 			const errors = publicationEvidenceErrors(params.evidenceIds, candidate);
 			errors.push(...await ownedWorkErrors(pi.events, verificationCalls.size, ownerSessionId, true));
@@ -452,6 +489,40 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 			if (capturedActivity !== activityRevision || !current(next) || capturedActivity !== activityRevision) { seal = undefined; throw new Error("publication state changed while sealing"); }
 			return { content: [{ type: "text", text: "Publication proof sealed locally; a separate exact external grant and scanner clearance are still required." }], details: { candidate: frozen, laneCount: lanes.length } };
 		},
+	});
+	pi.events.on(PUBLICATION_CLEARANCE_DIAGNOSE, (value) => {
+		const keys = ["version", "requestId", "sessionId", "repositoryRoot", "candidateSha", "pushUrl", "branch"];
+		if (!isRecord(value) || !closed(value, keys) || value.version !== 1 || !identifier(value.requestId)
+			|| !identifier(value.sessionId) || !identifier(value.repositoryRoot) || !identifier(value.candidateSha)
+			|| !identifier(value.pushUrl) || !identifier(value.branch)) return;
+		const selected = seal;
+		let state: "missing_seal" | "binding_mismatch" | "stale_seal";
+		let reason: string;
+		if (!selected) {
+			state = "missing_seal";
+			reason = "No clearance seal exists in this producer session.";
+		} else {
+			const failure = currentFailure(selected, value);
+			if (!failure) return;
+			state = failure.state;
+			reason = failure.reason;
+		}
+		const tools = new Set(pi.getAllTools().map((tool) => tool.name));
+		const missingTools = ["verification_evidence", "publication_clearance"].filter((name) => !tools.has(name));
+		const freshProof = [...freshEvidenceIds].map(getVerificationEvidence).find((proof) => proof
+			&& proof.candidate.repositoryRoot === value.repositoryRoot && proof.candidate.head === value.candidateSha
+			&& publicationEvidenceErrors([proof.id], proof.candidate).length === 0);
+		let nextStep: string;
+		if (state === "binding_mismatch") {
+			nextStep = `Use the exact sealed sessionId, repositoryRoot, candidateSha, branch, and the single effective origin push URL. Sealed identity: ${JSON.stringify({ sessionId: selected?.assignment.sessionId, repositoryRoot: selected?.candidate.repositoryRoot, candidateSha: selected?.candidate.head, branch: selected?.frozen.branch })}. Return to that session and candidate, or obtain clearance for the current candidate; do not rerun checks to repair a binding mismatch.`;
+		} else if (missingTools.length > 0) {
+			nextStep = `${missingTools.join(" and ")} is not registered. Ask the operator to load the artifact-contracts tools in this Pi runtime before retrying. Do not rerun passing tests.`;
+		} else if (freshProof) {
+			nextStep = `Reuse current owner-observed evidenceIds:["${freshProof.id}"] and any other required current evidence. Do not rerun passing checks. Call publication_clearance({tier:"<ticket tier>",evidenceIds:["${freshProof.id}"],lanes:<finalized lane objects>,adjudication:"<summary>"}). Use lanes:[] for Direct. Focused requires correctness-primary and live-success; Full also requires correctness-counterpart and live-attack. Each lane needs slot, childId and incarnationId from a finalized result in this session. Repair missing lane results before retrying; do not substitute report text or invent IDs.`;
+		} else {
+			nextStep = "In this session, use verification_evidence({operation:\"capture\"}) to identify the candidate; capture creates no evidenceId. Then use verification_evidence({operation:\"start\",argv:[\"<executable>\",\"<argument>\"],cwd:\".\",timeout:60}) and collect with verification_evidence({operation:\"collect\",taskId:\"<returned taskId>\"}). Use the collected successful evidenceId in publication_clearance({tier:\"Focused\",evidenceIds:[\"<returned evidenceId>\"],lanes:[{slot:\"correctness-primary\",childId:\"<finalized childId>\",incarnationId:\"<finalized incarnationId>\"},{slot:\"live-success\",childId:\"<finalized childId>\",incarnationId:\"<finalized incarnationId>\"}],adjudication:\"<summary>\"}). Use lanes:[] for Direct. For Full, provide the same lane object shape for correctness-primary, correctness-counterpart, live-success, and live-attack. Replace every placeholder with a returned value. Use only finalized same-session lanes and fresh evidence; evidence cannot be reused from another session.";
+		}
+		pi.events.emit(PUBLICATION_CLEARANCE_DIAGNOSIS, { ...value, state, reason: reason.slice(0, 512), nextStep: nextStep.slice(0, 2000) });
 	});
 	pi.events.on(PUBLICATION_CLEARANCE_QUERY, (value) => {
 		const keys = ["version", "requestId", "sessionId", "repositoryRoot", "candidateSha", "pushUrl", "branch"];

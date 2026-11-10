@@ -495,6 +495,8 @@ async function runGit(directory: string, ...args: string[]): Promise<string> {
 
 const PUBLICATION_CLEARANCE_QUERY = "pi-guardrails:publication-clearance:query:v1";
 const PUBLICATION_CLEARANCE_RECORD = "pi-guardrails:publication-clearance:record:v1";
+const PUBLICATION_CLEARANCE_DIAGNOSE = "pi-guardrails:publication-clearance:diagnose:v1";
+const PUBLICATION_CLEARANCE_DIAGNOSIS = "pi-guardrails:publication-clearance:diagnosis:v1";
 
 it("seals current postcommit evidence, permits reads, and revokes on failure, source change, or restart", async () => {
 	const directory = realpathSync(mkdtempSync(join(tmpdir(), "artifact-seal-")));
@@ -556,10 +558,12 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 			});
 		}
 		const registered = new Map<string, (event: never, ctx: never) => unknown>();
+		let availableTools = ["verification_evidence", "publication_clearance"];
 		type ClearanceTool = { execute: (id: string, params: Record<string, unknown>, signal: undefined, update: undefined, ctx: unknown) => Promise<unknown> };
 		let clearanceTool: ClearanceTool | undefined;
 		const pi = {
 			events, exec: nativeExec,
+			getAllTools() { return availableTools.map((name) => ({ name })); },
 			on(name: string, handler: (event: never, ctx: never) => unknown) { registered.set(name, handler); },
 			registerTool(tool: unknown) { clearanceTool = tool as ClearanceTool; },
 		};
@@ -582,7 +586,12 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "background-collect", details: { protocolVersion: 2, operation: "collect", state: "collected", evidence: backgroundProof } } as never, context as never);
 		assert.equal(backgroundProof.valid, true, "unrelated parent tool activity must not invalidate a background receipt");
 		assert.deepEqual(verificationEvidenceErrors(backgroundProof.id), []);
-		await assert.rejects(clearanceTool.execute("old-background-proof", { tier: "Direct", evidenceIds: [backgroundProof.id], lanes: [], adjudication: "A reportable receipt is not necessarily fresh publication proof." }, undefined, undefined, context), /fresh|activity/);
+		await assert.rejects(clearanceTool.execute("old-background-proof", { tier: "Direct", evidenceIds: [backgroundProof.id], lanes: [], adjudication: "A reportable receipt is not necessarily fresh publication proof." }, undefined, undefined, context), (error: unknown) => {
+			assert.ok(error instanceof Error);
+			assert.match(error.message, /fresh|activity/);
+			assert.match(error.message, /background-inspection/, "freshness recovery must identify the actual invalidating tool call");
+			return true;
+		});
 		registered.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "primary-proof", input: { operation: "run" } } as never, context as never);
 		const proof = recordVerificationEvidence(proofInput);
 		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "primary-proof", details: { protocolVersion: 2, operation: "run", evidence: proof } } as never, context as never);
@@ -598,13 +607,36 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 			return records;
 		};
 		const query = () => queryRecord()[0];
+		const diagnosis = (overrides: Record<string, unknown> = {}) => {
+			const replies: Record<string, unknown>[] = [];
+			const off = events.on(PUBLICATION_CLEARANCE_DIAGNOSIS, (value) => replies.push(record(value)));
+			events.emit(PUBLICATION_CLEARANCE_DIAGNOSE, {
+				version: 1, requestId: "diagnosis-v1", sessionId: session.getSessionId(), repositoryRoot: candidate.repositoryRoot,
+				candidateSha: candidate.head, pushUrl: "https://example.test/owner/repo.git", branch: "fixture", ...overrides,
+			});
+			off();
+			return replies;
+		};
 		const firstRecord = queryRecord();
 		assert.equal(firstRecord.length, 1, "the real seal answers synchronously");
 		const firstSeal = record(firstRecord[0]);
 		assert.deepEqual(firstSeal.evidenceIds instanceof Array, true);
 		assert.ok(Number.isFinite(firstSeal.clearedAt));
 		assert.deepEqual(queryRecord()[0], firstSeal, "same-seal record and timestamp stay stable");
+		assert.deepEqual(diagnosis(), [], "a valid current seal needs no diagnostic response");
+		assert.equal(diagnosis({ branch: "another-branch" })[0]?.state, "binding_mismatch", "a wrong branch needs a binding diagnosis rather than silence");
+		const mismatch = diagnosis({ candidateSha: "f".repeat(40) })[0];
+		assert.equal(mismatch?.state, "binding_mismatch");
+		assert.deepEqual(Object.keys(mismatch ?? {}).sort(), ["branch", "candidateSha", "nextStep", "pushUrl", "reason", "repositoryRoot", "requestId", "sessionId", "state", "version"].sort());
+		assert.match(String(mismatch?.nextStep), /exact sealed sessionId.*single effective origin push URL.*do not rerun checks/i);
+		assert.equal(queryRecord().length, 1, "diagnosis must not alter or issue authorization records");
 		writeFileSync(logPath, "tampered proof log");
+		const stale = diagnosis()[0];
+		assert.equal(stale?.state, "stale_seal");
+		assert.match(String(stale?.reason), /proof receipt.*proof log/i);
+		assert.match(String(stale?.nextStep), /verification_evidence\(\{operation:"capture"\}\).*argv.*cwd.*timeout.*taskId.*evidenceIds.*lanes.*adjudication.*another session/s);
+		assert.match(String(stale?.nextStep), /capture creates no evidenceId.*operation:"start".*operation:"collect".*successful evidenceId.*publication_clearance.*correctness-primary.*live-success/s);
+		assert.match(String(stale?.nextStep), /Focused.*correctness-primary.*live-success.*Full.*correctness-counterpart.*live-attack/s);
 		assert.equal(queryRecord().length, 0, "proof-log bytes are revalidated synchronously");
 		writeFileSync(logPath, output);
 		await runGit(directory, "read-tree", "--empty");
@@ -664,6 +696,9 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		assert.deepEqual(verificationEvidenceErrors(proof.id), [], "publication must not change ordinary parent receipt freshness");
 		assert.ok(await query(), "read-only Git inspection must not revoke the seal");
 		writeFileSync(inputPath, "changed runtime input\n");
+		const changedPin = diagnosis()[0];
+		assert.equal(changedPin?.state, "stale_seal");
+		assert.match(String(changedPin?.reason), /runtime input pin changed/i);
 		assert.equal(await query(), undefined, "a pinned ignored input mutation must make the seal unavailable");
 		assert.equal(queryRecord().length, 0, "synchronous currentness rechecks ignored input pins");
 		writeFileSync(inputPath, inputBytes);
@@ -691,6 +726,7 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		assert.notDeepEqual(replacementRecord.evidenceIds, firstSeal.evidenceIds, "a replacement seal gets distinct opaque evidence references");
 		assert.notEqual(replacementRecord.clearedAt, undefined, "a replacement seal has its own stable clearing time");
 		const slots = ["correctness-primary", "correctness-counterpart", "live-success", "live-attack"] as const;
+		await assert.rejects(clearanceTool.execute("focused-policy", { tier: "Focused", evidenceIds: [repairedProof.id], lanes: [], adjudication: "Focused requires primary review and live success." }, undefined, undefined, context), /required: correctness-primary, live-success;/);
 		const selections = slots.map((slot, index) => ({ slot, childId: `child-${index}`, incarnationId: `invocation-${index}` }));
 		const parentLeaf = session.getLeafId();
 		assert.ok(parentLeaf);
@@ -741,11 +777,18 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 			assert.equal(queryRecord().length, 0, `${scenario.name} must not authorize publication`);
 			assert.deepEqual(verificationEvidenceErrors(repairedProof.id), [], `${scenario.name} must preserve unchanged verification`);
 		}
+		const recoverable = diagnosis()[0];
+		assert.equal(recoverable?.state, "missing_seal");
+		assert.ok(String(recoverable?.nextStep).includes(repairedProof.id), "missing seal recovery must reuse known fresh proof rather than rerun passing checks");
 		laneReply = (reply) => [reply];
+		await assert.rejects(clearanceTool.execute("missing-full-counterpart", { tier: "Full", evidenceIds: [repairedProof.id], lanes: [selections[0], selections[2], selections[3]], adjudication: "Full still requires the counterpart review." }, undefined, undefined, context), /required: correctness-primary, correctness-counterpart, live-success, live-attack; missing: correctness-counterpart/);
 		await assert.rejects(clearanceTool.execute("missing-lane", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections.slice(0, 3), adjudication: "Missing attack lane." }, undefined, undefined, context), /complete distinct selected lanes/);
 		await clearanceTool.execute("joined-lanes", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections, adjudication: "All four owner-bound fixture lanes approved." }, undefined, undefined, context);
 		assert.ok(await query(), "complete authoritative lane results must join the parent seal");
 		assert.equal(queryRecord().length, 1, "authoritative fixture lane validation also answers the synchronous contract");
+		const focusedSeal = record(await clearanceTool.execute("focused-policy", { tier: "Focused", evidenceIds: [repairedProof.id], lanes: [selections[0], selections[2]], adjudication: "Approved Focused policy requires primary review and live success." }, undefined, undefined, context));
+		assert.equal(record(focusedSeal.details).laneCount, 2);
+		assert.ok(await query(), "Focused clearance accepts primary and live-success lanes without a counterpart");
 		registered.get("tool_call")?.({ toolName: "write", toolCallId: "parent-notes", input: { path: join(directory, "notes.md"), content: "Review disposition recorded.\n" } } as never, context as never);
 		writeFileSync(join(directory, "notes.md"), "Review disposition recorded.\n");
 		registered.get("tool_result")?.({ toolName: "write", toolCallId: "parent-notes" } as never, context as never);
@@ -765,6 +808,11 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		registered.get("session_start")?.({} as never, context as never);
 		assert.equal(await query(), undefined, "session restart must discard process-local publication authority");
 		assert.equal(queryRecord().length, 0, "synchronous records cannot survive session restart");
+		availableTools = ["publication_clearance"];
+		const missingSeal = diagnosis()[0];
+		assert.equal(missingSeal?.state, "missing_seal", "diagnosis identifies an absent session-local seal");
+		assert.match(String(missingSeal?.nextStep), /verification_evidence is not registered.*operator/i);
+		assert.doesNotMatch(String(missingSeal?.nextStep), /operation:"start"/);
 		assert.ok(getVerificationEvidence(repairedProof.id), "session restart must not erase ordinary receipt history");
 		await assert.rejects(clearanceTool.execute("replay-prior-proof", { tier: "Direct", evidenceIds: [repairedProof.id], lanes: [], adjudication: "A restarted owner needs fresh publication proof." }, undefined, undefined, context), /fresh|activity/);
 		appendUser(session, "a new parent assignment");
