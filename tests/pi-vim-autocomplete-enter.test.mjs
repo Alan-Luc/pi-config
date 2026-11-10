@@ -5,8 +5,9 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 const agentDir = path.resolve(import.meta.dirname, "..");
-const version = readFileSync(path.join(agentDir, "install/current-version"), "utf8").trim();
-const modules = path.join(agentDir, "install/releases", version, "node_modules");
+const installRoot = process.env.PI_MANAGED_INSTALL_ROOT ?? path.join(agentDir, "install");
+const version = readFileSync(path.join(installRoot, "current-version"), "utf8").trim();
+const modules = path.join(installRoot, "releases", version, "node_modules");
 const earendil = path.join(modules, "@earendil-works");
 const { createJiti } = await import(pathToFileURL(path.join(modules, "jiti/lib/jiti.mjs")));
 const tui = await import(pathToFileURL(path.join(earendil, "pi-tui/dist/index.js")));
