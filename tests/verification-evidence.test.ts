@@ -1677,10 +1677,21 @@ test("parent background collection survives unrelated Bash without becoming fres
 	const lifecycle = new Map<string, (event: never, ctx: never) => unknown>();
 	type ClearanceTool = { execute: (id: string, params: Record<string, unknown>, signal: undefined, update: undefined, ctx: unknown) => Promise<unknown> };
 	let clearance: ClearanceTool | undefined;
-	registerPublicationClearance({ events: service, exec: runNativeExec,
-		on(name: string, handler: (event: never, ctx: never) => unknown) { lifecycle.set(name, handler); },
-		registerTool(tool: unknown) { clearance = tool as ClearanceTool; },
-	} as never);
+	const childLineage = ["PI_SUBAGENT_AGENT", "PI_SUBAGENT_PARENT_SESSION", "PI_SUBAGENT_NAME", "PI_SUBAGENT_SESSION", "PI_SUBAGENT_SURFACE"]
+		.map((key) => ({ key, value: process.env[key] }));
+	try {
+		for (const { key } of childLineage) delete process.env[key];
+		registerPublicationClearance({ events: service, exec: runNativeExec,
+			on(name: string, handler: (event: never, ctx: never) => unknown) { lifecycle.set(name, handler); },
+			registerTool(tool: unknown) { clearance = tool as ClearanceTool; },
+		} as never);
+	} finally {
+		for (const { key, value } of childLineage) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	}
+	assert.deepEqual(childLineage.map(({ key }) => process.env[key]), childLineage.map(({ value }) => value));
 	lifecycle.get("session_start")?.({} as never, context as never);
 	const input = { operation: "start" as const, argv: ["node", "-e", "console.log('PARENT_CHECK_EXECUTED')"], cwd: ".", timeout: 10 };
 	lifecycle.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "parent-start", input } as never, context as never);
