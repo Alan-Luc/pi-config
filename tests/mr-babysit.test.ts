@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { test } from "bun:test";
-import { formatSkillsForPrompt, loadSkillsFromDir } from "../install/releases/1.4.0/node_modules/@earendil-works/pi-coding-agent/dist/core/skills.js";
+import { formatSkillsForPrompt, loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 
 const root = resolve(import.meta.dir, "..");
 const skillRoot = resolve(root, "skills/mr-babysit");

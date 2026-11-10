@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { expect, it, test } from "bun:test";
 import { resolve } from "node:path";
-import type { AgentSession } from "../install/releases/1.4.0/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { getLocalAgentDefinitions } from "./fixtures/agent-definitions.ts";
 import { buildParentEnvSnapshot, resolveDenyEnvPatterns } from "../git/github.com/Alan-Luc/pi-subagents/src/launch/child-env.ts";
 
 const installRoot = process.env.PI_MANAGED_INSTALL_ROOT;
 if (!installRoot) throw new Error("PI_MANAGED_INSTALL_ROOT is required for copied-host MCP tests");
 const version = await Bun.file(resolve(installRoot, "current-version")).text();
-const pi: typeof import("../install/releases/1.4.0/node_modules/@earendil-works/pi-coding-agent/dist/index.js") = await import(resolve(installRoot, "releases", version.trim(), "node_modules/@earendil-works/pi-coding-agent/dist/index.js"));
+const pi: typeof import("@earendil-works/pi-coding-agent") = await import(resolve(installRoot, "releases", version.trim(), "node_modules/@earendil-works/pi-coding-agent/dist/index.js"));
 const fixture = await import(new URL("./fixtures/role-mcp/fake-tools.mjs", import.meta.url).href);
 
 async function createSession() {
