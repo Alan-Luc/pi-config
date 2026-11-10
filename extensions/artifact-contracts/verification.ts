@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
@@ -42,7 +43,7 @@ import {
 
 import { createStagedSnapshot, type StagedSnapshot } from "./staged-verification.ts";
 import { parseWorkStatusRequest, VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE } from "../lib/work-status.ts";
-import { rejectGitMutations } from "../guardrails/guardrails.ts";
+import { rejectGitMutations } from "./verification-git.ts";
 
 const VERIFICATION_PROTOCOL_VERSION = 2;
 const MAX_TIMEOUT_SECONDS = 600;
@@ -490,6 +491,56 @@ type CandidateCommand = (
 
 export type CandidateExec = Pick<ExtensionAPI, "exec">["exec"];
 
+type CandidateStep = Readonly<{ cwd: string; argv: readonly string[]; timeout: number }>;
+type CandidatePlan<T> = Generator<CandidateStep, T, BashResult>;
+
+async function runCandidatePlan<T>(plan: CandidatePlan<T>, run: CandidateCommand, signal?: AbortSignal): Promise<T> {
+	let step = plan.next();
+	while (!step.done) {
+		try {
+			const { cwd, argv, timeout } = step.value;
+			step = plan.next(await run(cwd, argv, timeout, signal));
+		} catch (error) {
+			step = plan.throw(error);
+		}
+	}
+	return step.value;
+}
+
+function runCandidatePlanSync<T>(plan: CandidatePlan<T>, deadline: number): T {
+	let step = plan.next();
+	while (!step.done) {
+		try {
+			const { cwd, argv, timeout } = step.value;
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) throw new Error("publication Git capture deadline exceeded");
+			const result = spawnSync(argv[0], [...argv.slice(1)], {
+				cwd, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+				timeout: Math.min(timeout * 1000, remaining), killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024,
+			});
+			if (result.error || result.signal || result.status === null) throw new Error("publication Git capture failed or exceeded its bounds", { cause: result.error });
+			step = plan.next({ exitCode: result.status, output: result.stdout + result.stderr });
+		} catch (error) {
+			step = plan.throw(error);
+		}
+	}
+	if (Date.now() > deadline) throw new Error("publication Git capture deadline exceeded");
+	return step.value;
+}
+
+function discoverRepository(run: CandidateCommand, directory: string, signal?: AbortSignal, repositoryRoot?: string): Promise<Repository> {
+	return runCandidatePlan(discoverRepositoryPlan(directory, repositoryRoot), run, signal);
+}
+
+function snapshotCandidate(run: CandidateCommand, repository: Repository, signal?: AbortSignal, source?: "staged"): Promise<CandidateIdentity> {
+	return runCandidatePlan(snapshotCandidatePlan(repository, source), run, signal);
+}
+
+export function captureCandidateSync(sessionDirectory: string, repositoryRoot?: string, source?: "staged", deadline = Date.now() + 30_000): CandidateIdentity {
+	const repository = runCandidatePlanSync(discoverRepositoryPlan(sessionDirectory, repositoryRoot), deadline);
+	return runCandidatePlanSync(snapshotCandidatePlan(repository, source), deadline);
+}
+
 function candidateCommand(ctx: VerificationToolContext): CandidateCommand {
 	if (ctx.exec) return directCandidateCommand(ctx.exec);
 	return async (cwd, argv, timeout, signal) => {
@@ -511,13 +562,11 @@ function directCandidateCommand(exec: CandidateExec): CandidateCommand {
 	};
 }
 
-async function executeCandidateGit(
-	run: CandidateCommand,
+function* executeCandidateGit(
 	root: string,
 	gitArguments: readonly string[],
-	signal: AbortSignal | undefined,
-): Promise<BashResult> {
-	const result = await run(root, ["git", ...gitArguments], CANDIDATE_TIMEOUT_SECONDS, signal);
+): CandidatePlan<BashResult> {
+	const result = yield { cwd: root, argv: ["git", ...gitArguments], timeout: CANDIDATE_TIMEOUT_SECONDS };
 	if (result.exitCode !== 0) {
 		const output = result.output.trim();
 		throw new Error(`verification_evidence git command failed with exit ${result.exitCode}${output ? `: ${output}` : ""}`);
@@ -525,12 +574,10 @@ async function executeCandidateGit(
 	return result;
 }
 
-async function discoverRepositoryAt(
-	run: CandidateCommand,
+function* discoverRepositoryAt(
 	directory: string,
-	signal: AbortSignal | undefined,
-): Promise<Repository> {
-	const rootResult = await run(directory, ["git", "rev-parse", "--show-toplevel"], CANDIDATE_TIMEOUT_SECONDS, signal);
+): CandidatePlan<Repository> {
+	const rootResult = yield { cwd: directory, argv: ["git", "rev-parse", "--show-toplevel"], timeout: CANDIDATE_TIMEOUT_SECONDS };
 	if (rootResult.exitCode !== 0) {
 		throw new Error("verification_evidence requires a Git working tree; repository discovery failed");
 	}
@@ -540,10 +587,10 @@ async function discoverRepositoryAt(
 	} catch (error) {
 		throw new Error(`verification_evidence could not resolve the repository root: ${String(error)}`);
 	}
-	const workTree = singleLineOutput((await executeCandidateGit(run, root, ["rev-parse", "--is-inside-work-tree"], signal)).output, "Git work-tree status");
+	const workTree = singleLineOutput((yield* executeCandidateGit(root, ["rev-parse", "--is-inside-work-tree"])).output, "Git work-tree status");
 	if (workTree !== "true") throw new Error("verification_evidence requires a Git working tree");
-	const indexPathValue = singleLineOutput((await executeCandidateGit(run, root, ["rev-parse", "--git-path", "index"], signal)).output, "the Git index path");
-	const commonDirectoryValue = singleLineOutput((await executeCandidateGit(run, root, ["rev-parse", "--git-common-dir"], signal)).output, "the Git common directory");
+	const indexPathValue = singleLineOutput((yield* executeCandidateGit(root, ["rev-parse", "--git-path", "index"])).output, "the Git index path");
+	const commonDirectoryValue = singleLineOutput((yield* executeCandidateGit(root, ["rev-parse", "--git-common-dir"])).output, "the Git common directory");
 	let commonDirectory: string;
 	try {
 		commonDirectory = realpathSync(resolve(root, commonDirectoryValue));
@@ -566,18 +613,16 @@ function canonicalRepositoryRoot(value: string): string {
 	return root;
 }
 
-async function discoverRepository(
-	run: CandidateCommand,
+function* discoverRepositoryPlan(
 	sessionDirectory: string,
-	signal: AbortSignal | undefined,
 	repositoryRoot?: string,
-): Promise<Repository> {
-	const sessionRepository = await discoverRepositoryAt(run, sessionDirectory, signal);
+): CandidatePlan<Repository> {
+	const sessionRepository = yield* discoverRepositoryAt(sessionDirectory);
 	if (repositoryRoot === undefined) return sessionRepository;
 	const requestedRoot = canonicalRepositoryRoot(repositoryRoot);
 	const requestedRepository = requestedRoot === sessionRepository.root
 		? sessionRepository
-		: await discoverRepositoryAt(run, requestedRoot, signal);
+		: yield* discoverRepositoryAt(requestedRoot);
 	if (requestedRepository.root !== requestedRoot) {
 		throw new Error("verification_evidence repositoryRoot must be the worktree top level");
 	}
@@ -606,15 +651,13 @@ function repositoryCwd(root: string, cwd: string): { absolute: string; relative:
 	return { absolute: resolvedPath, relative: cwd };
 }
 
-async function snapshotCandidate(
-	run: CandidateCommand,
+function* snapshotCandidatePlan(
 	repository: Repository,
-	signal: AbortSignal | undefined,
 	source?: "staged",
-): Promise<CandidateIdentity> {
+): CandidatePlan<CandidateIdentity> {
 	let headResult: BashResult;
 	try {
-		headResult = await executeCandidateGit(run, repository.root, ["rev-parse", "--verify", "HEAD^{commit}"], signal);
+		headResult = yield* executeCandidateGit(repository.root, ["rev-parse", "--verify", "HEAD^{commit}"]);
 	} catch (error) {
 		const message = String(error);
 		if (!message.includes("git command failed with exit")) throw error;
@@ -622,7 +665,7 @@ async function snapshotCandidate(
 	}
 	const head = singleLineOutput(headResult.output, "HEAD");
 	const headTree = singleLineOutput(
-		(await executeCandidateGit(run, repository.root, ["rev-parse", `${head}^{tree}`], signal)).output,
+		(yield* executeCandidateGit(repository.root, ["rev-parse", `${head}^{tree}`])).output,
 		"the HEAD tree",
 	);
 	const temporaryDirectory = mkdtempSync(join(tmpdir(), "pi-verification-index-"));
@@ -630,23 +673,13 @@ async function snapshotCandidate(
 	try {
 		if (existsSync(repository.indexPath)) copyFileSync(repository.indexPath, temporaryIndex);
 		if (source === undefined) {
-			const addResult = await run(
-				repository.root,
-				["env", `GIT_INDEX_FILE=${temporaryIndex}`, "git", "add", "-A"],
-				CANDIDATE_TIMEOUT_SECONDS,
-				signal,
-			);
+			const addResult = yield { cwd: repository.root, argv: ["env", `GIT_INDEX_FILE=${temporaryIndex}`, "git", "add", "-A"], timeout: CANDIDATE_TIMEOUT_SECONDS };
 			if (addResult.exitCode !== 0) {
 				const output = boundedOutput(addResult.output).trim();
 				throw new Error(`temporary Git index staging failed with exit ${addResult.exitCode}${output ? `: ${output}` : ""}`);
 			}
 		}
-		const treeResult = await run(
-			repository.root,
-			["env", `GIT_INDEX_FILE=${temporaryIndex}`, "git", "write-tree"],
-			CANDIDATE_TIMEOUT_SECONDS,
-			signal,
-		);
+		const treeResult = yield { cwd: repository.root, argv: ["env", `GIT_INDEX_FILE=${temporaryIndex}`, "git", "write-tree"], timeout: CANDIDATE_TIMEOUT_SECONDS };
 		if (treeResult.exitCode !== 0) {
 			const output = boundedOutput(treeResult.output).trim();
 			throw new Error(`temporary Git tree serialization failed with exit ${treeResult.exitCode}${output ? `: ${output}` : ""}`);

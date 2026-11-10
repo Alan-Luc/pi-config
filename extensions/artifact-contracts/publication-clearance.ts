@@ -1,17 +1,21 @@
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { Type } from "typebox";
 import type { EventBus, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { FrozenPublicationCandidate } from "../guardrails/publication.ts";
 import { createCandidateIdentity, getVerificationEvidence, verificationEvidenceErrors, sealedVerificationEvidenceErrors, type CandidateIdentity, type VerificationEvidence } from "./verification-store.ts";
 import { currentAssignment, sameAssignment, type AssignmentSnapshot } from "./assignment.ts";
 import { renderResultSubmission, resultSubmissionErrors, type ResultFields, type ResultSubmissionRecord } from "./result-submission.ts";
-import { ownedWorkErrors } from "./handoffs.ts";
-import { captureCandidateWithExec } from "./verification.ts";
+import { ownedWorkErrors, ownedWorkErrorsSync } from "./handoffs.ts";
+import { captureCandidateSync, captureCandidateWithExec } from "./verification.ts";
 import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
 import { runtimeManifest } from "./staged-verification.ts";
+import { requestWorkStatus } from "../lib/work-status.ts";
+import { requestBackgroundWorkStatusSync } from "./background-tasks.ts";
 import type { ResultSchemaId } from "./schemas.ts";
+
+export type FrozenPublicationCandidate = Readonly<{ head: string; tree: string; branch: string; indexTree: string; statusDigest: string; inputDigest: string }>;
 
 export const FINALIZE_RESULT_REQUEST = "artifact-contracts:finalize-result:request:v1";
 export const FINALIZE_RESULT_RESPONSE = "artifact-contracts:finalize-result:response:v1";
@@ -20,6 +24,8 @@ export const DELEGATION_RESULT_REQUEST = "workflow:delegation-result:request:v1"
 export const DELEGATION_RESULT_RESPONSE = "workflow:delegation-result:response:v1";
 export const PUBLICATION_CLEARANCE_REQUEST = "artifact-contracts:publication-clearance:request:v1";
 export const PUBLICATION_CLEARANCE_RESPONSE = "artifact-contracts:publication-clearance:response:v1";
+export const PUBLICATION_CLEARANCE_QUERY = "pi-guardrails:publication-clearance:query:v1";
+export const PUBLICATION_CLEARANCE_RECORD = "pi-guardrails:publication-clearance:record:v1";
 export const LAUNCH_BINDING_ENV = "PI_SUBAGENT_PUBLICATION_BINDING";
 
 export type PublicationLaunchBinding = Readonly<{
@@ -223,9 +229,11 @@ type SelectedLane = Readonly<{ slot: "correctness-primary" | "correctness-counte
 type ResolvedLane = Readonly<{ selection: SelectedLane; ownerGeneration: string; envelope: FinalizedResultEnvelope; refDigest: string }>;
 type LaunchAssignment = Readonly<{ assignment: AssignmentSnapshot; childIds: ReadonlySet<string> }>;
 type PublicationSeal = Readonly<{
+	clearedAt: number; wireEvidenceIds: readonly string[];
 	candidate: CandidateIdentity; frozen: FrozenPublicationCandidate; evidenceIds: readonly string[];
 	pins: readonly Readonly<{ path: string; sha256: string }>[]; lanes: readonly ResolvedLane[];
 	assignment: AssignmentSnapshot; generation: string;
+	workOwners: Readonly<{ verificationGeneration: string; delegationGeneration: string; delegationRevision: number; backgroundGeneration: string; backgroundRevision: string }>;
 }>;
 
 function resolveLane(events: EventBus, sessionId: string, selection: SelectedLane, launches: ReadonlyMap<string, LaunchAssignment>, assignment: AssignmentSnapshot): ResolvedLane {
@@ -347,23 +355,35 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 		const childIds = new Set(children.filter(isRecord).flatMap((child) => identifier(child.id) ? [child.id] : []));
 		launches.set(event.toolCallId, { ...launch, childIds });
 	});
-	async function git(ctx: ExtensionContext, args: string[]): Promise<string> {
-		const result = await pi.exec("git", args, { cwd: ctx.cwd, timeout: 10_000 });
-		if (result.code !== 0 || result.killed) throw new Error("publication Git identity unavailable");
+	function git(ctx: ExtensionContext, args: string[], deadline: number): string {
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) throw new Error("publication Git identity deadline exceeded");
+		const result = spawnSync("git", args, { cwd: ctx.cwd, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: Math.min(10_000, remaining), killSignal: "SIGKILL", maxBuffer: 1024 * 1024 });
+		if (result.error || result.signal || result.status !== 0) throw new Error("publication Git identity unavailable");
 		return result.stdout.trim();
 	}
-	async function freeze(ctx: ExtensionContext, candidate: CandidateIdentity, pins: PublicationSeal["pins"]): Promise<FrozenPublicationCandidate> {
-		const [branch, indexTree, status] = await Promise.all([git(ctx, ["symbolic-ref", "--quiet", "--short", "HEAD"]), git(ctx, ["write-tree"]), git(ctx, ["status", "--porcelain=v1", "--untracked-files=all"])]);
+	function freeze(ctx: ExtensionContext, candidate: CandidateIdentity, pins: PublicationSeal["pins"], deadline = Date.now() + 30_000): FrozenPublicationCandidate {
+		const [branch, indexTree, status] = [git(ctx, ["symbolic-ref", "--quiet", "--short", "HEAD"], deadline), git(ctx, ["write-tree"], deadline), git(ctx, ["status", "--porcelain=v1", "--untracked-files=all"], deadline)];
 		if (candidate.kind !== "clean" || !candidate.head || candidate.tree !== indexTree || status) throw new Error("publication requires a clean committed source and index");
 		return Object.freeze({ head: candidate.head, tree: candidate.tree, branch, indexTree, statusDigest: digest(status), inputDigest: digest(pins) });
 	}
-	async function current(selected: PublicationSeal): Promise<boolean> {
+	function workOwners(): PublicationSeal["workOwners"] {
+		if (!ownerSessionId) throw new Error("publication work owner unavailable");
+		const verification = requestWorkStatus(pi.events, "verification", ownerSessionId);
+		const delegation = requestWorkStatus(pi.events, "delegation", ownerSessionId);
+		const background = requestBackgroundWorkStatusSync(pi.events, ownerSessionId);
+		if (!verification || !delegation) throw new Error("publication work owner status unavailable");
+		return { verificationGeneration: verification.generation, delegationGeneration: delegation.generation,
+			delegationRevision: delegation.revision, backgroundGeneration: background.generation, backgroundRevision: background.revision };
+	}
+	function current(selected: PublicationSeal, binding?: Record<string, unknown>): boolean {
 		try {
 			const ctx = ownerContext;
 			if (!ctx || !ownerSessionId || selected !== seal || selected.generation !== generation || ownerSessionId !== selected.assignment.sessionId) return false;
+			if (binding && (binding.sessionId !== ownerSessionId || binding.repositoryRoot !== selected.candidate.repositoryRoot || binding.candidateSha !== selected.candidate.head)) return false;
 			const assignment = currentAssignment(ctx.sessionManager);
 			if (!assignment || !sameAssignment(selected.assignment, assignment)) return false;
-			if ((await ownedWorkErrors(pi.events, verificationCalls.size, ownerSessionId, true)).length > 0) return false;
+			if (ownedWorkErrorsSync(pi.events, verificationCalls.size, ownerSessionId, true).length > 0 || digest(workOwners()) !== digest(selected.workOwners)) return false;
 			if (publicationEvidenceErrors(selected.evidenceIds, selected.candidate, true).length > 0) return false;
 			for (const pin of selected.pins) if (runtimeManifest(selected.candidate.repositoryRoot, pin.path) !== pin.sha256) return false;
 			for (const lane of selected.lanes) {
@@ -371,9 +391,15 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 				if (latest.ownerGeneration !== lane.ownerGeneration || latest.refDigest !== lane.refDigest || digest(latest.envelope) !== digest(lane.envelope)
 					|| importedProofErrors(latest, selected.candidate).length > 0) return false;
 			}
-			const candidate = await captureCandidateWithExec(pi.exec, ctx.cwd);
-			const frozen = await freeze(ctx, candidate, selected.pins);
-			if ((await ownedWorkErrors(pi.events, verificationCalls.size, ownerSessionId, true)).length > 0
+			const deadline = Date.now() + 30_000;
+			if (binding) {
+				const pushUrls = git(ctx, ["remote", "get-url", "--push", "--all", "origin"], deadline).split("\n");
+				if (pushUrls.length !== 1 || pushUrls[0] !== binding.pushUrl) return false;
+			}
+			const candidate = captureCandidateSync(ctx.cwd, selected.candidate.repositoryRoot, selected.candidate.source, deadline);
+			const frozen = freeze(ctx, candidate, selected.pins, deadline);
+			if (ownedWorkErrorsSync(pi.events, verificationCalls.size, ownerSessionId, true).length > 0
+				|| digest(workOwners()) !== digest(selected.workOwners)
 				|| publicationEvidenceErrors(selected.evidenceIds, selected.candidate, true).length > 0) return false;
 			for (const pin of selected.pins) if (runtimeManifest(selected.candidate.repositoryRoot, pin.path) !== pin.sha256) return false;
 			for (const lane of selected.lanes) {
@@ -407,12 +433,31 @@ export function registerPublicationClearance(pi: ExtensionAPI): void {
 			if (errors.length > 0) throw new Error(errors.join("; "));
 			const proofs = params.evidenceIds.map((id) => getVerificationEvidence(id)!);
 			const pins = inputPins([...proofs, ...lanes.flatMap((lane) => lane.envelope.proofs)]);
-			const frozen = await freeze(ctx, candidate, pins);
-			const next: PublicationSeal = { candidate, frozen, evidenceIds: [...params.evidenceIds], pins, lanes, assignment, generation: capturedGeneration };
+			const frozen = freeze(ctx, candidate, pins);
+			const workOwnerSnapshot = workOwners();
+			const sealId = randomUUID();
+			const clearedAt = Date.now();
+			const next: PublicationSeal = { clearedAt,
+				wireEvidenceIds: params.evidenceIds.map((id) => `seal:${sealId}:${id}`),
+				candidate, frozen, evidenceIds: [...params.evidenceIds], pins, lanes, assignment, generation: capturedGeneration, workOwners: workOwnerSnapshot };
 			seal = next;
-			if (capturedActivity !== activityRevision || !(await current(next)) || capturedActivity !== activityRevision) { seal = undefined; throw new Error("publication state changed while sealing"); }
+			if (capturedActivity !== activityRevision || !current(next) || capturedActivity !== activityRevision) { seal = undefined; throw new Error("publication state changed while sealing"); }
 			return { content: [{ type: "text", text: "Publication proof sealed locally; a separate exact external grant and scanner clearance are still required." }], details: { candidate: frozen, laneCount: lanes.length } };
 		},
+	});
+	pi.events.on(PUBLICATION_CLEARANCE_QUERY, (value) => {
+		const keys = ["version", "requestId", "sessionId", "repositoryRoot", "candidateSha", "pushUrl", "branch"];
+		if (!isRecord(value) || !closed(value, keys) || value.version !== 1 || !identifier(value.requestId)
+			|| !identifier(value.sessionId) || !identifier(value.repositoryRoot) || !identifier(value.candidateSha)
+			|| !identifier(value.pushUrl) || !identifier(value.branch)) return;
+		const selected = seal;
+		if (!selected || value.sessionId !== selected.assignment.sessionId || value.repositoryRoot !== selected.candidate.repositoryRoot
+			|| value.candidateSha !== selected.candidate.head || value.branch !== selected.frozen.branch) return;
+		try { if (realpathSync(value.repositoryRoot) !== selected.candidate.repositoryRoot) return; } catch { return; }
+		if (!current(selected, value)) return;
+		pi.events.emit(PUBLICATION_CLEARANCE_RECORD, {
+			...value, evidenceIds: selected.wireEvidenceIds, clearedAt: selected.clearedAt,
+		});
 	});
 	pi.events.on(PUBLICATION_CLEARANCE_REQUEST, (value) => {
 		if (!isRecord(value) || !closed(value, ["version", "requestId", "cwd"]) || value.version !== 1 || !identifier(value.requestId) || !identifier(value.cwd) || !ownerContext) return;

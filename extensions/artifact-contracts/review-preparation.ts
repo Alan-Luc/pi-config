@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import { REVIEW_ARTIFACT_ROOT } from "../guardrails/guardrails.ts";
+import { REVIEW_ARTIFACT_ROOT } from "./review-enforcement.ts";
 import { isRecord } from "../lib/shared.ts";
 import {
 	captureCandidateWithExec,

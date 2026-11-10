@@ -19,6 +19,7 @@ import {
 	MAX_EXPOSED_OUTPUT_BYTES,
 	canonicalCommand,
 	captureCandidate,
+	captureCandidateSync,
 	executeVerification,
 	executeVerificationEvidence,
 	registerVerificationEvidence,
@@ -351,6 +352,71 @@ async function newRepository(): Promise<string> {
 	runtimeRepositories.push(directory);
 	return directory;
 }
+
+it.each([
+	{ state: "clean", kind: "clean" },
+	{ state: "tracked edit", kind: "dirty" },
+	{ state: "staged edit", kind: "dirty" },
+	{ state: "untracked file", kind: "dirty" },
+	{ state: "ignored file", kind: "clean" },
+	{ state: "detached HEAD", kind: "clean" },
+	{ state: "assume unchanged", kind: "clean" },
+	{ state: "skip worktree", kind: "clean" },
+])("synchronous capture preserves asynchronous identity and index for $state", async ({ state, kind }) => {
+	const directory = await newRepository();
+	if (state === "tracked edit" || state === "staged edit") writeFileSync(join(directory, "tracked.txt"), "changed\n");
+	if (state === "staged edit") await git(directory, "add", "tracked.txt");
+	if (state === "untracked file") writeFileSync(join(directory, "untracked.txt"), "untracked\n");
+	if (state === "ignored file") {
+		writeFileSync(join(directory, ".git", "info", "exclude"), "ignored.txt\n");
+		writeFileSync(join(directory, "ignored.txt"), "ignored\n");
+	}
+	if (state === "detached HEAD") await git(directory, "checkout", "--quiet", "--detach");
+	if (state === "assume unchanged" || state === "skip worktree") {
+		await git(directory, "update-index", state === "assume unchanged" ? "--assume-unchanged" : "--skip-worktree", "tracked.txt");
+		writeFileSync(join(directory, "tracked.txt"), "hidden edit\n");
+	}
+	const index = join(directory, await git(directory, "rev-parse", "--git-path", "index"));
+	const before = readFileSync(index);
+	const synchronous = captureCandidateSync(directory);
+	assert.equal(synchronous.kind, kind);
+	assert.deepEqual(synchronous, await captureCandidate(makeContext(directory)));
+	assert.deepEqual(readFileSync(index), before, "both drivers must leave the real index unchanged");
+	assert.deepEqual(captureCandidateSync(directory, undefined, "staged"), await captureCandidate(makeContext(directory), undefined, undefined, "staged"));
+});
+
+test("synchronous capture rejects expired deadlines and unborn repositories", async () => {
+	const directory = await newRepository();
+	assert.throws(() => captureCandidateSync(directory, undefined, undefined, Date.now() - 1), /deadline/);
+	const unborn = mkdtempSync(join(tmpdir(), "verification-unborn-"));
+	runtimeRepositories.push(unborn);
+	await git(unborn, "init", "--quiet");
+	assert.throws(() => captureCandidateSync(unborn), /unborn HEAD/);
+});
+
+it.each(["signal", "timeout"])("synchronous capture fails closed on Git %s", async (failure) => {
+	const directory = await newRepository();
+	const shimDirectory = mkdtempSync(join(root, "sync-git-"));
+	const shim = join(shimDirectory, "git");
+	const realGit = (await runProcess(["which", "git"], directory)).output.trim();
+	const marker = join(shimDirectory, "temporary-index.txt");
+	const script = failure === "signal"
+		? `#!/bin/sh\nif [ "$1" = add ]; then printf '%s\\n' "$GIT_INDEX_FILE" > '${marker}'; kill -TERM $$; fi\nexec '${realGit}' "$@"\n`
+		: "#!/bin/sh\nexec sleep 10\n";
+	writeFileSync(shim, script, { mode: 0o700 });
+	const previousPath = process.env.PATH;
+	try {
+		process.env.PATH = `${shimDirectory}:${previousPath ?? ""}`;
+		assert.throws(() => captureCandidateSync(directory, undefined, undefined, Date.now() + (failure === "timeout" ? 150 : 5_000)), /failed|bounds|deadline/);
+		if (failure === "signal") {
+			const temporaryIndex = readFileSync(marker, "utf8").trim();
+			assert.equal(existsSync(dirname(temporaryIndex)), false, "a signal during staging must clean the private index");
+		}
+	} finally {
+		if (previousPath === undefined) delete process.env.PATH;
+		else process.env.PATH = previousPath;
+	}
+});
 
 type FakeBackgroundService = EventBus & {
 	acknowledged: string[];

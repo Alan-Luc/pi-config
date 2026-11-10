@@ -9,6 +9,7 @@
         "tests/artifact-contracts.test.ts",
         "tests/artifact-documents.test.ts",
         "tests/artifact-handoffs.test.ts",
+        "tests/artifact-review.test.ts",
         "tests/background-task-events.test.ts",
         "tests/continuation-guard.test.ts",
         "tests/extension-load.test.ts",

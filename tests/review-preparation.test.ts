@@ -26,7 +26,7 @@ import {
 	type TaskBoundary,
 } from "../extensions/artifact-contracts/review-preparation.ts";
 import { captureCandidateWithExec, type CandidateExec } from "../extensions/artifact-contracts/verification.ts";
-import { registerGuardrails, REVIEW_ARTIFACT_ROOT } from "../extensions/guardrails/guardrails.ts";
+import { registerReviewEnforcement, REVIEW_ARTIFACT_ROOT } from "../extensions/artifact-contracts/review-enforcement.ts";
 import { validate } from "../extensions/artifact-contracts/validate.ts";
 import { AGENT_OUTPUT } from "../extensions/artifact-contracts/schemas.ts";
 
@@ -204,10 +204,10 @@ test.each(["## Approved decision notes", "### Approved decision notes"])("prepar
 	const coercedKind = reviewer.task.replace(/^Plan references:.*$/m, `Plan references: ${JSON.stringify([...references, { ...references[0], kind: ["requirement"] }])}`);
 	await assert.rejects(validatePlanReviewMetadata(coercedKind, harness.exec, root), /reference metadata is malformed/);
 	let guardrail: ((event: ToolCallEvent, ctx: ExtensionContext) => Promise<unknown> | unknown) | undefined;
-	registerGuardrails({
+	registerReviewEnforcement({
 		exec: harness.exec,
 		on: (name: string, handler: typeof guardrail) => { if (name === "tool_call") guardrail = handler; return () => undefined; },
-	} as unknown as ExtensionAPI, {});
+	} as unknown as ExtensionAPI);
 	if (!guardrail) throw new Error("guardrail hook was not registered");
 	await guardrail(launch(reviewer), { cwd: root } as ExtensionContext);
 	await guardrail(launch({ children: ["code-reviewer-sol", "code-reviewer-opus"].map((agent) => ({ agent, task: reviewer.task })) }), { cwd: root } as ExtensionContext);
@@ -612,9 +612,9 @@ test("prepares staged-only review inputs without exposing partially staged worki
 	assert.match(readFileSync(paths[0] ?? "", "utf8"), /staged source/);
 	assert.doesNotMatch(readFileSync(paths[0] ?? "", "utf8"), /unique-review-leak|console\.log/);
 	let guardrail: ((event: ToolCallEvent, ctx: ExtensionContext) => Promise<unknown> | unknown) | undefined;
-	registerGuardrails({
+	registerReviewEnforcement({
 		on: (name: string, handler: typeof guardrail) => { if (name === "tool_call") guardrail = handler; return () => undefined; },
-	} as unknown as ExtensionAPI, {});
+	} as unknown as ExtensionAPI);
 	if (!guardrail) throw new Error("guardrail hook was not registered");
 	await guardrail(launch({ agent: "code-reviewer", task: reviewer.task }), { cwd: root } as ExtensionContext);
 	writeFileSync(paths[0] ?? "", "tampered context\n");
@@ -732,12 +732,12 @@ test("composes review-preparation mutation before guardrails validation for sing
 	const root = await repository();
 	const preparation = toolCallHandler(root);
 	let guardrail: ((event: ToolCallEvent, ctx: ExtensionContext) => Promise<unknown> | unknown) | undefined;
-	registerGuardrails({
+	registerReviewEnforcement({
 		on: (name: string, handler: typeof guardrail) => {
 			if (name === "tool_call") guardrail = handler;
 			return () => undefined;
 		},
-	} as unknown as ExtensionAPI, {});
+	} as unknown as ExtensionAPI);
 	if (!guardrail) throw new Error("guardrail hook was not registered");
 	await preparation.call(mutation());
 	writeFileSync(join(root, "task.txt"), "changed\n");

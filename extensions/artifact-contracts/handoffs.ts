@@ -1,6 +1,6 @@
 import type { EventBus, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
-import { requestBackgroundTask, type BackgroundTaskSnapshot } from "./background-tasks.ts";
+import { requestBackgroundWorkStatusSync, type BackgroundTaskSnapshot } from "./background-tasks.ts";
 import { AGENT_OUTPUT, DEFAULT_OUTPUT, SCHEMAS, type SchemaId } from "./schemas.ts";
 import { appendInstructions, renderTemplate } from "./render.ts";
 import { currentAssignment, sameAssignment, type AssignmentSnapshot } from "./assignment.ts";
@@ -140,7 +140,7 @@ function taskLabel(task: Pick<BackgroundTaskSnapshot, "id" | "name">): string {
 	return label.length <= MAX_TASK_LABEL_LENGTH ? label : `${label.slice(0, MAX_TASK_LABEL_LENGTH - 1)}…`;
 }
 
-export async function ownedWorkErrors(events: EventBus, activeVerificationCalls: number, sessionId: string | undefined, requireDelegation = false): Promise<string[]> {
+export function ownedWorkErrorsSync(events: EventBus, activeVerificationCalls: number, sessionId: string | undefined, requireDelegation = false): string[] {
 	const pending = pendingVerificationWork(events);
 	const errors: string[] = [];
 	if (activeVerificationCalls > 0) errors.push(`verification tool calls still running: ${activeVerificationCalls}`);
@@ -160,7 +160,7 @@ export async function ownedWorkErrors(events: EventBus, activeVerificationCalls:
 		else if (delegation.runningChildIds.length > 0 || delegation.pendingResultIds.length > 0) errors.push("delegation owner has pending work");
 	}
 	try {
-		const status = await requestBackgroundTask(events, "work-status", { sessionId });
+		const status = requestBackgroundWorkStatusSync(events, sessionId);
 		if (status.activeAdmissions > 0) errors.push(`background task admissions still registering: ${status.activeAdmissions}`);
 		if (!status.historyComplete) errors.push("background work history incomplete or closed");
 		const running = status.tasks.map((entry) => entry.task)
@@ -187,6 +187,10 @@ export async function ownedWorkErrors(events: EventBus, activeVerificationCalls:
 		const detail = error instanceof Error ? error.message : String(error);
 		return [...errors, `background task status check failed: ${detail}`];
 	}
+}
+
+export async function ownedWorkErrors(events: EventBus, activeVerificationCalls: number, sessionId: string | undefined, requireDelegation = false): Promise<string[]> {
+	return ownedWorkErrorsSync(events, activeVerificationCalls, sessionId, requireDelegation);
 }
 
 export function registerHandoffHooks(pi: ExtensionAPI): void {

@@ -316,6 +316,34 @@ export function onBackgroundTaskTerminal(
 	});
 }
 
+function responseResult(value: unknown, operation: BackgroundTaskOperation): unknown {
+	const response = requireRecord(value, "background task response frame");
+	assertClosed(response, response.ok === true
+		? ["schema_version", "request_id", "operation", "ok", "result"]
+		: ["schema_version", "request_id", "operation", "ok", "error"], "background task response frame");
+	if (response.schema_version !== BACKGROUND_TASK_RESPONSE_SCHEMA) throw new Error("background task response schema_version mismatch");
+	if (response.operation !== operation) throw new Error("background task response operation mismatch");
+	if (response.ok === false) throw new Error(`pi-background-tasks ${operation} failed: ${requireString(response.error, "background task response.error")}`);
+	if (response.ok !== true) throw new Error("background task response ok must be boolean");
+	return response.result;
+}
+
+export function requestBackgroundWorkStatusSync(events: EventBus, sessionId: string): BackgroundWorkStatus {
+	requireString(sessionId, "background work status payload.sessionId");
+	const requestId = `artifact-contracts-${randomUUID()}`;
+	const replies: unknown[] = [];
+	const off = events.on(BACKGROUND_TASK_RESPONSE_CHANNEL, (value) => {
+		if (isRecord(value) && value.request_id === requestId) replies.push(value);
+	});
+	try {
+		events.emit(BACKGROUND_TASK_REQUEST_CHANNEL, {
+			schema_version: BACKGROUND_TASK_REQUEST_SCHEMA, request_id: requestId, operation: "work-status", payload: { sessionId },
+		});
+	} finally { off(); }
+	if (replies.length !== 1) throw new Error("background work status requires exactly one synchronous owner response");
+	return parseWorkStatus(responseResult(replies[0], "work-status"), sessionId);
+}
+
 export function requestBackgroundTask(
 	events: EventBus,
 	operation: "capabilities",
@@ -365,9 +393,10 @@ export function requestBackgroundTask(
 	timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<BackgroundTaskResult> {
 	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("background task request timeout must be positive");
-	const sessionId = operation === "work-status"
-		? requireString(requireRecord(payload, "background work status payload").sessionId, "background work status payload.sessionId")
-		: undefined;
+	if (operation === "work-status") {
+		const sessionId = requireString(requireRecord(payload, "background work status payload").sessionId, "background work status payload.sessionId");
+		return new Promise((resolve) => resolve(requestBackgroundWorkStatusSync(events, sessionId)));
+	}
 	const requestId = `artifact-contracts-${randomUUID()}`;
 	return new Promise((resolve, reject) => {
 		let settled = false;
@@ -382,25 +411,14 @@ export function requestBackgroundTask(
 		const acceptResponse = (value: unknown) => {
 			if (!isRecord(value) || value.request_id !== requestId) return;
 			try {
-				assertClosed(value, value.ok === true
-					? ["schema_version", "request_id", "operation", "ok", "result"]
-					: ["schema_version", "request_id", "operation", "ok", "error"], "background task response frame");
-				if (value.schema_version !== BACKGROUND_TASK_RESPONSE_SCHEMA) throw new Error("background task response schema_version mismatch");
-				if (value.operation !== operation) throw new Error("background task response operation mismatch");
-				if (value.ok === false) throw new Error(`pi-background-tasks ${operation} failed: ${requireString(value.error, "background task response.error")}`);
-				if (value.ok !== true) throw new Error("background task response ok must be boolean");
-				const result = parseOperationResult(operation, value.result, sessionId);
+				const result = parseOperationResult(operation, responseResult(value, operation));
 				finish(() => resolve(result));
 			} catch (error) {
 				finish(() => reject(error));
 			}
 		};
-		const synchronousResponses: unknown[] = [];
-		const unsubscribe = events.on(BACKGROUND_TASK_RESPONSE_CHANNEL, (value) => {
-			if (operation !== "work-status") acceptResponse(value);
-			else if (isRecord(value) && value.request_id === requestId) synchronousResponses.push(value);
-		});
-		if (operation !== "work-status") timer = setTimeout(() => finish(() => reject(new Error(`pi-background-tasks ${operation} request timed out`))), timeoutMs);
+		const unsubscribe = events.on(BACKGROUND_TASK_RESPONSE_CHANNEL, acceptResponse);
+		timer = setTimeout(() => finish(() => reject(new Error(`pi-background-tasks ${operation} request timed out`))), timeoutMs);
 		try {
 			events.emit(BACKGROUND_TASK_REQUEST_CHANNEL, {
 				schema_version: BACKGROUND_TASK_REQUEST_SCHEMA,
@@ -408,10 +426,6 @@ export function requestBackgroundTask(
 				operation,
 				payload,
 			});
-			if (operation === "work-status") {
-				if (synchronousResponses.length !== 1) finish(() => reject(new Error("background work status requires exactly one synchronous owner response")));
-				else acceptResponse(synchronousResponses[0]);
-			}
 		} catch (error) {
 			finish(() => reject(new Error(`pi-background-tasks ${operation} request failed: ${String(error)}`)));
 		}

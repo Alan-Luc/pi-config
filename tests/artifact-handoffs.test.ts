@@ -493,11 +493,15 @@ async function runGit(directory: string, ...args: string[]): Promise<string> {
 	return stdout.trim();
 }
 
+const PUBLICATION_CLEARANCE_QUERY = "pi-guardrails:publication-clearance:query:v1";
+const PUBLICATION_CLEARANCE_RECORD = "pi-guardrails:publication-clearance:record:v1";
+
 it("seals current postcommit evidence, permits reads, and revokes on failure, source change, or restart", async () => {
 	const directory = realpathSync(mkdtempSync(join(tmpdir(), "artifact-seal-")));
 	const logDirectory = mkdtempSync(join(tmpdir(), "artifact-seal-logs-"));
 	try {
-		await runGit(directory, "init", "--quiet");
+		await runGit(directory, "init", "--quiet", "-b", "fixture");
+		await runGit(directory, "remote", "add", "origin", "https://example.test/owner/repo.git");
 		await runGit(directory, "config", "user.email", "seal@example.test");
 		await runGit(directory, "config", "user.name", "Seal test");
 		writeFileSync(join(directory, "source.txt"), "committed source\n");
@@ -527,9 +531,17 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		appendUser(session, "authorize local seal fixture");
 		const context = { cwd: directory, sessionManager: session };
 		const events = eventBus();
+		const backgroundGeneration = "generation-1";
+		let backgroundRevision = "a".repeat(64);
+		let backgroundOverrides: Record<string, unknown> = {};
+		let verificationOverrides: Record<string, unknown> = {};
+		let delegationOverrides: Record<string, unknown> = {};
+		let backgroundReplies = 1;
 		events.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
 			const request = record(value);
-			if (request.operation === "work-status") events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, workStatusFrame(request.request_id, record(request.payload).sessionId));
+			if (request.operation === "work-status") for (let reply = 0; reply < backgroundReplies; reply++) {
+				events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, workStatusFrame(request.request_id, record(request.payload).sessionId, { tasks: [] }, { generation: backgroundGeneration, revision: backgroundRevision, ...backgroundOverrides }));
+			}
 		});
 		for (const [requestChannel, responseChannel, owner] of [
 			[VERIFICATION_STATUS_REQUEST, VERIFICATION_STATUS_RESPONSE, "verification"],
@@ -539,7 +551,7 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 				const request = record(value);
 				events.emit(responseChannel, {
 					version: 1, requestId: request.requestId, sessionId: request.sessionId, generation: `${owner}-generation`,
-					...(owner === "verification" ? { starting: 0, uncollectedTaskIds: [] } : { revision: 1, runningChildIds: [], pendingResultIds: [] }),
+					...(owner === "verification" ? { starting: 0, uncollectedTaskIds: [], ...verificationOverrides } : { revision: 1, runningChildIds: [], pendingResultIds: [], ...delegationOverrides }),
 				});
 			});
 		}
@@ -551,7 +563,11 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 			on(name: string, handler: (event: never, ctx: never) => unknown) { registered.set(name, handler); },
 			registerTool(tool: unknown) { clearanceTool = tool as ClearanceTool; },
 		};
+		const childMarkers = ["PI_SUBAGENT_AGENT", "PI_SUBAGENT_PARENT_SESSION", "PI_SUBAGENT_NAME", "PI_SUBAGENT_SESSION", "PI_SUBAGENT_SURFACE"];
+		const savedMarkers = childMarkers.map((key) => [key, process.env[key]] as const);
+		for (const key of childMarkers) delete process.env[key];
 		registerPublicationClearance(pi as never);
+		for (const [key, value] of savedMarkers) if (value !== undefined) process.env[key] = value;
 		registered.get("session_start")?.({} as never, context as never);
 		assert.ok(clearanceTool);
 		registered.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "background-start", input: { operation: "start" } } as never, context as never);
@@ -579,7 +595,77 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 			assert.equal(responses.length, 1);
 			return (responses[0].loadFrozenCandidate as () => Promise<unknown>)();
 		};
-		assert.ok(await query(), "a valid seal must expose the same frozen candidate");
+		assert.ok(await query(), "the legacy response protocol remains operational during cutover");
+		const queryRecord = (overrides: Record<string, unknown> = {}) => {
+			const records: Record<string, unknown>[] = [];
+			const off = events.on(PUBLICATION_CLEARANCE_RECORD, (value) => records.push(record(value)));
+			events.emit(PUBLICATION_CLEARANCE_QUERY, {
+				version: 1, requestId: "query-v1", sessionId: session.getSessionId(), repositoryRoot: candidate.repositoryRoot,
+				candidateSha: candidate.head, pushUrl: "https://example.test/owner/repo.git", branch: "fixture", ...overrides,
+			});
+			off();
+			return records;
+		};
+		const firstRecord = queryRecord();
+		assert.equal(firstRecord.length, 1, "the real seal answers synchronously");
+		const firstSeal = record(firstRecord[0]);
+		assert.deepEqual(firstSeal.evidenceIds instanceof Array, true);
+		assert.ok(Number.isFinite(firstSeal.clearedAt));
+		assert.deepEqual(queryRecord()[0], firstSeal, "same-seal record and timestamp stay stable");
+		writeFileSync(logPath, "tampered proof log");
+		assert.equal(queryRecord().length, 0, "proof-log bytes are revalidated synchronously");
+		writeFileSync(logPath, output);
+		await runGit(directory, "read-tree", "--empty");
+		assert.equal(queryRecord().length, 0, "index drift denies otherwise unchanged source");
+		await runGit(directory, "read-tree", "HEAD");
+		assert.deepEqual(queryRecord({ requestId: "final-query" })[0], { ...firstSeal, requestId: "final-query" }, "the gate can requery the same seal with a fresh request ID");
+		registered.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "active-check", input: { operation: "capture" } } as never, context as never);
+		assert.equal(queryRecord().length, 0, "active verification calls deny synchronous clearance");
+		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "active-check" } as never, context as never);
+		await runGit(directory, "remote", "set-url", "--push", "origin", "https://example.test/changed/repo.git");
+		assert.equal(queryRecord().length, 0, "effective target drift denies the original query");
+		await runGit(directory, "remote", "set-url", "--push", "origin", "https://example.test/owner/repo.git");
+		await runGit(directory, "remote", "set-url", "--add", "--push", "origin", "https://example.test/other/repo.git");
+		assert.equal(queryRecord().length, 0, "multiple effective push targets deny clearance");
+		await runGit(directory, "config", "--unset-all", "remote.origin.pushurl");
+		for (const overrides of [
+			{ activeAdmissions: 1 },
+			{ historyComplete: false, incompletenessReasons: ["history_pruned"] },
+			{ generation: "replacement-background-owner" },
+			{ version: 2 },
+		]) {
+			backgroundOverrides = overrides;
+			assert.equal(queryRecord().length, 0, `background currentness denies ${JSON.stringify(overrides)}`);
+		}
+		backgroundOverrides = {};
+		for (const replies of [0, 2]) {
+			backgroundReplies = replies;
+			assert.equal(queryRecord().length, 0, "missing or competing background owners deny clearance");
+		}
+		backgroundReplies = 1;
+		for (const overrides of [{ starting: 1 }, { uncollectedTaskIds: ["uncollected"] }, { generation: "replacement-verification-owner" }]) {
+			verificationOverrides = overrides;
+			assert.equal(queryRecord().length, 0, `verification currentness denies ${JSON.stringify(overrides)}`);
+		}
+		verificationOverrides = {};
+		for (const overrides of [{ runningChildIds: ["running"] }, { pendingResultIds: ["pending"] }, { revision: 2 }, { generation: "replacement-delegation-owner" }]) {
+			delegationOverrides = overrides;
+			assert.equal(queryRecord().length, 0, `delegation currentness denies ${JSON.stringify(overrides)}`);
+		}
+		delegationOverrides = {};
+		backgroundRevision = "b".repeat(64);
+		assert.equal(queryRecord().length, 0, "changed background service revision revokes the seal");
+		backgroundRevision = "a".repeat(64);
+		assert.deepEqual(queryRecord()[0], firstSeal, "restoring identical service state retains the seal");
+		assert.equal(queryRecord({ candidateSha: "f".repeat(40) }).length, 0, "wrong candidate binding receives no record");
+		assert.equal(queryRecord({ sessionId: "another-session" }).length, 0, "foreign sessions receive no record");
+		assert.equal(queryRecord({ repositoryRoot: logDirectory }).length, 0, "foreign roots receive no record");
+		assert.equal(queryRecord({ branch: "another-branch" }).length, 0, "foreign branches receive no record");
+		assert.equal(queryRecord({ requestId: "" }).length, 0, "empty request identifiers receive no record");
+		assert.equal(queryRecord({ version: 2 }).length, 0, "unknown versions receive no record");
+		assert.equal(queryRecord({ pushUrl: "" }).length, 0, "empty targets receive no record");
+		assert.equal(queryRecord({ pushUrl: "https://example.test/other/repo.git" }).length, 0, "wrong exact targets receive no record");
+		assert.equal(queryRecord({ extra: true }).length, 0, "malformed closed query receives no record");
 		registered.get("tool_call")?.({ toolName: "bash", toolCallId: "inspection", input: { command: "git status --porcelain=v1" } } as never, context as never);
 		await runGit(directory, "status", "--porcelain=v1");
 		registered.get("tool_result")?.({ toolName: "bash", toolCallId: "inspection" } as never, context as never);
@@ -587,6 +673,7 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		assert.ok(await query(), "read-only Git inspection must not revoke the seal");
 		writeFileSync(inputPath, "changed runtime input\n");
 		assert.equal(await query(), undefined, "a pinned ignored input mutation must make the seal unavailable");
+		assert.equal(queryRecord().length, 0, "synchronous currentness rechecks ignored input pins");
 		writeFileSync(inputPath, inputBytes);
 		assert.ok(await query(), "restoring the exact pinned input preserves the seal identity");
 
@@ -595,6 +682,7 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 			logSha256: createHash("sha256").update(output).digest("hex"), valid: true,
 		});
 		assert.equal(await query(), undefined, "a superseding failed check must revoke the seal");
+		assert.equal(queryRecord().length, 0, "synchronous currentness rejects superseded successful evidence");
 
 		const repairedOutput = "fresh post-failure proof";
 		const repairedLog = join(logDirectory, "repaired-proof.log");
@@ -607,6 +695,9 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "repaired-proof", details: { protocolVersion: 2, operation: "run", evidence: repairedProof } } as never, context as never);
 		await clearanceTool.execute("reseal", { tier: "Direct", evidenceIds: [repairedProof.id], lanes: [], adjudication: "Local acceptance fixture." }, undefined, undefined, context);
 		assert.ok(await query(), "fresh successful evidence must permit a replacement seal");
+		const replacementRecord = record(queryRecord()[0]);
+		assert.notDeepEqual(replacementRecord.evidenceIds, firstSeal.evidenceIds, "a replacement seal gets distinct opaque evidence references");
+		assert.notEqual(replacementRecord.clearedAt, undefined, "a replacement seal has its own stable clearing time");
 		const slots = ["correctness-primary", "correctness-counterpart", "live-success", "live-attack"] as const;
 		const selections = slots.map((slot, index) => ({ slot, childId: `child-${index}`, incarnationId: `invocation-${index}` }));
 		const parentLeaf = session.getLeafId();
@@ -636,6 +727,7 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		await assert.rejects(clearanceTool.execute("missing-lane", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections.slice(0, 3), adjudication: "Missing attack lane." }, undefined, undefined, context), /complete distinct selected lanes/);
 		await clearanceTool.execute("joined-lanes", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections, adjudication: "All four owner-bound fixture lanes approved." }, undefined, undefined, context);
 		assert.ok(await query(), "complete authoritative lane results must join the parent seal");
+		assert.equal(queryRecord().length, 1, "authoritative fixture lane validation also answers the synchronous contract");
 		registered.get("tool_call")?.({ toolName: "write", toolCallId: "parent-notes", input: { path: join(directory, "notes.md"), content: "Review disposition recorded.\n" } } as never, context as never);
 		writeFileSync(join(directory, "notes.md"), "Review disposition recorded.\n");
 		registered.get("tool_result")?.({ toolName: "write", toolCallId: "parent-notes" } as never, context as never);
@@ -643,15 +735,18 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 		assert.ok(await query(), "ignored parent notes must preserve finalized child results with unchanged source and input pins");
 		resultGeneration = "restarted-result-owner";
 		assert.equal(await query(), undefined, "a replaced result-owner generation cannot authorize an existing seal");
+		assert.equal(queryRecord().length, 0, "synchronous currentness rejects changed lane ownership");
 		registered.get("tool_call")?.({ toolName: "verification_evidence", toolCallId: "source-control-proof", input: { operation: "run" } } as never, context as never);
 		registered.get("tool_result")?.({ toolName: "verification_evidence", toolCallId: "source-control-proof", details: { protocolVersion: 2, operation: "run", evidence: repairedProof } } as never, context as never);
 		await clearanceTool.execute("source-control", { tier: "Direct", evidenceIds: [repairedProof.id], lanes: [], adjudication: "Isolate the source mutation control." }, undefined, undefined, context);
 		assert.ok(await query());
 		writeFileSync(join(directory, "source.txt"), "mutated after seal\n");
 		assert.equal(await query(), undefined, "a source mutation must make the frozen candidate unavailable");
+		assert.equal(queryRecord().length, 0, "synchronous currentness recaptures source bytes");
 
 		registered.get("session_start")?.({} as never, context as never);
 		assert.equal(await query(), undefined, "session restart must discard process-local publication authority");
+		assert.equal(queryRecord().length, 0, "synchronous records cannot survive session restart");
 		assert.ok(getVerificationEvidence(repairedProof.id), "session restart must not erase ordinary receipt history");
 		await assert.rejects(clearanceTool.execute("replay-prior-proof", { tier: "Direct", evidenceIds: [repairedProof.id], lanes: [], adjudication: "A restarted owner needs fresh publication proof." }, undefined, undefined, context), /fresh|activity/);
 		appendUser(session, "a new parent assignment");

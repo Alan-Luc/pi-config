@@ -10,6 +10,7 @@ import {
 	BACKGROUND_TASK_TERMINAL_SCHEMA,
 	onBackgroundTaskTerminal,
 	requestBackgroundTask,
+	requestBackgroundWorkStatusSync,
 } from "../extensions/artifact-contracts/background-tasks.ts";
 
 type Listener = (value: unknown) => void;
@@ -71,6 +72,18 @@ it.each([undefined, true, false])("accepts legacy capabilities and additive work
 	});
 	const result = await requestBackgroundTask(events, "capabilities", {});
 	assert.equal(result.work_status, work_status);
+});
+
+test("reads owner-bound work status synchronously", () => {
+	const events = eventBus();
+	events.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
+		const request = value as Record<string, unknown>;
+		events.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+			schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA, request_id: request.request_id,
+			operation: "work-status", ok: true, result: workStatus(),
+		});
+	});
+	assert.equal(requestBackgroundWorkStatusSync(events, "session-1").generation, "generation-1");
 });
 
 test("requests and preserves owner-bound versioned background work status", async () => {
