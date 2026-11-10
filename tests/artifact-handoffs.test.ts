@@ -711,11 +711,37 @@ it("seals current postcommit evidence, permits reads, and revokes on failure, so
 				childSessionId: envelope.assignment.sessionId, rootGeneration: envelope.rootGeneration, incarnationId: selection.incarnationId };
 			return { selection, envelope, ref };
 		});
+		let laneReply: (reply: Record<string, unknown>) => unknown[] = (reply) => [reply];
 		events.on(DELEGATION_RESULT_REQUEST, (value) => {
 			const request = record(value);
 			const result = resolved.find(({ selection }) => selection.childId === request.childId);
-			if (result) events.emit(DELEGATION_RESULT_RESPONSE, { ...request, generation: resultGeneration, revision: 1, state: "completed", status: "completed", launchBinding: result.envelope.launchBinding, envelope: result.envelope, ref: result.ref });
+			if (result) for (const reply of laneReply({ ...request, generation: resultGeneration, revision: 1, state: "completed", status: "completed", launchBinding: result.envelope.launchBinding, envelope: result.envelope, ref: result.ref })) {
+				events.emit(DELEGATION_RESULT_RESPONSE, reply);
+			}
 		});
+		for (const scenario of [
+			{ name: "missing provider", replies: () => [], expected: /no delegation result response.*Recovery:.*extension/s },
+			{ name: "duplicate providers", replies: (reply: Record<string, unknown>) => [reply, reply], expected: /2 delegation result responses.*Recovery:.*extension/s },
+			{ name: "running", replies: (reply: Record<string, unknown>) => [{ ...reply, state: "running" }], expected: /state="running".*Recovery:.*Wait/s },
+			{ name: "missing", replies: (reply: Record<string, unknown>) => [{ ...reply, state: "missing" }], expected: /state="missing".*Recovery:.*Publication lane/s },
+			{ name: "unavailable", replies: (reply: Record<string, unknown>) => [{ ...reply, state: "unavailable", reason: "No current finalized result for this invocation." }], expected: /state="unavailable".*No current finalized result.*Recovery:.*finalized/s },
+			{ name: "wrong child", replies: (reply: Record<string, unknown>) => [{ ...reply, childId: "other-child" }], expected: /childId mismatch.*Recovery:.*extension/s },
+			{ name: "wrong incarnation", replies: (reply: Record<string, unknown>) => [{ ...reply, incarnationId: "old-invocation" }], expected: /incarnationId mismatch.*Recovery:.*extension/s },
+			{ name: "invalid revision", replies: (reply: Record<string, unknown>) => [{ ...reply, revision: -1 }], expected: /revision.*Recovery:.*extension/s },
+			{ name: "failed status", replies: (reply: Record<string, unknown>) => [{ ...reply, status: "failed" }], expected: /status="failed".*Recovery:.*worker/s },
+			{ name: "extra fields", replies: (reply: Record<string, unknown>) => [{ ...reply, unexpected: true }], expected: /completed response fields.*Recovery:.*extension/s },
+		]) {
+			laneReply = scenario.replies;
+			await assert.rejects(clearanceTool.execute(`diagnose-${scenario.name}`, { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections, adjudication: "Diagnose a rejected lane without replacing passing proof." }, undefined, undefined, context), (error: unknown) => {
+				assert.ok(error instanceof Error);
+				assert.match(error.message, /correctness-primary.*child-0.*invocation-0/s, scenario.name);
+				assert.match(error.message, scenario.expected, scenario.name);
+				return true;
+			});
+			assert.equal(queryRecord().length, 0, `${scenario.name} must not authorize publication`);
+			assert.deepEqual(verificationEvidenceErrors(repairedProof.id), [], `${scenario.name} must preserve unchanged verification`);
+		}
+		laneReply = (reply) => [reply];
 		await assert.rejects(clearanceTool.execute("missing-lane", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections.slice(0, 3), adjudication: "Missing attack lane." }, undefined, undefined, context), /complete distinct selected lanes/);
 		await clearanceTool.execute("joined-lanes", { tier: "Full", evidenceIds: [repairedProof.id], lanes: selections, adjudication: "All four owner-bound fixture lanes approved." }, undefined, undefined, context);
 		assert.ok(await query(), "complete authoritative lane results must join the parent seal");

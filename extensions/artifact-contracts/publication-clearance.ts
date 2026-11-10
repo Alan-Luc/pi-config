@@ -233,28 +233,44 @@ function resolveLane(events: EventBus, sessionId: string, selection: SelectedLan
 	const replies: unknown[] = [];
 	const off = events.on(DELEGATION_RESULT_RESPONSE, (reply) => replies.push(reply));
 	try { events.emit(DELEGATION_RESULT_REQUEST, request); } finally { off(); }
-	if (replies.length !== 1) throw new Error("delegation result capability unavailable or ambiguous");
+	function fail(reason: string, recovery: string): never {
+		throw new Error(`Publication lane ${selection.slot} childId=${JSON.stringify(selection.childId)} incarnationId=${JSON.stringify(selection.incarnationId)}: ${reason}. Recovery: ${recovery}`);
+	}
+	const repairProvider = "Check the loaded subagent extension and its result protocol. Repair missing, duplicate or incompatible providers before retrying clearance; rerunning passing tests does not repair result lookup.";
+	if (replies.length === 0) fail("no delegation result response", repairProvider);
+	if (replies.length !== 1) fail(`${replies.length} delegation result responses`, repairProvider);
 	const reply = replies[0];
-	if (!isRecord(reply) || !closed(reply, ["version", "requestId", "sessionId", "childId", "incarnationId", "generation", "revision", "state", "launchBinding", "status", "envelope", "ref"])
-		|| reply.version !== 1 || reply.requestId !== request.requestId || reply.sessionId !== sessionId
-		|| reply.childId !== selection.childId || reply.incarnationId !== selection.incarnationId || !identifier(reply.generation)
-		|| !Number.isSafeInteger(reply.revision) || Number(reply.revision) < 0 || reply.state !== "completed" || reply.status !== "completed") throw new Error("selected result is unavailable, running or failed");
+	if (!isRecord(reply)) fail("delegation result response is not an object", repairProvider);
+	for (const key of ["version", "requestId", "sessionId", "childId", "incarnationId"] as const) {
+		if (reply[key] !== request[key]) fail(`${key} mismatch`, repairProvider);
+	}
+	if (!identifier(reply.generation)) fail("invalid delegation result generation", repairProvider);
+	if (!Number.isSafeInteger(reply.revision) || Number(reply.revision) < 0) fail("invalid delegation result revision", repairProvider);
+	if (reply.state === "running") fail('state="running"', "Wait for this worker's terminal result notification, then use its finalized Publication lane identity. Do not poll or rerun passing tests.");
+	if (reply.state === "missing") fail('state="missing"', "Check childId and incarnationId against a finalized Publication lane report from this parent session. If its result registry was reset, launch a replacement lane on the unchanged candidate; retrying clearance alone cannot restore it.");
+	if (reply.state === "unavailable") {
+		const reason = typeof reply.reason === "string" ? `; provider reason=${JSON.stringify(reply.reason.slice(0, 512))}` : "";
+		fail(`state="unavailable"${reason}`, "Use the latest finalized Publication lane identity from this parent session. Inspect the worker's result and finalization; resume the worker to repair incomplete finalization, or launch a replacement lane if its binding is no longer current. A passing verification receipt alone cannot replace a finalized lane result.");
+	}
+	if (reply.state !== "completed") fail(`unexpected result state=${JSON.stringify(reply.state)}`, repairProvider);
+	if (!closed(reply, ["version", "requestId", "sessionId", "childId", "incarnationId", "generation", "revision", "state", "launchBinding", "status", "envelope", "ref"])) fail("invalid completed response fields", repairProvider);
+	if (reply.status !== "completed") fail(`status=${JSON.stringify(reply.status)}`, "Inspect the worker's failure and repair or replace that lane on the unchanged candidate. Use its finalized Publication lane identity before retrying clearance.");
 	const envelope = parseFinalizedEnvelope(JSON.parse(JSON.stringify(reply.envelope)));
 	const binding = parseLaunchBinding(reply.launchBinding);
 	if (!envelope || !binding || digest(binding) !== digest(envelope.launchBinding) || binding.parentSessionId !== sessionId
 		|| binding.childId !== selection.childId || binding.incarnationId !== selection.incarnationId || !isRecord(reply.ref)
 		|| !closed(reply.ref, ["state", "entryId", "envelopeSha256", "childSessionId", "rootGeneration", "incarnationId"])
 		|| reply.ref.state !== "finalized" || reply.ref.incarnationId !== selection.incarnationId || reply.ref.rootGeneration !== envelope.rootGeneration
-		|| reply.ref.childSessionId !== envelope.assignment.sessionId || reply.ref.envelopeSha256 !== digest(envelope) || !identifier(reply.ref.entryId)) throw new Error("selected result proof envelope owner mismatch");
+		|| reply.ref.childSessionId !== envelope.assignment.sessionId || reply.ref.envelopeSha256 !== digest(envelope) || !identifier(reply.ref.entryId)) fail("selected result proof envelope owner mismatch", "Check the finalized Publication lane identity and the subagent extension's result protocol. Repair or replace this lane's finalization; do not substitute a plain-text report or verification receipt.");
 	const launched = launches.get(binding.launchToolCallId);
 	if (!launched || !launched.childIds.has(selection.childId) || !sameAssignment(launched.assignment, assignment)
-		|| !assignment.branchEntryIds.includes(binding.parentLeafIdAtLaunch)) throw new Error("selected result is not bound to an observed parent launch/assignment");
-	if (envelope.validatedFields.status !== "done") throw new Error("selected lane did not complete");
+		|| !assignment.branchEntryIds.includes(binding.parentLeafIdAtLaunch)) fail("selected result is not bound to an observed parent launch/assignment", "Select a finalized lane launched for this assignment in this parent session. If the parent assignment or launch registry changed, launch a replacement lane for the current candidate.");
+	if (envelope.validatedFields.status !== "done") fail("selected lane did not complete", "Inspect the worker's blocked or incomplete result. Resolve its blocker and resume it, or launch a replacement lane; select its finalized Publication lane identity.");
 	if (selection.slot.startsWith("correctness")) {
 		if (envelope.resultSchemaId !== "review" || !["APPROVE", "APPROVE WITH CHANGES"].includes(String(envelope.validatedFields.verdict))
 			|| (Array.isArray(envelope.validatedFields.critical) && envelope.validatedFields.critical.length > 0)
-			|| (Array.isArray(envelope.validatedFields.important) && envelope.validatedFields.important.length > 0)) throw new Error("correctness lane lacks validated approval without unresolved material findings");
-	} else if (envelope.resultSchemaId !== "worker" || envelope.proofs.length === 0) throw new Error("independent live lane lacks proof");
+			|| (Array.isArray(envelope.validatedFields.important) && envelope.validatedFields.important.length > 0)) fail("correctness lane lacks validated approval without unresolved material findings", "Resolve material review findings, verify the repaired candidate, and obtain a finalized approving review for that candidate.");
+	} else if (envelope.resultSchemaId !== "worker" || envelope.proofs.length === 0) fail("independent live lane lacks proof", "Have the live worker collect successful verification evidence and submit a finalized worker result referencing its proof IDs for the current candidate.");
 	return { selection, ownerGeneration: reply.generation, envelope, refDigest: digest(reply.ref) };
 }
 
