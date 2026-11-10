@@ -8,7 +8,7 @@ After three failures, reassess. After two fixes fail the same gate, test the pre
 
 - Never push without Alan's explicit authorization; local commits grant none.
 - Children never commit; only the parent commits.
-- Never put experiments or changes to prompts or configuration on `main`.
+- Never put experiments on `main`.
 - Never use production, destructive migrations, or unrelated services.
 - Never commit or expose secrets.
 

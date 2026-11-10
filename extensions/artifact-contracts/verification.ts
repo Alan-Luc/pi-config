@@ -1075,6 +1075,18 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 			sessionId = ctx.sessionManager.getSessionId();
 			generation = randomUUID();
 		});
+		pi.on("tool_result", async (event, ctx) => {
+			if (event.toolName !== "verification_evidence" || !isRecord(event.input)
+				|| event.input.operation !== "collect" || typeof event.input.taskId !== "string"
+				|| !sessionId || ctx.sessionManager.getSessionId() !== sessionId) return;
+			const result = state.startedTasks.get(event.input.taskId)?.result;
+			if (!result?.evidence.valid || event.details !== result) return;
+			const ownerSessionId = sessionId;
+			const ownerGeneration = generation;
+			const capabilities = await requestBackgroundTask(events, "capabilities", {});
+			if (!capabilities.completion_acknowledgement || sessionId !== ownerSessionId || generation !== ownerGeneration) return;
+			await requestBackgroundTask(events, "acknowledge", { taskId: event.input.taskId, sessionId: ownerSessionId });
+		});
 		events.on(VERIFICATION_STATUS_REQUEST, (value) => {
 			const request = parseWorkStatusRequest(value);
 			if (!request || !sessionId || request.sessionId !== sessionId) return;

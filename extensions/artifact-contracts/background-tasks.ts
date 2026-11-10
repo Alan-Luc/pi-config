@@ -48,6 +48,7 @@ export type BackgroundTaskCapabilities = Readonly<{
 	run_completion_trigger: true;
 	status: true;
 	work_status?: boolean;
+	completion_acknowledgement?: boolean;
 	logs: true;
 	logs_bounded: true;
 	kill: true;
@@ -65,6 +66,8 @@ export type BackgroundTaskRunPayload = Readonly<{
 export type BackgroundTaskStatusPayload = Readonly<{ taskId?: string }>;
 export type BackgroundTaskLogsPayload = Readonly<{ taskId: string; maxBytes?: number; tail?: boolean }>;
 export type BackgroundTaskKillPayload = Readonly<{ taskId: string }>;
+export type BackgroundTaskAcknowledgementPayload = Readonly<{ taskId: string; sessionId: string }>;
+export type BackgroundTaskAcknowledgementResult = Readonly<{ task: BackgroundTaskSnapshot }>;
 
 export type BackgroundTaskStatusResult = Readonly<{ tasks: readonly BackgroundTaskSnapshot[] }>;
 export type BackgroundTaskWorkState = Readonly<{
@@ -106,9 +109,10 @@ export type BackgroundTaskResult =
 	| BackgroundTaskStatusResult
 	| BackgroundWorkStatus
 	| BackgroundTaskLogsResult
+	| BackgroundTaskAcknowledgementResult
 	| BackgroundTaskKillResult;
 
-export type BackgroundTaskOperation = "capabilities" | "run" | "status" | "work-status" | "logs" | "kill";
+export type BackgroundTaskOperation = "capabilities" | "run" | "status" | "work-status" | "logs" | "acknowledge" | "kill";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -243,7 +247,7 @@ function parseWorkStatus(value: unknown, sessionId: string | undefined): Backgro
 
 function parseCapabilities(value: unknown): BackgroundTaskCapabilities {
 	const result = requireRecord(value, "background task capabilities");
-	const keys = ["api_version", "run", "run_is_agent", "run_completion_trigger", "status", "work_status", "logs", "logs_bounded", "kill"];
+	const keys = ["api_version", "run", "run_is_agent", "run_completion_trigger", "status", "work_status", "completion_acknowledgement", "logs", "logs_bounded", "kill"];
 	assertClosed(result, keys, "background task capabilities");
 	if (
 		result.api_version !== 1 || result.run !== true || result.run_is_agent !== true
@@ -257,6 +261,7 @@ function parseCapabilities(value: unknown): BackgroundTaskCapabilities {
 		run_completion_trigger: true,
 		status: true,
 		...(result.work_status === undefined ? {} : { work_status: requireBoolean(result.work_status, "background task capabilities.work_status") }),
+		...(result.completion_acknowledgement === undefined ? {} : { completion_acknowledgement: requireBoolean(result.completion_acknowledgement, "background task capabilities.completion_acknowledgement") }),
 		logs: true,
 		logs_bounded: true,
 		kill: true,
@@ -283,6 +288,12 @@ function parseOperationResult(operation: BackgroundTaskOperation, value: unknown
 			tail: requireBoolean(result.tail, "background task logs result.tail"),
 			text: requireText(result.text, "background task logs result.text"),
 		};
+	}
+	if (operation === "acknowledge") {
+		assertClosed(result, ["task"], "background task acknowledgement result");
+		const task = parseBackgroundTaskSnapshot(result.task);
+		if (task.status === "running") throw new Error("background task acknowledgement cannot contain a running task");
+		return { task };
 	}
 	assertClosed(result, ["task", "message"], "background task kill result");
 	return {
@@ -335,6 +346,12 @@ export function requestBackgroundTask(
 	payload: BackgroundTaskLogsPayload,
 	timeoutMs?: number,
 ): Promise<BackgroundTaskLogsResult>;
+export function requestBackgroundTask(
+	events: EventBus,
+	operation: "acknowledge",
+	payload: BackgroundTaskAcknowledgementPayload,
+	timeoutMs?: number,
+): Promise<BackgroundTaskAcknowledgementResult>;
 export function requestBackgroundTask(
 	events: EventBus,
 	operation: "kill",

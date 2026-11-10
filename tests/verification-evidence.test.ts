@@ -353,6 +353,7 @@ async function newRepository(): Promise<string> {
 }
 
 type FakeBackgroundService = EventBus & {
+	acknowledged: string[];
 	counts: Record<"run" | "status" | "logs" | "kill", number>;
 	task: BackgroundTaskSnapshot;
 	tasks: Map<string, BackgroundTaskSnapshot>;
@@ -377,6 +378,8 @@ function backgroundService(directory: string, options: {
 	statusError?: string;
 	statusErrors?: Record<string, string>;
 	killErrors?: Record<string, string>;
+	acknowledgement?: boolean;
+	acknowledgementError?: string;
 } = {}): FakeBackgroundService {
 	const listeners = new Map<string, Set<(value: unknown) => void>>();
 	const counts = { run: 0, status: 0, logs: 0, kill: 0 };
@@ -412,6 +415,7 @@ function backgroundService(directory: string, options: {
 			for (const listener of listeners.get(channel) ?? []) listener(value);
 		},
 		counts,
+		acknowledged: [],
 		get task() { return task; },
 		tasks: new Map<string, BackgroundTaskSnapshot>(),
 		ordinaryTask: options.ordinaryTask,
@@ -437,6 +441,29 @@ function backgroundService(directory: string, options: {
 		if (typeof value !== "object" || value === null) throw new Error("malformed request");
 		const request = value as { request_id?: unknown; operation?: unknown; payload?: Record<string, unknown> };
 		if (typeof request.request_id !== "string" || typeof request.operation !== "string") throw new Error("malformed request");
+		if (request.operation === "capabilities") {
+			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA, request_id: request.request_id,
+				operation: request.operation, ok: true,
+				result: { api_version: 1, run: true, run_is_agent: true, run_completion_trigger: true,
+					status: true, logs: true, logs_bounded: true, kill: true,
+					completion_acknowledgement: options.acknowledgement ?? true },
+			});
+			return;
+		}
+		if (request.operation === "acknowledge") {
+			const taskId = String(request.payload?.taskId ?? "");
+			const requestedTask = service.tasks.get(taskId);
+			const error = options.acknowledgementError
+				?? (request.payload?.sessionId !== (options.sessionId ?? VERIFICATION_EXIT_SESSION) ? "foreign owner" : undefined)
+				?? (!requestedTask || requestedTask.status === "running" ? "unknown or running task" : undefined);
+			if (!error) service.acknowledged.push(taskId);
+			service.emit(BACKGROUND_TASK_RESPONSE_CHANNEL, {
+				schema_version: BACKGROUND_TASK_RESPONSE_SCHEMA, request_id: request.request_id,
+				operation: request.operation, ...(error ? { ok: false, error } : { ok: true, result: { task: requestedTask } }),
+			});
+			return;
+		}
 		if (request.operation === "run") {
 			counts.run += 1;
 			const taskId = `task-${counts.run}`;
@@ -564,6 +591,65 @@ function backgroundService(directory: string, options: {
 	});
 	return service;
 }
+
+it.each([0, 7])("acknowledges only successfully collected terminal evidence with exit %s", async (exitCode) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { exitCode });
+	const context = { ...makeContext(directory), sessionManager: { getSessionId: () => VERIFICATION_EXIT_SESSION } };
+	const hooks = new Map<string, (...args: never[]) => unknown>();
+	registerVerificationEvidence({ events: service, registerTool() {}, on(name: string, handler: (...args: never[]) => unknown) { hooks.set(name, handler); } } as never);
+	await hooks.get("session_start")?.(...[{}, context] as never[]);
+	const started = await executeVerificationEvidence("ack-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start");
+	assert.deepEqual(service.acknowledged, []);
+	const collected = await executeVerificationEvidence("ack-collect", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+	assert.deepEqual(service.acknowledged, [], "tool execution alone does not acknowledge an unsurfaced result");
+	await hooks.get("tool_result")?.(...[{
+		toolName: "verification_evidence", input: { operation: "collect", taskId: started.details.taskId },
+		details: collected.details, content: collected.content, isError: collected.isError,
+	}, context] as never[]);
+	assert.deepEqual(service.acknowledged, [started.details.taskId]);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collected evidence");
+	assert.equal(collected.details.evidence.exitCode, exitCode);
+	assert.equal(collected.isError, exitCode !== 0);
+});
+
+it.each(["pending", "collection-error", "invalid-evidence", "foreign-owner", "unknown-task", "legacy-service", "owner-restarted", "acknowledgement-error"])("preserves notification delivery for %s", async (scenario) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, {
+		status: scenario === "pending" ? "running" : "completed",
+		acknowledgement: scenario !== "legacy-service",
+		...(scenario === "acknowledgement-error" ? { acknowledgementError: "acknowledgement unavailable" } : {}),
+	});
+	const context = { ...makeContext(directory), sessionManager: { getSessionId: () => VERIFICATION_EXIT_SESSION } };
+	const hooks = new Map<string, (...args: never[]) => unknown>();
+	registerVerificationEvidence({ events: service, registerTool() {}, on(name: string, handler: (...args: never[]) => unknown) { hooks.set(name, handler); } } as never);
+	await hooks.get("session_start")?.(...[{}, context] as never[]);
+	const started = await executeVerificationEvidence("negative-ack-start", { operation: "start", argv: ["true"], cwd: ".", timeout: 10 }, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected start");
+	if (scenario === "invalid-evidence") writeFileSync(join(directory, "candidate-drift.txt"), "changed\n");
+	if (scenario === "collection-error") unlinkSync(service.task.outputPath);
+	if (scenario === "owner-restarted") service.on(BACKGROUND_TASK_REQUEST_CHANNEL, (value) => {
+		if (typeof value === "object" && value !== null && "operation" in value && value.operation === "capabilities") {
+			void hooks.get("session_start")?.(...[{}, context] as never[]);
+		}
+	});
+	const collect = () => executeVerificationEvidence("negative-ack-collect", { operation: "collect", taskId: started.details.taskId }, undefined, context, service);
+	if (scenario === "collection-error") {
+		await assert.rejects(collect, /output path/);
+		assert.deepEqual(service.acknowledged, []);
+		return;
+	}
+	const collected = await collect();
+	const resultContext = scenario === "foreign-owner" ? { ...context, sessionManager: { getSessionId: () => "foreign-owner" } } : context;
+	const deliver = async () => hooks.get("tool_result")?.(...[{
+		toolName: "verification_evidence", input: { operation: "collect", taskId: scenario === "unknown-task" ? "unknown-task" : started.details.taskId },
+		details: collected.details, content: collected.content, isError: collected.isError,
+	}, resultContext] as never[]);
+	if (scenario === "acknowledgement-error") await assert.rejects(deliver, /acknowledgement unavailable/);
+	else await deliver();
+	assert.deepEqual(service.acknowledged, []);
+});
 
 async function shutdownVerification(service: FakeBackgroundService): Promise<void> {
 	let shutdown: (() => void | Promise<void>) | undefined;
