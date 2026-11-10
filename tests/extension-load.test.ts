@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { isSubagentChildEnvironment } from "../extensions/lib/shared.ts";
 
-const standaloneCommit = "9f74ba62b9fca5631ec4195c9f9f16e75fcc3ca2";
+const standaloneCommit = "9d0549e55e3f0b8835b925c589e73e97678b7dd9";
 
 async function loadPiApi() {
 	const installRoot = process.env.PI_MANAGED_INSTALL_ROOT;

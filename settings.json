@@ -17,7 +17,7 @@
     "git:github.com/alan-luc/pi-inspect-change@main",
     "git:github.com/Alan-Luc/pi-inspect-context@main",
     "git:github.com/Alan-Luc/pi-permission-system",
-    "git:github.com/Alan-Luc/pi-guardrails@9f74ba62b9fca5631ec4195c9f9f16e75fcc3ca2",
+    "git:github.com/Alan-Luc/pi-guardrails@9d0549e55e3f0b8835b925c589e73e97678b7dd9",
     "git:github.com/Alan-Luc/pi-subagents",
     "git:github.com/Alan-Luc/pi-tasks",
     "git:github.com/Alan-Luc/pi-vim"

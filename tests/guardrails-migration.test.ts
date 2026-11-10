@@ -22,7 +22,7 @@ import {
 import { DELEGATION_STATUS_REQUEST, DELEGATION_STATUS_RESPONSE } from "../extensions/lib/work-status.ts";
 
 const PACKAGE_ROOT = resolve(process.env.PI_GUARDRAILS_TEST_ROOT ?? join(import.meta.dir, "../git/github.com/Alan-Luc/pi-guardrails"));
-const PACKAGE_COMMIT = "9f74ba62b9fca5631ec4195c9f9f16e75fcc3ca2";
+const PACKAGE_COMMIT = "9d0549e55e3f0b8835b925c589e73e97678b7dd9";
 const SDK_ROOT = resolve(process.env.PI_MIGRATION_SDK_ROOT ?? join(import.meta.dir, "../node_modules/@earendil-works/pi-coding-agent"));
 const BRANCH = "alan/ENG-native-migration";
 const PUSH_URL = "https://gitlab.example.test/group/project.git";
