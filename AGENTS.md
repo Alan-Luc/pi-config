@@ -62,7 +62,8 @@ A station is an owner's defined scope.
 - Before long work, check runtime, commands, network, authentication, database, and service identities.
 - For ticket-shaped, resumed, or related work, reuse plans and dated logs. Map ownership, callers, contracts, risks, and checks. Stop reconnaissance when implementation is safe.
 - Track multi-step work with live tasks.
-- For behavior changes, use `live-verification` and, for missing reusable tooling, `build-live-verification`. Parallelize independent live checks and tests; sequence prerequisites and shared state. Require both results.
+- Default to concurrent workers for dependency-free disjoint paths.
+- For behavior changes, run `live-verification` and tests. If reusable tooling is missing, use `build-live-verification`.
 - Use `verification_evidence` with exact argv, repo-relative cwd, and timeout; use background `start` and `collect` by default. Limit synchronous `run` to explicit requests, background-service unavailability, or concrete lifecycle or correctness needs. Report unavailable checks as `Not run: <reason>`.
 - Verify claims on the same surface, including persistence; tests and screenshots alone cannot prove integration. Use local or test identities and owned resources. Missing prerequisites block claims.
 - For integrations across Pi packages, first exercise their combined behavior in an isolated native session with exact candidate revisions. Select candidate resources explicitly; a working directory alone does not select the runtime.

@@ -109,7 +109,7 @@ export const SCHEMAS = {
 			{ heading: "Goal", hint: "desired behavior, context, scope, and non-scope" },
 			{ heading: "Done means and Keep", hint: "observable completion, preserved guarantees, and meaningful failure cases" },
 			{ heading: "Decisions", hint: "current choices and rationale; canonical work-log pointer for material history and progress" },
-			{ heading: "Slices with checks", hint: "ordered slices, owned paths or bounded discovery, dependencies, and runnable checks" },
+			{ heading: "Slices with checks", hint: "Group independent slices into waves. Name outcomes, owned paths or bounded discovery, dependencies, and runnable checks." },
 			{ heading: "Open questions", hint: "blocking questions and risks, or None." },
 		],
 	},

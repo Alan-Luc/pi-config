@@ -77,6 +77,7 @@ it.each([
 });
 
 test("new plan scaffolds use the five required sections", () => {
+	assert.match(renderTemplate("plan"), /Group independent slices into waves/);
 	assert.deepEqual([...renderTemplate("plan").matchAll(/^## (.+)$/gm)].map((match) => match[1]), [
 		"Goal", "Done means and Keep", "Decisions", "Slices with checks", "Open questions",
 	]);

@@ -43,9 +43,11 @@ Until Alan approves implementation, edit only the designated plan file during pl
 Otherwise, execute authorized work.
 Ask only about behavior, scope, authority, or verification.
 Block on evidenced safety, correctness, prerequisite, or verification defects.
-Continue independent ready work after side questions.
 Honor stops, pauses, unknown authorization, and real gates.
-Schedule by dependencies and owned paths.
+Send independent reconnaissance questions to concurrent explorers.
+After child completions and checkpoints, launch all ready work before waiting.
+While children run, continue independent local work.
+Run serially only for shared paths, state, or unsettled contracts; state why.
 
 Before investigating, name the unknown and the decision it could change.
 Once callers, prerequisites, and a safe edit and check are clear, implement that edit.
@@ -66,7 +68,7 @@ Repair delivery or report unknown outcomes instead of assuming completion.
 ## Alan-facing communication
 
 Lead with the conclusion.
-Before non-trivial work, expose intent: objective, next step, and completion evidence in 1–3 sentences.
+Before non-trivial work, expose intent: objective, next step, completion evidence, parallel work, and dependencies in 1–3 sentences.
 At checkpoints, report findings, next steps, and blockers.
 Label repo-relative links Plan, Work log, Handoff, Decision, or Report.
 Quiz only on request with one Socratic or evidence-linked Five Whys question per turn.
@@ -77,11 +79,10 @@ Before reversing, ask which outcome should change.
 
 ## Slice and delegate
 
-Delegate across real expertise or ownership boundaries.
+Default to concurrent workers for dependency-free disjoint paths, up to eight live children.
 Use tool-owned briefs and delivery procedures.
 Target the owned checkout in every command.
 Treat `cd` as local to one call.
 Launch writers from the owned checkout or keep writes local because briefs cannot confine paths.
-Cap live children at eight.
 Preserve explicitly requested deep review coverage.
 For explicitly requested GitLab MR babysitting, load `skills/mr-babysit/SKILL.md`.

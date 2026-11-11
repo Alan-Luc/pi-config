@@ -102,6 +102,19 @@ function format(references: Reference[]): string {
 	return references.map(({ source, target, line }) => `${source}:${line} -> ${target}`).join("\n");
 }
 
+test("parallel work defaults and dependency waves remain explicit", () => {
+	const agents = readFileSync(resolve(root, "AGENTS.md"), "utf8");
+	const techLead = readFileSync(resolve(root, "extensions/tech-lead/tech-lead.md"), "utf8");
+	const durablePlan = readFileSync(resolve(root, "skills/durable-plan/SKILL.md"), "utf8");
+	assert.match(agents, /Default to concurrent workers for dependency-free disjoint paths/);
+	assert.match(techLead, /Send independent reconnaissance questions to concurrent explorers/);
+	assert.match(techLead, /After child completions and checkpoints, launch all ready work before waiting/);
+	assert.match(techLead, /Run serially only .* state why/);
+	assert.match(techLead, /expose intent: objective, next step, completion evidence, parallel work, and dependencies/i);
+	assert.match(durablePlan, /group slices into waves with outcomes, owners, dependencies, and runnable checks/i);
+	assert.match(durablePlan, /Check shared contracts before launching dependent disjoint writers/);
+});
+
 test("markdown links and repository paths resolve with explicit dynamic and runtime categories", () => {
 	const report = inspectReferences(documents, root);
 	const missingAgents = missingPromptAgents(documents, agentNames, root);

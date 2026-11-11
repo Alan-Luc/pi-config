@@ -42,7 +42,7 @@ Use these sections in order:
 - **Goal:** Explain desired behavior, current context, scope, and non-scope.
 - **Done means and Keep:** State observable acceptance, preserved guarantees, and meaningful success and failure cases.
 - **Decisions:** Record current choices and rationale; point to the canonical work log for material history and progress.
-- **Slices with checks:** Name ordered outcomes, ownership, dependencies, and runnable checks. Use exact paths or bounded discovery targets.
+- **Slices with checks:** Group slices into waves with outcomes, owners, dependencies, and runnable checks. Use exact paths or bounded discovery targets.
 - **Open questions:** State blockers and risks, or `None.`. Mark the plan blocked when an answer changes its contract.
 
 Keep existing nine-section plans in their original format.
@@ -67,6 +67,10 @@ Keep the plan's status, decisions, and log pointer current without copying the l
 Give workers readable governing artifacts, functional requirements, hard constraints, exact owned paths, dependencies, and checks.
 The parent owns shared contracts and integration.
 Check shared contracts before launching dependent disjoint writers.
+Default to concurrent workers for dependency-free disjoint paths, up to eight live children.
+Launch every ready slice, question, and check after each child completion and checkpoint, before waiting.
+Keep independent local work moving while children run.
+Run work serially only for shared paths, shared state, or unsettled contracts, and state why.
 Written briefs do not isolate files.
 
 Mark completion only when Done means and Keep hold and the selected pass clears the final candidate.
