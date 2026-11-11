@@ -7,7 +7,7 @@ import type { CandidateExec } from "../extensions/artifact-contracts/verificatio
 import { createStagedSnapshot } from "../extensions/artifact-contracts/staged-verification.ts";
 import { createHash } from "node:crypto";
 import { createCandidateIdentity, recordVerificationEvidence } from "../extensions/artifact-contracts/verification-store.ts";
-import { publicationEvidenceErrors } from "../extensions/artifact-contracts/publication-clearance.ts";
+import { resultEvidenceErrors } from "../extensions/artifact-contracts/result-finalization.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -83,7 +83,7 @@ test("runtime inputs must be ignored and pin file and directory contents", async
   await assert.rejects(createStagedSnapshot(exec, root, ".", ["source.txt"]), /overlaps staged tracked source/);
 });
 
-test.each(["file", "directory", "mode"])("publication pins retain canonical %s manifest semantics", async (change) => {
+test.each(["file", "directory", "mode"])("result pins retain canonical %s manifest semantics", async (change) => {
   const root = await fixture();
   writeFileSync(join(root, ".gitignore"), "/deps.json\n/vendor/\n/proof.log\n");
   await git(root, "add", ".gitignore"); await git(root, "commit", "--quiet", "-m", "ignore runtime inputs");
@@ -95,11 +95,11 @@ test.each(["file", "directory", "mode"])("publication pins retain canonical %s m
     const logPath = join(root, "proof.log"); writeFileSync(logPath, "verified\n");
     const proof = recordVerificationEvidence({ command: "'fixture-check'", argv: ["fixture-check"], cwd: ".", candidate, exitCode: 0, logPath,
       logSha256: createHash("sha256").update("verified\n").digest("hex"), valid: true });
-    assert.deepEqual(publicationEvidenceErrors([proof.id], candidate), [], "unchanged canonical pins must validate, including directory manifests");
+    assert.deepEqual(resultEvidenceErrors([proof.id], candidate), [], "unchanged canonical pins must validate, including directory manifests");
     if (change === "file") writeFileSync(join(root, "deps.json"), "changed\n");
     else if (change === "directory") writeFileSync(join(root, "vendor", "extra.js"), "extra\n");
     else chmodSync(join(root, "vendor", "module.js"), 0o755);
-    assert.match(publicationEvidenceErrors([proof.id], candidate).join("; "), /runtime input|input pin/, "publication must reject changed content, directory members, or modes");
+    assert.match(resultEvidenceErrors([proof.id], candidate).join("; "), /runtime input|input pin/, "result finalization must reject changed content, directory members, or modes");
   } finally { snapshot.cleanup(); }
 });
 

@@ -8,7 +8,7 @@ import { isResultSchemaId, renderResultSubmission, resultSubmissionFieldNames, r
 import { sectionBody, validate } from "./validate.ts";
 import { clearVerificationEvidence, invalidateVerificationEvidence, verificationClaimErrors } from "./verification-store.ts";
 import { pendingVerificationWork } from "./verification.ts";
-import { registerResultFinalizer } from "./publication-clearance.ts";
+import { registerResultFinalizer } from "./result-finalization.ts";
 import { requestWorkStatus } from "../lib/work-status.ts";
 
 const CORRECTION_TYPE = "artifact-contract-correction";

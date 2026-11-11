@@ -72,4 +72,4 @@ Written briefs do not isolate files.
 Mark completion only when Done means and Keep hold and the selected pass clears the final candidate.
 Leave an exact next step on interruption.
 Create a handoff only for remaining human actions.
-A plan grants no additional publication, installation, destructive-operation, or separately owned package authority.
+A plan grants no additional installation, destructive-operation, or separately owned package authority.

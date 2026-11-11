@@ -26,7 +26,7 @@ import {
 	type TaskBoundary,
 } from "../extensions/artifact-contracts/review-preparation.ts";
 import { captureCandidateWithExec, type CandidateExec } from "../extensions/artifact-contracts/verification.ts";
-import { registerReviewEnforcement, REVIEW_ARTIFACT_ROOT } from "../extensions/artifact-contracts/review-enforcement.ts";
+import { registerReviewEnforcement, REVIEW_ARTIFACT_ROOT } from "../extensions/git-guard/review-enforcement.ts";
 import { validate } from "../extensions/artifact-contracts/validate.ts";
 import { AGENT_OUTPUT } from "../extensions/artifact-contracts/schemas.ts";
 

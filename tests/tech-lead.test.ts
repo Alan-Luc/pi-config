@@ -29,8 +29,9 @@ test("safety policy sections remain present", () => {
 		const section = document.split(`${heading}\n`)[1]?.split(/\n## /)[0];
 		assert.ok(section?.trim(), `${heading} section is missing or empty`);
 		if (heading === "## Hard lines") {
-			assert.match(section, /push/i);
-			assert.match(section, /authoriz/i);
+			assert.match(section, /push.*frozen.*cleared.*task branches/i);
+			assert.match(section, /never push.*default.*protected branches/i);
+			assert.match(section, /never force-push/i);
 		}
 	}
 });
