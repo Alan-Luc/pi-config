@@ -89,7 +89,7 @@ async function validateBoundedReview(input: unknown, ctx: ExtensionContext, exec
 		const reviewTargetMatches = [...task.matchAll(/^Review target:[ \t]*(.*)$/gim)];
 		const reviewTarget = reviewTargetMatches[0]?.[1].trim();
 		if (reviewTarget === "plan") {
-			const { validatePlanReviewMetadata } = await import("./review-preparation.ts");
+			const { validatePlanReviewMetadata } = await import("../artifact-contracts/review-preparation.ts");
 			await validatePlanReviewMetadata(task, exec, ctx.cwd, ctx.signal);
 			continue;
 		}
