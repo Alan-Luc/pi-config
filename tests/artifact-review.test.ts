@@ -3,7 +3,7 @@ import { test, expect } from "bun:test";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { registerReviewEnforcement, REVIEW_ARTIFACT_ROOT } from "../extensions/artifact-contracts/review-enforcement.ts";
+import { registerReviewEnforcement, REVIEW_ARTIFACT_ROOT } from "../extensions/git-guard/review-enforcement.ts";
 import { AGENT_OUTPUT } from "../extensions/artifact-contracts/schemas.ts";
 
 type Handler = (event: Record<string, unknown>, ctx: { cwd: string }) => unknown;

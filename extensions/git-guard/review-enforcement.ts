@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "../lib/shared.ts";
-import { AGENT_OUTPUT } from "./schemas.ts";
-import type { CandidateExec } from "./verification.ts";
+import { AGENT_OUTPUT } from "../artifact-contracts/schemas.ts";
+import type { CandidateExec } from "../artifact-contracts/verification.ts";
 
 export const REVIEW_ARTIFACT_ROOT = resolve(tmpdir(), "pi");
 

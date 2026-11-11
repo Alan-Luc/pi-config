@@ -2,10 +2,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerBriefHook } from "./briefs.ts";
 import { registerDocumentHooks } from "./documents.ts";
 import { registerReviewPreparation } from "./review-preparation.ts";
-import { registerReviewEnforcement } from "./review-enforcement.ts";
 import { registerHandoffHooks } from "./handoffs.ts";
 import { registerVerificationEvidence } from "./verification.ts";
-import { registerPublicationClearance } from "./publication-clearance.ts";
 import { ARTIFACT_CAPABILITY_VERSION } from "./schemas.ts";
 
 export const ARTIFACT_CAPABILITY_REQUEST_CHANNEL = "artifact-contracts:capability-request";
@@ -23,9 +21,7 @@ export default function artifactContracts(pi: ExtensionAPI): void {
 	registerArtifactCapability(pi);
 	registerDocumentHooks(pi);
 	registerReviewPreparation(pi);
-	registerReviewEnforcement(pi);
 	registerBriefHook(pi);
 	registerHandoffHooks(pi);
 	registerVerificationEvidence(pi);
-	registerPublicationClearance(pi);
 }

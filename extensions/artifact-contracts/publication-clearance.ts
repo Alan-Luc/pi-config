@@ -1,28 +1,20 @@
-import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
-import { Type } from "typebox";
-import type { EventBus, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createCandidateIdentity, getVerificationEvidence, verificationEvidenceErrors, sealedVerificationEvidenceErrors, type CandidateIdentity, type VerificationEvidence } from "./verification-store.ts";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createCandidateIdentity, getVerificationEvidence, verificationEvidenceErrors, type CandidateIdentity, type VerificationEvidence } from "./verification-store.ts";
 import { currentAssignment, sameAssignment, type AssignmentSnapshot } from "./assignment.ts";
 import { renderResultSubmission, resultSubmissionErrors, type ResultFields, type ResultSubmissionRecord } from "./result-submission.ts";
-import { ownedWorkErrors, ownedWorkErrorsSync } from "./handoffs.ts";
-import { captureCandidateSync, captureCandidateWithExec } from "./verification.ts";
-import { isRecord, isSubagentChildEnvironment } from "../lib/shared.ts";
+import { ownedWorkErrors } from "./handoffs.ts";
+import { captureCandidateWithExec } from "./verification.ts";
+import { isRecord } from "../lib/shared.ts";
 import { runtimeManifest } from "./staged-verification.ts";
-import { requestWorkStatus } from "../lib/work-status.ts";
-import { requestBackgroundWorkStatusSync } from "./background-tasks.ts";
 import type { ResultSchemaId } from "./schemas.ts";
-
-export type FrozenPublicationCandidate = Readonly<{ head: string; tree: string; branch: string; indexTree: string; statusDigest: string; inputDigest: string }>;
 
 export const FINALIZE_RESULT_REQUEST = "artifact-contracts:finalize-result:request:v1";
 export const FINALIZE_RESULT_RESPONSE = "artifact-contracts:finalize-result:response:v1";
 export const FINALIZED_RESULT_ENTRY = "artifact-contracts.finalized-result.v1";
 export const DELEGATION_RESULT_REQUEST = "workflow:delegation-result:request:v1";
 export const DELEGATION_RESULT_RESPONSE = "workflow:delegation-result:response:v1";
-export const PUBLICATION_CLEARANCE_QUERY = "pi-guardrails:publication-clearance:query:v1";
-export const PUBLICATION_CLEARANCE_RECORD = "pi-guardrails:publication-clearance:record:v1";
 export const LAUNCH_BINDING_ENV = "PI_SUBAGENT_PUBLICATION_BINDING";
 
 export type PublicationLaunchBinding = Readonly<{
@@ -90,7 +82,7 @@ function candidateMatches(left: CandidateIdentity, right: CandidateIdentity): bo
 	return left.repositoryRoot === right.repositoryRoot && left.head === right.head && left.tree === right.tree && left.kind === right.kind;
 }
 
-export function publicationEvidenceErrors(ids: readonly string[], candidate: CandidateIdentity, sealed = false): string[] {
+export function publicationEvidenceErrors(ids: readonly string[], candidate: CandidateIdentity): string[] {
 	if (ids.length === 0 || new Set(ids).size !== ids.length) return ["publication requires unique successful evidence IDs"];
 	return ids.flatMap((id) => {
 		const evidence = getVerificationEvidence(id);
@@ -99,7 +91,7 @@ export function publicationEvidenceErrors(ids: readonly string[], candidate: Can
 		try { inputPins([evidence]); } catch (error) { pinError = [`publication runtime input pin invalid: ${error instanceof Error ? error.message : String(error)}`]; }
 		return [
 			...pinError,
-			...(sealed ? sealedVerificationEvidenceErrors(id) : verificationEvidenceErrors(id)),
+			...verificationEvidenceErrors(id),
 			...(evidence.exitCode === 0 ? [] : [`publication evidence ${id} has nonzero exit ${evidence.exitCode}`]),
 			...(candidateMatches(evidence.candidate, candidate) ? [] : [`publication evidence ${id} belongs to another candidate`]),
 		];
@@ -215,256 +207,4 @@ export function parseFinalizedEnvelope(value: unknown): FinalizedResultEnvelope 
 			|| !identifier(proof.cwd) || !parseCandidate(proof.candidate) || proof.exitCode !== 0 || proof.valid !== true || !identifier(proof.logPath) || !sha256(proof.logSha256)) return undefined;
 	}
 	return value as FinalizedResultEnvelope;
-}
-
-type SelectedLane = Readonly<{ slot: "correctness-primary" | "correctness-counterpart" | "live-success" | "live-attack"; childId: string; incarnationId: string }>;
-type ResolvedLane = Readonly<{ selection: SelectedLane; ownerGeneration: string; envelope: FinalizedResultEnvelope; refDigest: string }>;
-type LaunchAssignment = Readonly<{ assignment: AssignmentSnapshot; childIds: ReadonlySet<string> }>;
-type PublicationSeal = Readonly<{
-	clearedAt: number; wireEvidenceIds: readonly string[];
-	candidate: CandidateIdentity; frozen: FrozenPublicationCandidate; evidenceIds: readonly string[];
-	pins: readonly Readonly<{ path: string; sha256: string }>[]; lanes: readonly ResolvedLane[];
-	assignment: AssignmentSnapshot; generation: string;
-	workOwners: Readonly<{ verificationGeneration: string; delegationGeneration: string; delegationRevision: number; backgroundGeneration: string; backgroundRevision: string }>;
-}>;
-
-function resolveLane(events: EventBus, sessionId: string, selection: SelectedLane, launches: ReadonlyMap<string, LaunchAssignment>, assignment: AssignmentSnapshot): ResolvedLane {
-	const request = { version: 1, requestId: randomUUID(), sessionId, childId: selection.childId, incarnationId: selection.incarnationId };
-	const replies: unknown[] = [];
-	const off = events.on(DELEGATION_RESULT_RESPONSE, (reply) => replies.push(reply));
-	try { events.emit(DELEGATION_RESULT_REQUEST, request); } finally { off(); }
-	function fail(reason: string, recovery: string): never {
-		throw new Error(`Publication lane ${selection.slot} childId=${JSON.stringify(selection.childId)} incarnationId=${JSON.stringify(selection.incarnationId)}: ${reason}. Recovery: ${recovery}`);
-	}
-	const repairProvider = "Check the loaded subagent extension and its result protocol. Repair missing, duplicate or incompatible providers before retrying clearance; rerunning passing tests does not repair result lookup.";
-	if (replies.length === 0) fail("no delegation result response", repairProvider);
-	if (replies.length !== 1) fail(`${replies.length} delegation result responses`, repairProvider);
-	const reply = replies[0];
-	if (!isRecord(reply)) fail("delegation result response is not an object", repairProvider);
-	for (const key of ["version", "requestId", "sessionId", "childId", "incarnationId"] as const) {
-		if (reply[key] !== request[key]) fail(`${key} mismatch`, repairProvider);
-	}
-	if (!identifier(reply.generation)) fail("invalid delegation result generation", repairProvider);
-	if (!Number.isSafeInteger(reply.revision) || Number(reply.revision) < 0) fail("invalid delegation result revision", repairProvider);
-	if (reply.state === "running") fail('state="running"', "Wait for this worker's terminal result notification, then use its finalized Publication lane identity. Do not poll or rerun passing tests.");
-	if (reply.state === "missing") fail('state="missing"', "Check childId and incarnationId against a finalized Publication lane report from this parent session. If its result registry was reset, launch a replacement lane on the unchanged candidate; retrying clearance alone cannot restore it.");
-	if (reply.state === "unavailable") {
-		const reason = typeof reply.reason === "string" ? `; provider reason=${JSON.stringify(reply.reason.slice(0, 512))}` : "";
-		fail(`state="unavailable"${reason}`, "Use the latest finalized Publication lane identity from this parent session. Inspect the worker's result and finalization; resume the worker to repair incomplete finalization, or launch a replacement lane if its binding is no longer current. A passing verification receipt alone cannot replace a finalized lane result.");
-	}
-	if (reply.state !== "completed") fail(`unexpected result state=${JSON.stringify(reply.state)}`, repairProvider);
-	if (!closed(reply, ["version", "requestId", "sessionId", "childId", "incarnationId", "generation", "revision", "state", "launchBinding", "status", "envelope", "ref"])) fail("invalid completed response fields", repairProvider);
-	if (reply.status !== "completed") fail(`status=${JSON.stringify(reply.status)}`, "Inspect the worker's failure and repair or replace that lane on the unchanged candidate. Use its finalized Publication lane identity before retrying clearance.");
-	const envelope = parseFinalizedEnvelope(JSON.parse(JSON.stringify(reply.envelope)));
-	const binding = parseLaunchBinding(reply.launchBinding);
-	if (!envelope || !binding || digest(binding) !== digest(envelope.launchBinding) || binding.parentSessionId !== sessionId
-		|| binding.childId !== selection.childId || binding.incarnationId !== selection.incarnationId || !isRecord(reply.ref)
-		|| !closed(reply.ref, ["state", "entryId", "envelopeSha256", "childSessionId", "rootGeneration", "incarnationId"])
-		|| reply.ref.state !== "finalized" || reply.ref.incarnationId !== selection.incarnationId || reply.ref.rootGeneration !== envelope.rootGeneration
-		|| reply.ref.childSessionId !== envelope.assignment.sessionId || reply.ref.envelopeSha256 !== digest(envelope) || !identifier(reply.ref.entryId)) fail("selected result proof envelope owner mismatch", "Check the finalized Publication lane identity and the subagent extension's result protocol. Repair or replace this lane's finalization; do not substitute a plain-text report or verification receipt.");
-	const launched = launches.get(binding.launchToolCallId);
-	if (!launched || !launched.childIds.has(selection.childId) || !sameAssignment(launched.assignment, assignment)
-		|| !assignment.branchEntryIds.includes(binding.parentLeafIdAtLaunch)) fail("selected result is not bound to an observed parent launch/assignment", "Select a finalized lane launched for this assignment in this parent session. If the parent assignment or launch registry changed, launch a replacement lane for the current candidate.");
-	if (envelope.validatedFields.status !== "done") fail("selected lane did not complete", "Inspect the worker's blocked or incomplete result. Resolve its blocker and resume it, or launch a replacement lane; select its finalized Publication lane identity.");
-	if (selection.slot.startsWith("correctness")) {
-		if (envelope.resultSchemaId !== "review" || !["APPROVE", "APPROVE WITH CHANGES"].includes(String(envelope.validatedFields.verdict))
-			|| (Array.isArray(envelope.validatedFields.critical) && envelope.validatedFields.critical.length > 0)
-			|| (Array.isArray(envelope.validatedFields.important) && envelope.validatedFields.important.length > 0)) fail("correctness lane lacks validated approval without unresolved material findings", "Resolve material review findings, verify the repaired candidate, and obtain a finalized approving review for that candidate.");
-	} else if (envelope.resultSchemaId !== "worker" || envelope.proofs.length === 0) fail("independent live lane lacks proof", "Have the live worker collect successful verification evidence and submit a finalized worker result referencing its proof IDs for the current candidate.");
-	return { selection, ownerGeneration: reply.generation, envelope, refDigest: digest(reply.ref) };
-}
-
-function importedProofErrors(lane: ResolvedLane, candidate: CandidateIdentity): string[] {
-	const envelope = lane.envelope;
-	const errors: string[] = [];
-	if (!candidateMatches(envelope.candidate, candidate)) errors.push("selected lane candidate differs from committed publication source");
-	const ids = envelope.proofs.map((proof) => proof.id);
-	const declaredIds = envelope.validatedFields.proofIds;
-	if (envelope.resultSchemaId === "worker" && (!strings(declaredIds) || digest(declaredIds) !== digest(ids))) errors.push("selected lane proof references differ from finalized evidence");
-	for (const proof of envelope.proofs) {
-		if (!candidateMatches(proof.candidate, candidate) || !proof.valid || proof.exitCode !== 0) errors.push("selected lane evidence is not successful current-candidate proof");
-		if (`verify_${digest([proof.command, proof.cwd, proof.candidate.id, proof.exitCode, proof.logSha256])}` !== proof.id) errors.push("selected lane proof identity mismatch");
-		try { if (textHash(readFileSync(proof.logPath)) !== proof.logSha256) errors.push("selected lane proof log changed"); }
-		catch { errors.push("selected lane proof log missing"); }
-	}
-	try { if (digest(inputPins(envelope.proofs)) !== digest(envelope.inputPins)) errors.push("selected lane input pins disagree"); }
-	catch { errors.push("selected lane runtime inputs changed"); }
-	return errors;
-}
-
-const selectionSchema = Type.Object({ slot: Type.Union([Type.Literal("correctness-primary"), Type.Literal("correctness-counterpart"), Type.Literal("live-success"), Type.Literal("live-attack")]), childId: Type.String({ minLength: 1 }), incarnationId: Type.String({ minLength: 1 }) }, { additionalProperties: false });
-
-export function registerPublicationClearance(pi: ExtensionAPI): void {
-	if (isSubagentChildEnvironment()) return;
-	let generation = randomUUID();
-	let ownerSessionId: string | undefined;
-	let ownerContext: ExtensionContext | undefined;
-	let seal: PublicationSeal | undefined;
-	let ownerAssignment: AssignmentSnapshot | undefined;
-	let activityRevision = 0;
-	const freshEvidenceIds = new Set<string>();
-	const startedChecks = new Map<string, number>();
-	const verificationCalls = new Map<string, { revision: number | undefined; operation: string; taskId?: string }>();
-	const writeCapableCalls = new Set<string>();
-	const launches = new Map<string, LaunchAssignment>();
-	const expireUnsealedProofs = () => { activityRevision++; freshEvidenceIds.clear(); };
-	const reset = () => {
-		seal = undefined;
-		launches.clear();
-		generation = randomUUID();
-		verificationCalls.clear();
-		writeCapableCalls.clear();
-		startedChecks.clear();
-		expireUnsealedProofs();
-	};
-	pi.on("session_start", (_event, ctx) => { reset(); ownerSessionId = ctx.sessionManager.getSessionId(); ownerContext = ctx; ownerAssignment = currentAssignment(ctx.sessionManager); });
-	pi.on("agent_start", (_event, ctx) => {
-		const next = currentAssignment(ctx.sessionManager);
-		if (ownerAssignment && (!next || !sameAssignment(ownerAssignment, next))) reset();
-		ownerAssignment = next;
-	});
-	pi.on("session_shutdown", () => { reset(); ownerSessionId = undefined; ownerContext = undefined; });
-	pi.on("session_tree", () => { reset(); });
-	pi.on("tool_call", (event, ctx) => {
-		ownerContext = ctx;
-		if (event.toolName === "verification_evidence") {
-			const operation = isRecord(event.input) && typeof event.input.operation === "string" ? event.input.operation : "run";
-			const taskId = isRecord(event.input) && identifier(event.input.taskId) ? event.input.taskId : undefined;
-			verificationCalls.set(event.toolCallId, { operation, taskId, revision: operation === "collect" ? (taskId ? startedChecks.get(taskId) : undefined) : activityRevision });
-		}
-		const nestedVerificationBash = event.toolName === "bash" && event.parentToolCallId !== undefined && verificationCalls.has(event.parentToolCallId);
-		if (!nestedVerificationBash && ["bash", "edit", "write"].includes(event.toolName)) {
-			writeCapableCalls.add(event.toolCallId);
-			expireUnsealedProofs();
-		}
-		if (event.toolName === "subagent") {
-			const assignment = currentAssignment(ctx.sessionManager);
-			if (assignment) launches.set(event.toolCallId, { assignment, childIds: new Set() });
-		}
-	});
-	pi.on("tool_result", (event) => {
-		if (event.toolName === "verification_evidence") {
-			const check = verificationCalls.get(event.toolCallId);
-			verificationCalls.delete(event.toolCallId);
-			if (check && !event.isError && isRecord(event.details) && event.details.protocolVersion === 2 && event.details.operation === check.operation) {
-				if (check.operation === "start" && identifier(event.details.taskId) && check.revision !== undefined) startedChecks.set(event.details.taskId, check.revision);
-				if ((check.operation === "run" || check.operation === "collect") && isRecord(event.details.evidence) && identifier(event.details.evidence.id)) {
-					const proof = getVerificationEvidence(event.details.evidence.id);
-					if (check.revision === activityRevision && proof?.valid && proof.exitCode === 0) freshEvidenceIds.add(proof.id);
-					if (check.taskId) startedChecks.delete(check.taskId);
-				}
-			}
-		}
-		if (writeCapableCalls.delete(event.toolCallId)) expireUnsealedProofs();
-		const launch = launches.get(event.toolCallId);
-		if (!launch || event.toolName !== "subagent" || event.isError || !isRecord(event.details)) return;
-		const details = event.details;
-		const children = Array.isArray(details.children) ? details.children : [details];
-		const childIds = new Set(children.filter(isRecord).flatMap((child) => identifier(child.id) ? [child.id] : []));
-		launches.set(event.toolCallId, { ...launch, childIds });
-	});
-	function git(ctx: ExtensionContext, args: string[], deadline: number): string {
-		const remaining = deadline - Date.now();
-		if (remaining <= 0) throw new Error("publication Git identity deadline exceeded");
-		const result = spawnSync("git", args, { cwd: ctx.cwd, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: Math.min(10_000, remaining), killSignal: "SIGKILL", maxBuffer: 1024 * 1024 });
-		if (result.error || result.signal || result.status !== 0) throw new Error("publication Git identity unavailable");
-		return result.stdout.trim();
-	}
-	function freeze(ctx: ExtensionContext, candidate: CandidateIdentity, pins: PublicationSeal["pins"], deadline = Date.now() + 30_000): FrozenPublicationCandidate {
-		const [branch, indexTree, status] = [git(ctx, ["symbolic-ref", "--quiet", "--short", "HEAD"], deadline), git(ctx, ["write-tree"], deadline), git(ctx, ["status", "--porcelain=v1", "--untracked-files=all"], deadline)];
-		if (candidate.kind !== "clean" || !candidate.head || candidate.tree !== indexTree || status) throw new Error("publication requires a clean committed source and index");
-		return Object.freeze({ head: candidate.head, tree: candidate.tree, branch, indexTree, statusDigest: digest(status), inputDigest: digest(pins) });
-	}
-	function workOwners(): PublicationSeal["workOwners"] {
-		if (!ownerSessionId) throw new Error("publication work owner unavailable");
-		const verification = requestWorkStatus(pi.events, "verification", ownerSessionId);
-		const delegation = requestWorkStatus(pi.events, "delegation", ownerSessionId);
-		const background = requestBackgroundWorkStatusSync(pi.events, ownerSessionId);
-		if (!verification || !delegation) throw new Error("publication work owner status unavailable");
-		return { verificationGeneration: verification.generation, delegationGeneration: delegation.generation,
-			delegationRevision: delegation.revision, backgroundGeneration: background.generation, backgroundRevision: background.revision };
-	}
-	function current(selected: PublicationSeal, binding?: Record<string, unknown>): boolean {
-		try {
-			const ctx = ownerContext;
-			if (!ctx || !ownerSessionId || selected !== seal || selected.generation !== generation || ownerSessionId !== selected.assignment.sessionId) return false;
-			if (binding && (binding.sessionId !== ownerSessionId || binding.repositoryRoot !== selected.candidate.repositoryRoot || binding.candidateSha !== selected.candidate.head)) return false;
-			const assignment = currentAssignment(ctx.sessionManager);
-			if (!assignment || !sameAssignment(selected.assignment, assignment)) return false;
-			if (ownedWorkErrorsSync(pi.events, verificationCalls.size, ownerSessionId, true).length > 0 || digest(workOwners()) !== digest(selected.workOwners)) return false;
-			if (publicationEvidenceErrors(selected.evidenceIds, selected.candidate, true).length > 0) return false;
-			for (const pin of selected.pins) if (runtimeManifest(selected.candidate.repositoryRoot, pin.path) !== pin.sha256) return false;
-			for (const lane of selected.lanes) {
-				const latest = resolveLane(pi.events, ownerSessionId, lane.selection, launches, selected.assignment);
-				if (latest.ownerGeneration !== lane.ownerGeneration || latest.refDigest !== lane.refDigest || digest(latest.envelope) !== digest(lane.envelope)
-					|| importedProofErrors(latest, selected.candidate).length > 0) return false;
-			}
-			const deadline = Date.now() + 30_000;
-			if (binding) {
-				const pushUrls = git(ctx, ["remote", "get-url", "--push", "--all", "origin"], deadline).split("\n");
-				if (pushUrls.length !== 1 || pushUrls[0] !== binding.pushUrl) return false;
-			}
-			const candidate = captureCandidateSync(ctx.cwd, selected.candidate.repositoryRoot, selected.candidate.source, deadline);
-			const frozen = freeze(ctx, candidate, selected.pins, deadline);
-			if (ownedWorkErrorsSync(pi.events, verificationCalls.size, ownerSessionId, true).length > 0
-				|| digest(workOwners()) !== digest(selected.workOwners)
-				|| publicationEvidenceErrors(selected.evidenceIds, selected.candidate, true).length > 0) return false;
-			for (const pin of selected.pins) if (runtimeManifest(selected.candidate.repositoryRoot, pin.path) !== pin.sha256) return false;
-			for (const lane of selected.lanes) {
-				const latest = resolveLane(pi.events, ownerSessionId, lane.selection, launches, selected.assignment);
-				if (latest.ownerGeneration !== lane.ownerGeneration || latest.refDigest !== lane.refDigest || digest(latest.envelope) !== digest(lane.envelope)) return false;
-			}
-			return candidateMatches(candidate, selected.candidate) && digest(frozen) === digest(selected.frozen)
-				&& selected === seal && selected.generation === generation;
-		} catch { return false; }
-	}
-	pi.registerTool({
-		name: "publication_clearance", label: "Publication clearance", description: "Seal fresh postcommit proof and authoritative independent lane results for a separately granted task-branch push. Does not grant or perform publication.",
-		parameters: Type.Object({ tier: Type.Union([Type.Literal("Direct"), Type.Literal("Focused"), Type.Literal("Full")]), evidenceIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }), lanes: Type.Array(selectionSchema), adjudication: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-		async execute(_id, params, _signal, _update, ctx) {
-			seal = undefined;
-			ownerContext = ctx;
-			const assignment = currentAssignment(ctx.sessionManager);
-			if (!assignment || !ownerSessionId || assignment.sessionId !== ownerSessionId) throw new Error("publication owner assignment unavailable");
-			const slots = params.lanes.map((lane) => lane.slot);
-			const required = params.tier === "Full" ? ["correctness-primary", "correctness-counterpart", "live-success", "live-attack"] : params.tier === "Focused" ? ["correctness-primary", "correctness-counterpart", "live-success"] : [];
-			if (new Set(slots).size !== slots.length || required.some((slot) => !slots.includes(slot as SelectedLane["slot"]))
-				|| new Set(params.lanes.map((lane) => lane.childId)).size !== params.lanes.length) throw new Error(`publication requires complete distinct selected lanes; required: ${required.join(", ") || "none"}; missing: ${required.filter((slot) => !slots.includes(slot as SelectedLane["slot"])).join(", ") || "none"}; Recovery: use childId and incarnationId from finalized Publication lane reports for distinct required lanes`);
-			const capturedGeneration = generation;
-			const capturedActivity = activityRevision;
-			if (params.evidenceIds.some((id) => !freshEvidenceIds.has(id))) throw new Error("publication requires fresh owner-observed proof after tool activity");
-			const candidate = await captureCandidateWithExec(pi.exec, ctx.cwd);
-			const errors = publicationEvidenceErrors(params.evidenceIds, candidate);
-			errors.push(...await ownedWorkErrors(pi.events, verificationCalls.size, ownerSessionId, true));
-			const lanes = params.lanes.map((selection) => resolveLane(pi.events, ownerSessionId!, selection, launches, assignment));
-			for (const lane of lanes) errors.push(...importedProofErrors(lane, candidate));
-			if (errors.length > 0) throw new Error(errors.join("; "));
-			const proofs = params.evidenceIds.map((id) => getVerificationEvidence(id)!);
-			const pins = inputPins([...proofs, ...lanes.flatMap((lane) => lane.envelope.proofs)]);
-			const frozen = freeze(ctx, candidate, pins);
-			const workOwnerSnapshot = workOwners();
-			const sealId = randomUUID();
-			const clearedAt = Date.now();
-			const next: PublicationSeal = { clearedAt,
-				wireEvidenceIds: params.evidenceIds.map((id) => `seal:${sealId}:${id}`),
-				candidate, frozen, evidenceIds: [...params.evidenceIds], pins, lanes, assignment, generation: capturedGeneration, workOwners: workOwnerSnapshot };
-			seal = next;
-			if (capturedActivity !== activityRevision || !current(next) || capturedActivity !== activityRevision) { seal = undefined; throw new Error("publication state changed while sealing"); }
-			return { content: [{ type: "text", text: "Publication proof sealed locally; a separate exact external grant and scanner clearance are still required." }], details: { candidate: frozen, laneCount: lanes.length } };
-		},
-	});
-	pi.events.on(PUBLICATION_CLEARANCE_QUERY, (value) => {
-		const keys = ["version", "requestId", "sessionId", "repositoryRoot", "candidateSha", "pushUrl", "branch"];
-		if (!isRecord(value) || !closed(value, keys) || value.version !== 1 || !identifier(value.requestId)
-			|| !identifier(value.sessionId) || !identifier(value.repositoryRoot) || !identifier(value.candidateSha)
-			|| !identifier(value.pushUrl) || !identifier(value.branch)) return;
-		const selected = seal;
-		if (!selected || value.sessionId !== selected.assignment.sessionId || value.repositoryRoot !== selected.candidate.repositoryRoot
-			|| value.candidateSha !== selected.candidate.head || value.branch !== selected.frozen.branch) return;
-		try { if (realpathSync(value.repositoryRoot) !== selected.candidate.repositoryRoot) return; } catch { return; }
-		if (!current(selected, value)) return;
-		pi.events.emit(PUBLICATION_CLEARANCE_RECORD, {
-			...value, evidenceIds: selected.wireEvidenceIds, clearedAt: selected.clearedAt,
-		});
-	});
 }

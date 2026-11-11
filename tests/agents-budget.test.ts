@@ -6,7 +6,7 @@ const agentsMd = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
 const techLeadMd = readFileSync(new URL("../extensions/tech-lead/tech-lead.md", import.meta.url), "utf8");
 
 const words = (text: string) => text.trim().split(/\s+/).length;
-const AGENTS_WORD_BUDGET = 932;
+const AGENTS_WORD_BUDGET = 935;
 const CDC_STARTUP_WORD_BUDGET = 1626;
 
 test("AGENTS.md stays within its word budget", () => {

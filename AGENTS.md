@@ -6,7 +6,9 @@ After three failures, reassess. After two fixes fail the same gate, test the pre
 
 ## Hard lines
 
-- Never push without Alan's explicit authorization; local commits grant none.
+- Push only frozen, cleared candidates to task branches.
+- Never push to default or protected branches.
+- Never force-push.
 - Children never commit; only the parent commits.
 - Never put experiments on `main`.
 - Never use production, destructive migrations, or unrelated services.
