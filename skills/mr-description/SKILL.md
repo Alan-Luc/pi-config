@@ -5,7 +5,7 @@ description: Write a concise MR description with observable behavior when reques
 
 ## When to use
 
-After changes are completed, when a compact merge-request summary is needed. If the user explicitly asks for a proposal instead, label it as proposed and use future tense; never imply unapplied behavior already exists.
+Use this skill after completed changes when a compact merge-request summary is needed. If the user explicitly asks for a proposal instead, label it as proposed and use future tense. Do not imply unapplied behavior already exists.
 
 ## Output contract
 
@@ -23,7 +23,7 @@ Write an MR-ready description with these headings:
 - Explain the problem, user need, or constraint that motivated the change.
 - State why the change matters without repeating what changed.
 - Use only supported context. If the motivation is unknown, say so instead of inventing it.
-- Mention a ticket or specification only when it is present in the current context; never infer one.
+- Mention a ticket or specification only when it is present in the current context. Do not infer one.
 
 ### How to observe/verification
 
