@@ -1,0 +1,9 @@
+
+ RUN  v5.1.0 /private<TMP>/src/vitest
+
+ ✓ sample.test.js (1 test) 1ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  11:07:55
+   Duration  120ms (transform 49%, import 31%, worker 12%, tests 8%)

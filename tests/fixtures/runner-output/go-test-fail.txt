@@ -1,0 +1,6 @@
+=== RUN   TestNamedFailure
+    failure_test.go:3: named assertion: expected 5
+--- FAIL: TestNamedFailure (0.00s)
+FAIL
+FAIL	fixture	0.112s
+FAIL

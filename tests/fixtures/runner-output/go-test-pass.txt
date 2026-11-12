@@ -1,0 +1,4 @@
+=== RUN   TestSample
+--- PASS: TestSample (0.00s)
+PASS
+ok  	fixture	0.376s

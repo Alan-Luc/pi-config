@@ -55,7 +55,7 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 	// Provider/schema renderers need top-level field types as well as the strict operation variants.
 	type: "object",
 	properties: {
-		operation: { type: "string", enum: ["capture", "run", "start", "collect"] },
+		operation: { type: "string", enum: ["capture", "run", "start", "collect", "start_batch", "collect_batch"] },
 		repositoryRoot: { type: "string", minLength: 1 },
 		source: { type: "string", const: "staged" },
 		runtimeInputs: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
@@ -63,7 +63,23 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 		cwd: { type: "string", minLength: 1 },
 		timeout: { type: "number", exclusiveMinimum: 0, maximum: MAX_TIMEOUT_SECONDS },
 		taskId: { type: "string", minLength: 1 },
+		checks: {
+			type: "array", minItems: 1,
+			items: {
+				type: "object",
+				properties: {
+					repositoryRoot: { type: "string", minLength: 1 }, source: { const: "staged" },
+					runtimeInputs: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
+					argv: { type: "array", items: { type: "string" }, minItems: 1 },
+					cwd: { type: "string", minLength: 1 }, timeout: { type: "number", exclusiveMinimum: 0, maximum: MAX_TIMEOUT_SECONDS },
+				},
+				required: ["argv", "cwd", "timeout"], additionalProperties: false,
+				dependencies: { runtimeInputs: ["source"] },
+			},
+		},
+		taskIds: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, uniqueItems: true },
 	},
+
 	dependencies: { runtimeInputs: ["source"] },
 	oneOf: [
 		{
@@ -113,17 +129,47 @@ export const VERIFICATION_EVIDENCE_PARAMETERS = {
 			required: ["operation", "taskId"],
 			additionalProperties: false,
 		},
+		{
+			type: "object",
+			properties: {
+				operation: { const: "start_batch" },
+				checks: {
+					type: "array", minItems: 1,
+					items: {
+						type: "object",
+						properties: {
+							repositoryRoot: { type: "string", minLength: 1 }, source: { const: "staged" },
+							runtimeInputs: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
+							argv: { type: "array", items: { type: "string" }, minItems: 1 },
+							cwd: { type: "string", minLength: 1 }, timeout: { type: "number", exclusiveMinimum: 0, maximum: MAX_TIMEOUT_SECONDS },
+						},
+						required: ["argv", "cwd", "timeout"], additionalProperties: false,
+						dependencies: { runtimeInputs: ["source"] },
+					},
+				},
+			},
+			required: ["operation", "checks"], additionalProperties: false,
+		},
+		{
+			type: "object",
+			properties: { operation: { const: "collect_batch" }, taskIds: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, uniqueItems: true } },
+			required: ["operation", "taskIds"], additionalProperties: false,
+		},
 	],
 } as const;
 type VerificationCheckSource =
 	| { source?: never; runtimeInputs?: never }
 	| { source: "staged"; runtimeInputs?: string[] };
 
+export type VerificationBatchCheck = { repositoryRoot?: string; argv: string[]; cwd: string; timeout: number } & VerificationCheckSource;
+
 export type VerificationEvidenceInput =
 	| { operation: "capture"; repositoryRoot?: string; source?: "staged" }
 	| ({ operation: "run"; repositoryRoot?: string; argv: string[]; cwd: string; timeout: number } & VerificationCheckSource)
 	| ({ operation: "start"; repositoryRoot?: string; argv: string[]; cwd: string; timeout: number } & VerificationCheckSource)
-	| { operation: "collect"; taskId: string };
+	| { operation: "collect"; taskId: string }
+	| { operation: "start_batch"; checks: VerificationBatchCheck[] }
+	| { operation: "collect_batch"; taskIds: string[] };
 
 const candidateOutputSchema = {
 	type: "object",
@@ -239,6 +285,32 @@ export const VERIFICATION_EVIDENCE_OUTPUT_SCHEMA = {
 			required: ["operation", "protocolVersion", "state", "taskId", "nextAction"],
 			additionalProperties: false,
 		},
+		{
+			type: "object",
+			properties: {
+				operation: { const: "start_batch" }, protocolVersion: { type: "integer", const: VERIFICATION_PROTOCOL_VERSION },
+				outcomes: { type: "array", items: { oneOf: [
+					{ type: "object", properties: { index: { type: "integer" }, result: { type: "object", properties: {
+						operation: { const: "start" }, protocolVersion: { type: "integer" }, taskId: { type: "string" }, task: backgroundTaskOutputSchema,
+						candidate: candidateOutputSchema, command: { type: "string" }, argv: { type: "array", items: { type: "string" } }, cwd: { type: "string" },
+					}, required: ["operation", "protocolVersion", "taskId", "task", "candidate", "command", "argv", "cwd"], additionalProperties: false } }, required: ["index", "result"], additionalProperties: false },
+					{ type: "object", properties: { index: { type: "integer" }, error: { type: "string" } }, required: ["index", "error"], additionalProperties: false },
+				] } },
+			}, required: ["operation", "protocolVersion", "outcomes"], additionalProperties: false,
+		},
+		{
+			type: "object",
+			properties: {
+				operation: { const: "collect_batch" }, protocolVersion: { type: "integer", const: VERIFICATION_PROTOCOL_VERSION },
+				outcomes: { type: "array", items: { oneOf: [
+					{ type: "object", properties: { index: { type: "integer" }, result: { oneOf: [
+						{ type: "object", properties: { operation: { const: "collect" }, protocolVersion: { type: "integer" }, state: { const: "collected" }, evidence: evidenceOutputSchema, output: { type: "string" } }, required: ["operation", "protocolVersion", "state", "evidence", "output"], additionalProperties: false },
+						{ type: "object", properties: { operation: { const: "collect" }, protocolVersion: { type: "integer" }, state: { const: "pending" }, taskId: { type: "string" }, nextAction: { const: "wait-for-terminal-notification" } }, required: ["operation", "protocolVersion", "state", "taskId", "nextAction"], additionalProperties: false },
+					] } }, required: ["index", "result"], additionalProperties: false },
+					{ type: "object", properties: { index: { type: "integer" }, error: { type: "string" } }, required: ["index", "error"], additionalProperties: false },
+				] } },
+			}, required: ["operation", "protocolVersion", "outcomes"], additionalProperties: false,
+		},
 	],
 } as const;
 
@@ -284,7 +356,21 @@ export type VerificationCollectResult = VerificationCollectedResult | Readonly<{
 	nextAction: "wait-for-terminal-notification";
 }>;
 
-export type VerificationEvidenceResult = CandidateCaptureResult | VerificationRunResult | VerificationStartResult | VerificationCollectResult;
+export type VerificationBatchOutcome<T> = Readonly<{ index: number; result: T }> | Readonly<{ index: number; error: string }>;
+
+export type VerificationStartBatchResult = Readonly<{
+	operation: "start_batch";
+	protocolVersion: typeof VERIFICATION_PROTOCOL_VERSION;
+	outcomes: readonly VerificationBatchOutcome<VerificationStartResult>[];
+}>;
+
+export type VerificationCollectBatchResult = Readonly<{
+	operation: "collect_batch";
+	protocolVersion: typeof VERIFICATION_PROTOCOL_VERSION;
+	outcomes: readonly VerificationBatchOutcome<VerificationCollectResult>[];
+}>;
+
+export type VerificationEvidenceResult = CandidateCaptureResult | VerificationRunResult | VerificationStartResult | VerificationCollectResult | VerificationStartBatchResult | VerificationCollectBatchResult;
 
 type BashOutcome = Awaited<ReturnType<ExtensionToolContext["executeTool"]>>;
 type Repository = Readonly<{
@@ -707,6 +793,37 @@ function boundedOutput(output: string): string {
 	return bytes.subarray(bytes.byteLength - MAX_EXPOSED_OUTPUT_BYTES).toString("utf8");
 }
 
+function outputTail(output: string, maxBytes: number): string {
+	const bytes = Buffer.from(output);
+	let start = Math.max(0, bytes.byteLength - maxBytes);
+	while (start < bytes.byteLength && (bytes[start] & 0xc0) === 0x80) start++;
+	return bytes.subarray(start).toString("utf8");
+}
+
+function outputHead(output: string, maxBytes: number): string {
+	const bytes = Buffer.from(output);
+	let end = Math.min(bytes.byteLength, maxBytes);
+	while (end > 0 && end < bytes.byteLength && (bytes[end] & 0xc0) === 0x80) end--;
+	return bytes.subarray(0, end).toString("utf8");
+}
+
+function summarizedOutput(output: string, exitCode: number): string {
+	if (exitCode === 0) {
+		const lastLines = output.split("\n").slice(-7).join("\n");
+		if (lastLines === output && Buffer.byteLength(output) <= 512) return output;
+		const marker = "[... earlier output omitted ...]\n";
+		return `${marker}${outputTail(lastLines, 512 - Buffer.byteLength(marker))}`;
+	}
+	if (Buffer.byteLength(output) <= MAX_EXPOSED_OUTPUT_BYTES) return output;
+	const lines = output.split(/\r?\n/);
+	const failureIndex = lines.findIndex((line) => /FAIL|Error|Traceback|panic|assert|non[- ]?zero exit|exit(?:ed)?(?: with)?(?: code| status)?[: =]+[1-9]\d*/i.test(line));
+	if (failureIndex < 0) return outputTail(output, MAX_EXPOSED_OUTPUT_BYTES);
+	const failureBlock = lines.slice(failureIndex).join("\n");
+	const marker = "\n[... output omitted ...]\n";
+	const excerptBytes = Math.floor((MAX_EXPOSED_OUTPUT_BYTES - Buffer.byteLength(marker)) / 2);
+	return `${outputHead(failureBlock, excerptBytes)}${marker}${outputTail(output, excerptBytes)}`;
+}
+
 function writeVerificationLogBytes(toolCallId: string, bytes: Buffer): { path: string; sha256: string } {
 	mkdirSync(VERIFICATION_LOG_DIRECTORY, { recursive: true, mode: 0o700 });
 	chmodSync(VERIFICATION_LOG_DIRECTORY, 0o700);
@@ -917,7 +1034,7 @@ export async function executeVerification(
 			valid,
 			invalidReason,
 		}, attempt);
-		return { operation: "run", protocolVersion: VERIFICATION_PROTOCOL_VERSION, evidence, output: boundedOutput(commandResult.output) };
+		return { operation: "run", protocolVersion: VERIFICATION_PROTOCOL_VERSION, evidence, output: summarizedOutput(commandResult.output, commandResult.exitCode) };
 	} finally {
 		stagedSnapshot?.cleanup();
 	}
@@ -1047,7 +1164,7 @@ async function executeVerificationCollect(
 			protocolVersion: VERIFICATION_PROTOCOL_VERSION,
 			state: "collected",
 			evidence,
-			output: boundedOutput(outputBytes.toString("utf8")),
+			output: summarizedOutput(outputBytes.toString("utf8"), exitCode),
 		};
 		started.terminal = terminal;
 		started.result = result;
@@ -1065,6 +1182,42 @@ function contentFor(result: VerificationEvidenceResult): string {
 	return JSON.stringify(result);
 }
 
+async function executeVerificationStartBatch(
+	params: Extract<VerificationEvidenceInput, { operation: "start_batch" }>,
+	ctx: VerificationToolContext,
+	signal: AbortSignal | undefined,
+	events: EventBus | undefined,
+): Promise<VerificationStartBatchResult> {
+	const outcomes = await Promise.all(params.checks.map(async (check, index): Promise<VerificationBatchOutcome<VerificationStartResult>> => {
+		try {
+			return { index, result: await executeVerificationStart({ operation: "start", ...check }, ctx, signal, events) };
+		} catch (error) {
+			return { index, error: String(error) };
+		}
+	}));
+	return { operation: "start_batch", protocolVersion: VERIFICATION_PROTOCOL_VERSION, outcomes };
+}
+
+async function executeVerificationCollectBatch(
+	toolCallId: string,
+	params: Extract<VerificationEvidenceInput, { operation: "collect_batch" }>,
+	ctx: VerificationToolContext,
+	signal: AbortSignal | undefined,
+	events: EventBus | undefined,
+): Promise<VerificationCollectBatchResult> {
+	const outcomes = await Promise.all(params.taskIds.map(async (taskId, index): Promise<VerificationBatchOutcome<VerificationCollectResult>> => {
+		try {
+			return {
+				index,
+				result: await executeVerificationCollect(`${toolCallId}-${index}`, { operation: "collect", taskId }, ctx, signal, events),
+			};
+		} catch (error) {
+			return { index, error: String(error) };
+		}
+	}));
+	return { operation: "collect_batch", protocolVersion: VERIFICATION_PROTOCOL_VERSION, outcomes };
+}
+
 export async function executeVerificationEvidence(
 	toolCallId: string,
 	params: VerificationEvidenceInput,
@@ -1075,6 +1228,17 @@ export async function executeVerificationEvidence(
 	if (params.operation === "capture") {
 		const result: CandidateCaptureResult = { operation: "capture", protocolVersion: VERIFICATION_PROTOCOL_VERSION, candidate: await captureCandidate(ctx, signal, params.repositoryRoot, params.source) };
 		return { content: [{ type: "text", text: contentFor(result) }], details: result, structuredContent: result };
+	}
+	if (params.operation === "start_batch") {
+		const result = await executeVerificationStartBatch(params, ctx, signal, events);
+		const isError = result.outcomes.some((outcome) => "error" in outcome);
+		return { content: [{ type: "text", text: contentFor(result) }], details: result, structuredContent: result, ...(isError ? { isError: true } : {}) };
+	}
+	if (params.operation === "collect_batch") {
+		const result = await executeVerificationCollectBatch(toolCallId, params, ctx, signal, events);
+		const isError = result.outcomes.some((outcome) => "error" in outcome
+			|| (outcome.result.state === "collected" && (outcome.result.evidence.exitCode !== 0 || !outcome.result.evidence.valid)));
+		return { content: [{ type: "text", text: contentFor(result) }], details: result, structuredContent: result, isError };
 	}
 	if (params.operation === "start") {
 		const result = await executeVerificationStart(params, ctx, signal, events);
@@ -1110,15 +1274,29 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 		});
 		pi.on("tool_result", async (event, ctx) => {
 			if (event.toolName !== "verification_evidence" || !isRecord(event.input)
-				|| event.input.operation !== "collect" || typeof event.input.taskId !== "string"
 				|| !sessionId || ctx.sessionManager.getSessionId() !== sessionId) return;
-			const result = state.startedTasks.get(event.input.taskId)?.result;
-			if (!result?.evidence.valid || event.details !== result) return;
+			let surfaced: { taskId: string; result: unknown }[] = [];
+			if (event.input.operation === "collect" && typeof event.input.taskId === "string") {
+				surfaced = [{ taskId: event.input.taskId, result: event.details }];
+			} else if (event.input.operation === "collect_batch" && Array.isArray(event.input.taskIds)
+				&& isRecord(event.details) && event.details.operation === "collect_batch" && Array.isArray(event.details.outcomes)) {
+				const taskIds = event.input.taskIds;
+				surfaced = event.details.outcomes.flatMap((outcome) => {
+					if (!isRecord(outcome) || typeof outcome.index !== "number" || !Number.isInteger(outcome.index)) return [];
+					const taskId = taskIds[outcome.index];
+					return typeof taskId === "string" ? [{ taskId, result: outcome.result }] : [];
+				});
+			}
+			const taskIds = surfaced.filter(({ taskId, result }) => {
+				const collected = state.startedTasks.get(taskId)?.result;
+				return collected?.evidence.valid && collected === result;
+			}).map(({ taskId }) => taskId);
+			if (taskIds.length === 0) return;
 			const ownerSessionId = sessionId;
 			const ownerGeneration = generation;
 			const capabilities = await requestBackgroundTask(events, "capabilities", {});
 			if (!capabilities.completion_acknowledgement || sessionId !== ownerSessionId || generation !== ownerGeneration) return;
-			await requestBackgroundTask(events, "acknowledge", { taskId: event.input.taskId, sessionId: ownerSessionId });
+			await Promise.all(taskIds.map((taskId) => requestBackgroundTask(events, "acknowledge", { taskId, sessionId: ownerSessionId })));
 		});
 		events.on(VERIFICATION_STATUS_REQUEST, (value) => {
 			const request = parseWorkStatusRequest(value);
@@ -1159,21 +1337,17 @@ export function registerVerificationEvidence(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "verification_evidence",
 		label: "Verification evidence",
-		description: "Capture a Git candidate, run one synchronous exact argv check, or start and later collect one immutable verification task, optionally in a linked worktree. Capture before checks and recapture after final checks. Prefer background start, automatic terminal notification, then collect; do independent work or yield without polling. Preserve documented synchronous exceptions, failed checks, and candidate invalidation. Share readable results, candidate identities, and log references with relevant workers; session-local evidence IDs are not registered in other sessions. Reuse unchanged evidence instead of repeating checks. Do not add checks merely to exercise this tool. If unavailable or insufficient, report why and use the smallest safe fallback without weakening verification.",
+		description: "Capture a Git candidate or run one exact argv check synchronously. Use start or start_batch, then collect or collect_batch; batch outcomes keep each task, candidate, log, and failure separate. Output is capped at 4096 bytes; full output remains in the hashed log.",
 		promptSnippet: "Capture, run, or start/collect bounded verification evidence",
 		promptGuidelines: [
-			"Use capture before coordinating checks and run only one exact argument vector with a repository-relative cwd.",
-			"Use source: staged to check an isolated real-index snapshot; runtimeInputs requires that staged mode. Working-tree checks omit both fields; bind ignored inputs with an explicit before/after hash manifest in the check command. Receipts pin staged manifests; changed HEAD/index/source/inputs invalidate them. Missing snapshot prerequisites never fall back to live working files.",
-			"Default to start, automatic terminal notification without polling, then collect with the exact task id. Use synchronous run only when the background service is unavailable, the user explicitly requests it, or a stated concrete correctness or lifecycle constraint requires same-turn completion; expected lack of parallel work is not sufficient.",
-			"A failed command or changed candidate is evidence of failure; do not mask either result.",
-			"Loaded verification protocol 2 reports protocolVersion in every result. A pending collect has no evidence: wait for terminal notification, then collect. Unknown task ownership is an error, not pending. Missing version leaves an old session's loaded protocol unproven; reconcile active work before reload.",
-			"Do not close a helper through caller_ping, subagent_done or a final reply while verification starts are registering, work is running or verification results remain uncollected. Cancel owned work deliberately if abandoning it, then reconcile/collect the terminal result.",
-			"Copy current evidence.verifiedBy verbatim into the handoff.",
-			"Child Bash commands, edits, and writes invalidate child receipts.",
-			"Parent Bash commands, edits, and writes invalidate unsealed publication proof.",
-			"Reuse finalized child results when their source and declared inputs remain unchanged.",
-			"Ordinary parent receipts retain candidate-based freshness.",
-			"Use read, grep, and find after final child checks.",
+			"Capture before checks. Supply exact argv, repository-relative cwd, and timeout.",
+			"For independent checks, use start_batch and collect_batch. Otherwise, use start and collect. Wait for automatic terminal notifications without polling.",
+			"Use run only for explicit requests, unavailable background service, or a stated same-turn correctness or lifecycle requirement.",
+			"For staged snapshots, set source: staged. Use runtimeInputs only with staged snapshots. For working-tree checks, omit both fields and hash ignored inputs before and after execution. Staged receipts pin manifests. Changes to HEAD, the index, source, or inputs invalidate staged receipts. If snapshot prerequisites are missing, block instead of using working files.",
+			"Treat command failures and changed candidates as failures. Require protocolVersion: 2 in every result. If absent, reconcile active work before reloading.",
+			"A pending collect has no evidence. Wait for terminal notification, then collect. Treat unknown task ownership as an error.",
+			"While starts register, tasks run, or results remain uncollected, keep the helper open. If abandoning work, cancel owned tasks and collect terminal results.",
+			"Copy evidence.verifiedBy verbatim into the handoff. Child Bash commands, edits, and writes invalidate child receipts. After final child checks, use read, grep, and find. Reuse finalized child results only while source and declared inputs remain unchanged. Ordinary parent receipts retain candidate-based freshness.",
 		],
 		parameters: VERIFICATION_EVIDENCE_PARAMETERS,
 		outputSchema: VERIFICATION_EVIDENCE_OUTPUT_SCHEMA,

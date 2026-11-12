@@ -1,0 +1,16 @@
+ WARNING  No locally installed `turbo` found in your repository. Using globally installed version (2.11.10). Using a specified version in your repository will result in more predictable behavior.
+
+   • turbo 2.11.10
+   • Running check
+   • Remote caching disabled
+
+check: cache miss, executing 4a6902b96995d806
+check:
+check: > check
+check: > node check.js
+check:
+check: named task passed
+
+ Tasks:    1 successful, 1 total
+Cached:    0 cached, 1 total
+  Time:    261ms

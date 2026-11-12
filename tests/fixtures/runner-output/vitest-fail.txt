@@ -1,0 +1,31 @@
+
+ RUN  v5.1.0 /private<TMP>/src/vitest
+
+ ❯ failure.test.js (1 test | 1 failed) 4ms
+   ❯ sample (1)
+     × named failure 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  failure.test.js > sample > named failure
+AssertionError: expected 4 to be 5 // Object.is equality
+
+- Expected
++ Received
+
+- 5
++ 4
+
+ ❯ failure.test.js:2:68
+      1| import { describe, it, expect } from 'vitest';
+      2| describe('sample', () => { it('named failure', () => expect(2 + 2).toB…
+       |                                                                    ^
+      3|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  11:07:57
+   Duration  106ms (transform 40%, import 35%, tests 16%, worker 9%)

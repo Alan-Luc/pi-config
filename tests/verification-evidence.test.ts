@@ -16,6 +16,7 @@ import {
 } from "../extensions/artifact-contracts/background-tasks.ts";
 import {
 	MAX_EXPOSED_OUTPUT_BYTES,
+	VERIFICATION_EVIDENCE_PARAMETERS,
 	canonicalCommand,
 	captureCandidate,
 	captureCandidateSync,
@@ -135,13 +136,28 @@ test("verification status reads registering starts and owned uncollected tasks f
 	assert.equal(requestWorkStatus(service, "verification", "executing-parent"), undefined);
 });
 
-test("registered verification tool exposes typed parameters to schema renderers", () => {
-	let tool: { parameters: { type?: string; properties?: Record<string, { type?: string }> } } | undefined;
+test("registered verification tool exposes typed parameters and minimal batch guidance", () => {
+	let tool: {
+		description?: string;
+		promptGuidelines?: string[];
+		parameters: { type?: string; properties?: Record<string, { type?: string }> };
+	} | undefined;
 	registerVerificationEvidence({ registerTool: (definition: NonNullable<typeof tool>) => { tool = definition; } } as never);
 	assert.equal(tool?.parameters.type, "object");
 	assert.equal(tool?.parameters.properties?.argv.type, "array");
 	assert.equal(tool?.parameters.properties?.timeout.type, "number");
 	assert.equal(tool?.parameters.properties?.operation.type, "string");
+	assert.match(tool?.description ?? "", /start_batch.*collect_batch/s);
+	assert.match(tool?.description ?? "", /4096 bytes.*full output.*hashed log/s);
+	const guidance = tool?.promptGuidelines?.join("\n") ?? "";
+	assert.match(guidance, /exact argv.*repository-relative cwd/s);
+	assert.match(guidance, /staged/);
+	assert.match(guidance, /start_batch.*collect_batch/s);
+	assert.match(guidance, /pending collect has no evidence/);
+	assert.match(guidance, /verifiedBy verbatim/);
+	assert.match(guidance, /child receipts/);
+	assert.match(guidance, /parent receipts/);
+	assert.doesNotMatch(guidance, /publication proof/);
 });
 
 test("candidate and evidence IDs are deterministic content hashes", () => {
@@ -667,6 +683,31 @@ it.each([0, 7])("acknowledges only successfully collected terminal evidence with
 	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collected evidence");
 	assert.equal(collected.details.evidence.exitCode, exitCode);
 	assert.equal(collected.isError, exitCode !== 0);
+});
+
+it.each([0, 7])("batch collection acknowledges every surfaced terminal result with exit %s", async (exitCode) => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { exitCode });
+	const context = { ...makeContext(directory), sessionManager: { getSessionId: () => VERIFICATION_EXIT_SESSION } };
+	const hooks = new Map<string, (...args: never[]) => unknown>();
+	registerVerificationEvidence({ events: service, registerTool() {}, on(name: string, handler: (...args: never[]) => unknown) { hooks.set(name, handler); } } as never);
+	await hooks.get("session_start")?.(...[{}, context] as never[]);
+	const started = await executeVerificationEvidence("ack-batch-start", {
+		operation: "start_batch", checks: ["first", "second"].map((value) => ({ argv: ["printf", value], cwd: ".", timeout: 10 })),
+	}, undefined, context, service);
+	if (started.details.operation !== "start_batch") throw new Error("expected batch start");
+	const taskIds = started.details.outcomes.map((outcome) => {
+		if (!("result" in outcome)) throw new Error(outcome.error);
+		return outcome.result.taskId;
+	});
+	const input = { operation: "collect_batch" as const, taskIds };
+	const collected = await executeVerificationEvidence("ack-batch-collect", input, undefined, context, service);
+	assert.deepEqual(service.acknowledged, []);
+	await hooks.get("tool_result")?.(...[{
+		toolName: "verification_evidence", input, details: collected.details,
+		content: collected.content, isError: collected.isError,
+	}, context] as never[]);
+	assert.deepEqual(service.acknowledged.sort(), taskIds.sort());
 });
 
 it.each(["pending", "collection-error", "invalid-evidence", "foreign-owner", "unknown-task", "legacy-service", "owner-restarted", "acknowledgement-error"])("preserves notification delivery for %s", async (scenario) => {
@@ -1220,11 +1261,139 @@ test("candidate mutation stales prior evidence before a log-write failure", asyn
 	assert.match(verificationClaimErrors({ evidenceId: prior.id, command: prior.command, exitCode: 0 }).join("\n"), /stale: candidate changed during verification/);
 });
 
+test("exposed successful output keeps a concise tail summary", async () => {
+	const directory = await newRepository();
+	const lines = [...Array.from({ length: 700 }, (_, index) => `progress ${index}`), "PASS all checks"];
+	const fullOutput = lines.join("\n");
+	const result = await executeVerification("successful-summary", { operation: "run", argv: ["printf", "%s", fullOutput], cwd: ".", timeout: 10 }, makeContext(directory));
+	assert.ok(Buffer.byteLength(result.output) <= MAX_EXPOSED_OUTPUT_BYTES);
+	assert.match(result.output, /PASS all checks/);
+	assert.doesNotMatch(result.output, /progress 0/);
+	assert.ok(Buffer.byteLength(result.output) <= 512, "successful output must use a short summary budget");
+	assert.ok(result.output.split("\n").length <= 8, "successful output must summarize only the final lines");
+	assert.equal(readFileSync(result.evidence.logPath, "utf8"), fullOutput);
+});
+
+test("successful output below the failure budget still uses a short summary", async () => {
+	const directory = await newRepository();
+	const fullOutput = [...Array.from({ length: 50 }, (_, index) => `passing test ${index}`), "50 passed"].join("\n");
+	const result = await executeVerification("moderate-success", {
+		operation: "run", argv: ["printf", "%s", fullOutput], cwd: ".", timeout: 10,
+	}, makeContext(directory));
+	assert.ok(Buffer.byteLength(result.output) <= 512);
+	assert.doesNotMatch(result.output, /passing test 0\b/);
+	assert.match(result.output, /50 passed/);
+	assert.equal(readFileSync(result.evidence.logPath, "utf8"), fullOutput);
+});
+
+const runnerFixtures = [
+	{ runner: "pytest", failure: /assert 2 \+ 2 == 5/, summary: /1 failed/ },
+	{ runner: "vitest", failure: /AssertionError: expected 4 to be 5/, summary: /Tests\s+1 failed/ },
+	{ runner: "jest", failure: /Expected: 5/, summary: /Tests:\s+1 failed/ },
+	{ runner: "go-test", failure: /named assertion: expected 5/, summary: /FAIL/ },
+	{ runner: "turbo", failure: /named task failure/, summary: /0 successful, 1 total/ },
+];
+
+it.each(runnerFixtures)("captured $runner failure retains assertion details and summary", async ({ runner, failure, summary }) => {
+	const directory = await newRepository();
+	const fixture = readFileSync(new URL(`./fixtures/runner-output/${runner}-fail.txt`, import.meta.url), "utf8");
+	const fullOutput = `${fixture}\n${"unrelated runner progress\n".repeat(400)}${fixture.trimEnd().split("\n").slice(-8).join("\n")}`;
+	const result = await executeVerification(`fixture-${runner}-failure`, {
+		operation: "run", argv: ["node", "-e", "process.stdout.write(process.argv[1]);process.exit(1)", fullOutput], cwd: ".", timeout: 10,
+	}, makeContext(directory));
+	assert.equal(result.evidence.exitCode, 1);
+	assert.ok(Buffer.byteLength(result.output) <= MAX_EXPOSED_OUTPUT_BYTES);
+	assert.match(result.output, failure);
+	assert.match(result.output, summary);
+	assert.match(result.output, /omitted/);
+	assert.equal(readFileSync(result.evidence.logPath, "utf8"), fullOutput);
+});
+
+it.each(runnerFixtures)("captured $runner success stays concise and preserves the full log", async ({ runner }) => {
+	const directory = await newRepository();
+	const fixture = readFileSync(new URL(`./fixtures/runner-output/${runner}-pass.txt`, import.meta.url), "utf8");
+	const fullOutput = `${"passing runner progress\n".repeat(400)}${fixture}`;
+	const result = await executeVerification(`fixture-${runner}-success`, {
+		operation: "run", argv: ["printf", "%s", fullOutput], cwd: ".", timeout: 10,
+	}, makeContext(directory));
+	assert.equal(result.evidence.exitCode, 0);
+	assert.ok(Buffer.byteLength(result.output) <= 512);
+	assert.ok(result.output.split("\n").length <= 8);
+	assert.equal(readFileSync(result.evidence.logPath, "utf8"), fullOutput);
+});
+
+test("exposed failed output includes the first failure block and final summary", async () => {
+	const directory = await newRepository();
+	const fullOutput = ["running tests", "assertion failure: expected green", "  at test.ts:4", "", ...Array.from({ length: 700 }, (_, index) => `tail ${index}`), "Tests: 1 failed"].join("\n");
+	const result = await executeVerification("failed-summary", { operation: "run", argv: ["node", "-e", "process.stdout.write(process.argv[1]);process.exit(1)", fullOutput], cwd: ".", timeout: 10 }, makeContext(directory));
+	assert.ok(Buffer.byteLength(result.output) <= MAX_EXPOSED_OUTPUT_BYTES);
+	assert.match(result.output, /assertion failure: expected green/);
+	assert.match(result.output, /Tests: 1 failed/);
+	assert.match(result.output, /omitted/i);
+	assert.equal(readFileSync(result.evidence.logPath, "utf8"), fullOutput);
+});
+
+test("long progress lines cannot consume the first failure excerpt", async () => {
+	const directory = await newRepository();
+	const fullOutput = ["P".repeat(5000), "FAIL target.test.ts: expected 5, received 4", "", ...Array.from({ length: 700 }, (_, index) => `progress ${index}`), "Tests: 1 failed"].join("\n");
+	const result = await executeVerification("long-prefix-failure", {
+		operation: "run", argv: ["node", "-e", "process.stdout.write(process.argv[1]);process.exit(1)", fullOutput], cwd: ".", timeout: 10,
+	}, makeContext(directory));
+	assert.ok(Buffer.byteLength(result.output) <= MAX_EXPOSED_OUTPUT_BYTES);
+	assert.match(result.output, /FAIL target\.test\.ts: expected 5, received 4/);
+	assert.match(result.output, /Tests: 1 failed/);
+	assert.equal(readFileSync(result.evidence.logPath, "utf8"), fullOutput);
+});
+
+test("collected failed output keeps the runner failure and final summary", async () => {
+	const directory = await newRepository();
+	const fullOutput = ["FAIL jest failing output", "  AssertionError: expected fixed", "", ...Array.from({ length: 700 }, (_, index) => `detail ${index}`), "Tests: 1 failed"].join("\n");
+	const service = backgroundService(directory, { output: fullOutput, exitCode: 1 });
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("failed-collect-start", {
+		operation: "start", argv: ["jest", "--runInBand"], cwd: ".", timeout: 10,
+	}, undefined, context, service);
+	if (started.details.operation !== "start") throw new Error("expected verification start");
+	const collected = await executeVerificationEvidence("failed-collect", {
+		operation: "collect", taskId: started.details.taskId,
+	}, undefined, context, service);
+	assert.equal(collected.isError, true);
+	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collected failure");
+	assert.ok(Buffer.byteLength(collected.details.output) <= MAX_EXPOSED_OUTPUT_BYTES);
+	assert.match(collected.details.output, /FAIL jest failing output/);
+	assert.match(collected.details.output, /Tests: 1 failed/);
+	assert.match(collected.details.output, /omitted/i);
+	assert.equal(readFileSync(collected.details.evidence.logPath, "utf8"), fullOutput);
+});
+
+test("failed output recognizes AssertionError and keeps the final runner summary", async () => {
+	const directory = await newRepository();
+	const fullOutput = ["E AssertionError: expected true", ...Array.from({ length: 700 }, (_, index) => `detail ${index}`), "1 failed"].join("\n");
+	const result = await executeVerification("assertion-error-summary", {
+		operation: "run", argv: ["node", "-e", "process.stdout.write(process.argv[1]);process.exit(1)", fullOutput], cwd: ".", timeout: 10,
+	}, makeContext(directory));
+	assert.ok(Buffer.byteLength(result.output) <= MAX_EXPOSED_OUTPUT_BYTES);
+	assert.match(result.output, /AssertionError: expected true/);
+	assert.match(result.output, /1 failed/);
+	assert.match(result.output, /omitted/i);
+});
+
+test("failed output without a recognized signal falls back to the current tail", async () => {
+	const directory = await newRepository();
+	const fullOutput = `${"x".repeat(MAX_EXPOSED_OUTPUT_BYTES + 1000)}TAIL`;
+	const result = await executeVerification("fallback-output-summary", {
+		operation: "run", argv: ["node", "-e", "process.stdout.write(process.argv[1]);process.exit(1)", fullOutput], cwd: ".", timeout: 10,
+	}, makeContext(directory));
+	assert.equal(result.evidence.exitCode, 1);
+	assert.ok(Buffer.byteLength(result.output) <= MAX_EXPOSED_OUTPUT_BYTES);
+	assert.equal(result.output, fullOutput.slice(-MAX_EXPOSED_OUTPUT_BYTES));
+});
+
 test("logs are mode 0600 and hashed while exposed output stays bounded", async () => {
 	const directory = await newRepository();
 	const fullOutput = "x".repeat(MAX_EXPOSED_OUTPUT_BYTES + 1000);
 	const result = await executeVerification("large-output", { operation: "run", argv: ["printf", "%s", fullOutput], cwd: ".", timeout: 10 }, makeContext(directory));
-	assert.equal(result.output.length, MAX_EXPOSED_OUTPUT_BYTES);
+	assert.ok(Buffer.byteLength(result.output) <= 512);
 	const log = readFileSync(result.evidence.logPath);
 	assert.equal(log.length, fullOutput.length);
 	assert.equal(statSync(result.evidence.logPath).mode & 0o777, 0o600);
@@ -1242,6 +1411,104 @@ test("concurrent tool calls keep their candidate evidence and logs separate", as
 	assert.equal(right.output, "right");
 	assert.notEqual(left.evidence.id, right.evidence.id);
 	assert.notEqual(left.evidence.logPath, right.evidence.logPath);
+});
+
+test("batch start and collect preserve independent task evidence", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("batch-start", {
+		operation: "start_batch",
+		checks: [
+			{ argv: ["printf", "first"], cwd: ".", timeout: 10 },
+			{ argv: ["printf", "second"], cwd: ".", timeout: 10 },
+		],
+	}, undefined, context, service);
+	assert.equal(started.isError, undefined);
+	assert.equal(started.details.operation, "start_batch");
+	if (started.details.operation !== "start_batch") throw new Error("expected batch start");
+	assert.equal(started.details.outcomes.length, 2);
+	assert.ok(started.details.outcomes.every((outcome) => "result" in outcome));
+	const taskIds = started.details.outcomes.map((outcome) => {
+		if (!("result" in outcome)) throw new Error("expected started check");
+		return outcome.result.taskId;
+	});
+	assert.notEqual(taskIds[0], taskIds[1]);
+	const collected = await executeVerificationEvidence("batch-collect", {
+		operation: "collect_batch", taskIds,
+	}, undefined, context, service);
+	assert.equal(collected.isError, false);
+	assert.equal(collected.details.operation, "collect_batch");
+	if (collected.details.operation !== "collect_batch") throw new Error("expected batch collect");
+	assert.equal(collected.details.outcomes.length, 2);
+	const evidences = collected.details.outcomes.map((outcome) => {
+		if (!("result" in outcome)) throw new Error(`expected collected check at ${outcome.index}`);
+		assert.equal(outcome.result.state, "collected");
+		if (outcome.result.state !== "collected") throw new Error("expected terminal evidence");
+		return outcome.result.evidence;
+	});
+	assert.deepEqual(evidences.map((evidence) => evidence.argv[1]), ["first", "second"]);
+	assert.notEqual(evidences[0].logPath, evidences[1].logPath);
+	assert.equal(service.counts.run, 2);
+	assert.equal(service.counts.logs, 2);
+});
+
+test("batch collect marks a nonzero command as an error", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory, { status: "failed", exitCode: 1, output: "assertion failure" });
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("batch-failed-start", {
+		operation: "start_batch", checks: [{ argv: ["false"], cwd: ".", timeout: 10 }],
+	}, undefined, context, service);
+	if (started.details.operation !== "start_batch" || !("result" in started.details.outcomes[0])) throw new Error("expected batch task start");
+	const collected = await executeVerificationEvidence("batch-failed-collect", {
+		operation: "collect_batch", taskIds: [started.details.outcomes[0].result.taskId],
+	}, undefined, context, service);
+	assert.equal(collected.isError, true);
+	if (collected.details.operation !== "collect_batch" || !("result" in collected.details.outcomes[0])) throw new Error("expected batch task evidence");
+	assert.equal(collected.details.outcomes[0].result.state, "collected");
+	if (collected.details.outcomes[0].result.state !== "collected") throw new Error("expected terminal result");
+	assert.equal(collected.details.outcomes[0].result.evidence.exitCode, 1);
+});
+
+test("batch operations isolate malformed checks and unknown task failures", async () => {
+	const directory = await newRepository();
+	const service = backgroundService(directory);
+	const context = makeContext(directory);
+	const started = await executeVerificationEvidence("batch-partial-start", {
+		operation: "start_batch",
+		checks: [
+			{ argv: ["printf", "kept"], cwd: ".", timeout: 10 },
+			{ argv: ["bash", "-c", "true"], cwd: ".", timeout: 10 },
+		],
+	}, undefined, context, service);
+	assert.equal(started.isError, true);
+	assert.equal(started.details.operation, "start_batch");
+	if (started.details.operation !== "start_batch") throw new Error("expected batch start");
+	assert.ok("result" in started.details.outcomes[0]);
+	assert.ok("error" in started.details.outcomes[1]);
+	const successful = started.details.outcomes[0];
+	if (!("result" in successful)) throw new Error("expected first check to start");
+	const collected = await executeVerificationEvidence("batch-partial-collect", {
+		operation: "collect_batch", taskIds: [successful.result.taskId, "unknown-task"],
+	}, undefined, context, service);
+	assert.equal(collected.isError, true);
+	assert.equal(collected.details.operation, "collect_batch");
+	if (collected.details.operation !== "collect_batch") throw new Error("expected batch collect");
+	assert.ok("result" in collected.details.outcomes[0]);
+	assert.ok("error" in collected.details.outcomes[1]);
+	assert.equal(service.counts.logs, 1);
+});
+
+test("batch parameter schema requires non-empty checks and unique task ids", () => {
+	const topLevelChecks = VERIFICATION_EVIDENCE_PARAMETERS.properties.checks;
+	const startBatch = VERIFICATION_EVIDENCE_PARAMETERS.oneOf.find((variant) => "checks" in variant.properties);
+	assert.deepEqual(topLevelChecks.items.dependencies, { runtimeInputs: ["source"] });
+	const collectBatch = VERIFICATION_EVIDENCE_PARAMETERS.oneOf.find((variant) => "taskIds" in variant.properties);
+	assert.equal(startBatch?.properties.checks.minItems, 1);
+	assert.deepEqual(startBatch?.properties.checks.items.dependencies, { runtimeInputs: ["source"] });
+	assert.equal(collectBatch?.properties.taskIds.minItems, 1);
+	assert.equal(collectBatch?.properties.taskIds.uniqueItems, true);
 });
 
 test("capture operation returns a structured candidate", async () => {
@@ -1705,7 +1972,7 @@ test("background start and early terminal collect preserve the verification cont
 	if (collected.details.operation !== "collect" || collected.details.state !== "collected") throw new Error("expected collect result");
 	assert.equal(collected.details.evidence.argv[0], "printf");
 	assert.equal(collected.details.evidence.cwd, ".");
-	assert.equal(collected.details.output.length, MAX_EXPOSED_OUTPUT_BYTES);
+	assert.ok(Buffer.byteLength(collected.details.output) <= 512);
 	assert.deepEqual(readFileSync(collected.details.evidence.logPath), Buffer.from(fullOutput));
 	assert.equal(service.counts.status, 0);
 	assert.equal(service.counts.logs, 1);
@@ -2008,7 +2275,7 @@ test("verification evidence uses one background-first shared tool contract", () 
 	registerVerificationEvidence({ registerTool: (registered: never) => { tool = registered; } } as never);
 	assert.equal(tool?.prepareLoadout, undefined);
 	const guidance = tool?.promptGuidelines?.join("\n") ?? "";
-	assert.match(guidance, /Default to start/);
-	assert.match(guidance, /automatic terminal notification without polling/);
-	assert.match(guidance, /expected lack of parallel work is not sufficient/);
+	assert.match(guidance, /For independent checks, use start_batch and collect_batch/);
+	assert.match(guidance, /Wait for automatic terminal notifications without polling/);
+	assert.match(guidance, /Use run only for explicit requests, unavailable background service, or a stated same-turn correctness or lifecycle requirement/);
 });
