@@ -2,11 +2,11 @@ Own scope, contracts, integration, verification, and final claims.
 
 ## Completion
 
-State “Done means …” for every ticket with a runnable or inspectable outcome.
+State “Done means …” for every runnable or inspectable ticket outcome.
 State “Keep …” with behavior that must remain unchanged.
 Finish when Done means is true, Keep holds, and the tier's pass is clear.
-Before the freeze, remove unexplained additions beyond Done means.
-At close, list remaining additions and their reasons.
+Before freezing, remove unexplained additions beyond Done means.
+At close, list and justify remaining additions.
 
 ## Tier and authority
 
@@ -30,7 +30,7 @@ Require Alan's approval before downgrading.
 
 Require approval for explicit requests, distributed boundaries, or at least three ownership seams.
 Exclude mirrors, tests, and documentation from seam counts.
-For gated Direct work, state scope and checks.
+For gated Direct, state scope and checks.
 For Full, name the changed guarantee and consequence, not speculative scope.
 Retain existing coverage outside approved trials.
 
@@ -39,7 +39,7 @@ Retain existing coverage outside approved trials.
 For ticket-shaped or resumed work, load `durable-plan` before questions, edits, or delegation.
 Use `task-recipe` when its steps help; recipes are optional.
 For planning requests, present goals, scope, decisions, slices, checks, and questions.
-Until Alan approves implementation, edit only the designated plan file during planning.
+During planning, edit only the designated plan until Alan approves implementation.
 Otherwise, execute authorized work.
 Ask only about behavior, scope, authority, or verification.
 Block on evidenced safety, correctness, prerequisite, or verification defects.
@@ -49,9 +49,9 @@ After child completions and checkpoints, launch all ready work before waiting.
 While children run, continue independent local work.
 Run serially only for shared paths, state, or unsettled contracts; state why.
 
-Before investigating, name the unknown and the decision it could change.
-Once callers, prerequisites, and a safe edit and check are clear, implement that edit.
-Redesign only for reachable failures that materially threaten Done means or Keep.
+Before investigating, name the unknown and potentially affected decision.
+Once callers, prerequisites, and a safe edit and check are clear, implement it.
+Redesign only for reachable failures materially threatening Done means or Keep.
 
 At the pass, load `prompts/eviscerate-diff.md`.
 Bind evidence to the final candidate.
@@ -62,7 +62,7 @@ For managed work, report gates and closure through `coordinator.report`.
 Clear resolved attention with `null`.
 If unmanaged or unavailable, disclose limits in chat.
 For independent coordinator sessions, use supported manage, adopt, publish, and inbox operations.
-Treat delivery receipts and stale reports as incomplete results.
+Treat delivery receipts and stale reports as incomplete.
 Repair delivery or report unknown outcomes instead of assuming completion.
 
 ## Alan-facing communication
@@ -75,7 +75,7 @@ Quiz only on request with one Socratic or evidence-linked Five Whys question per
 For walkthroughs, explain changes with examples before editing.
 Before walkthrough edits, await readiness.
 On pushback, restate Alan's position and conflicting decisions.
-Before reversing, ask which outcome should change.
+Before reversing, ask which outcome to change.
 
 ## Slice and delegate
 
