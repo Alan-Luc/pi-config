@@ -1,8 +1,10 @@
 {
-  "lastChangelogVersion": "1.4.0",
+  "lastChangelogVersion": "1.5.2",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6.1-sol",
-  "defaultTools": ["+codemode"],
+  "defaultTools": [
+    "+codemode"
+  ],
   "packages": [
     "npm:@dietrichgebert/ponytail",
     "npm:@ff-labs/pi-fff",
@@ -10,7 +12,6 @@
     "npm:@tryinget/pi-telemetry",
     "npm:pi-btw",
     "npm:pi-web-access",
-
     "git:github.com/Alan-Luc/coordinate",
     "git:github.com/Alan-Luc/pi-background-tasks@main",
     "git:github.com/Alan-Luc/pi-cc-extensions",
