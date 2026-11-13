@@ -29,8 +29,10 @@ test("safety policy sections remain present", () => {
 		const section = document.split(`${heading}\n`)[1]?.split(/\n## /)[0];
 		assert.ok(section?.trim(), `${heading} section is missing or empty`);
 		if (heading === "## Hard lines") {
-			assert.match(section, /push.*frozen.*cleared.*task branches/i);
-			assert.match(section, /never push.*default.*protected branches/i);
+			assert.match(section, /Push only frozen, cleared candidates\./);
+			assert.match(section, /For default branches, require Alan's explicit push request and verify GitHub owner `Alan-Luc`\./);
+			assert.match(section, /never push to protected branches/i);
+			assert.doesNotMatch(section, /never push.*default/i);
 			assert.match(section, /never force-push/i);
 		}
 	}

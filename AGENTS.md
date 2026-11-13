@@ -6,8 +6,9 @@ After three failures, reassess. After two fixes fail the same gate, test the pre
 
 ## Hard lines
 
-- Push only frozen, cleared candidates to task branches.
-- Never push to default or protected branches.
+- Push only frozen, cleared candidates.
+- For default branches, require Alan's explicit push request and verify GitHub owner `Alan-Luc`.
+- Never push to protected branches.
 - Never force-push.
 - Children never commit; only the parent commits.
 - Never put experiments on `main`.
@@ -16,7 +17,7 @@ After three failures, reassess. After two fixes fail the same gate, test the pre
 
 ## Authorization and Git
 
-- Use dedicated Git worktrees for all task work. Keep task edits and commands outside main's checkout.
+- Use dedicated task worktrees. Keep task edits and commands outside main's checkout.
 - Commit passing, coherent slices locally. Separate experiment and model configuration from behavior and tests. Use terse imperative subjects without tickets, bodies, or co-author trailers.
 - Keep experiments on `benchmark/<run-id>`; promote approved diffs as fresh commits.
 - After committing, inspect the exact base-to-HEAD patch; reuse unchanged reviews.
@@ -81,7 +82,6 @@ A station is an owner's defined scope.
 - Give variables, functions, methods, classes, types, and files names whose intent is obvious to first-time readers. Use operation verbs and precise value and concept nouns. Reserve `data`, `utils`, `manager`, `handler`, and `process` for exact domain terms.
 - Replace magic indexes and parallel arrays with named fields. Preserve required external indexes, then convert once. End text files with a newline.
 - When overlap or dependencies require sequencing, complete, check, and inspect each increment.
-- Follow [Tests](#tests) before editing production behavior.
 
 ## Tests
 
